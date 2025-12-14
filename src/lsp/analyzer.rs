@@ -29,6 +29,8 @@ pub struct SemanticAnalyzer {
     defined_classes: HashSet<String>,
     defined_functions: HashSet<String>,
     has_imports: bool, // If file has imports, be lenient with undefined checks
+    in_class: bool,    // Track if we're inside a class method
+    externally_used: HashSet<String>, // Symbols used by other files
 }
 
 impl SemanticAnalyzer {
@@ -51,6 +53,45 @@ impl SemanticAnalyzer {
             defined_classes,
             defined_functions: HashSet::new(),
             has_imports: false,
+            in_class: false,
+            externally_used: HashSet::new(),
+        }
+    }
+    
+    /// Set symbols that are used by other files (don't warn as unused)
+    pub fn set_externally_used_symbols(&mut self, symbols: HashSet<String>) {
+        self.externally_used = symbols;
+    }
+    
+    /// Add symbols from imported modules so they don't trigger undefined errors
+    pub fn add_imported_symbols(&mut self, symbols: &[super::symbols::Symbol]) {
+        for sym in symbols {
+            match sym.kind {
+                super::symbols::SymbolKind::Class => {
+                    self.defined_classes.insert(sym.name.clone());
+                }
+                super::symbols::SymbolKind::Function => {
+                    self.defined_functions.insert(sym.name.clone());
+                }
+                super::symbols::SymbolKind::Namespace | super::symbols::SymbolKind::Enum => {
+                    // Namespaces and enums are accessed like classes
+                    self.defined_classes.insert(sym.name.clone());
+                }
+                super::symbols::SymbolKind::Variable | super::symbols::SymbolKind::Constant => {
+                    // Add as global variable in root scope
+                    self.scopes[0].variables.insert(
+                        sym.name.clone(),
+                        VarInfo {
+                            span: crate::error::Span::default(),
+                            is_const: matches!(sym.kind, super::symbols::SymbolKind::Constant),
+                            is_used: true, // Don't warn about unused imports
+                        },
+                    );
+                }
+                _ => {}
+            }
+            // Also register children (for nested namespaces/classes)
+            self.add_imported_symbols(&sym.children);
         }
     }
 
@@ -68,10 +109,29 @@ impl SemanticAnalyzer {
             self.analyze_stmt(stmt);
         }
 
-        // Don't check for unused variables to reduce noise
-        // self.check_unused_warnings();
+        // Check for unused variables in global scope
+        self.check_unused_in_current_scope();
 
         std::mem::take(&mut self.diagnostics)
+    }
+    
+    /// Check for unused variables in the current scope (without popping)
+    fn check_unused_in_current_scope(&mut self) {
+        if let Some(scope) = self.scopes.last() {
+            for (name, info) in &scope.variables {
+                // Skip underscore-prefixed vars (convention for intentionally unused)
+                // Skip symbols used in other files
+                if !info.is_used && !name.starts_with('_') && !self.externally_used.contains(name) {
+                    self.diagnostics.push(Diagnostic {
+                        range: span_to_range(&info.span),
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        source: Some("sald".to_string()),
+                        message: format!("Variable '{}' is declared but never used", name),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
     }
 
     fn collect_declaration(&mut self, stmt: &Stmt) {
@@ -111,8 +171,22 @@ impl SemanticAnalyzer {
     }
 
     fn pop_scope(&mut self) {
+        // Check for unused variables before popping
+        if let Some(scope) = self.scopes.last() {
+            for (name, info) in &scope.variables {
+                // Skip underscore-prefixed vars and externally used
+                if !info.is_used && !name.starts_with('_') && !self.externally_used.contains(name) {
+                    self.diagnostics.push(Diagnostic {
+                        range: span_to_range(&info.span),
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        source: Some("sald".to_string()),
+                        message: format!("Variable '{}' is declared but never used", name),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
         self.scopes.pop();
-        // Don't warn about unused variables - too noisy
     }
 
     fn define_var(&mut self, name: &str, span: &Span, is_const: bool) {
@@ -221,9 +295,13 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::Class { def } => {
+                // Mark that we're inside a class
+                let was_in_class = self.in_class;
+                self.in_class = true;
                 for method in &def.methods {
                     self.analyze_function(method);
                 }
+                self.in_class = was_in_class;
             }
             Stmt::TryCatch { try_body, catch_var, catch_body, span } => {
                 self.analyze_stmt(try_body);
@@ -269,22 +347,24 @@ impl SemanticAnalyzer {
     fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Identifier { name, span } => {
-                // Skip undefined check if file has imports (can't track imported symbols)
-                if self.has_imports {
-                    // Just mark as used if it exists
-                    self.resolve_var(name);
+                // First check if variable is defined in local scope
+                if self.resolve_var(name).is_some() {
+                    return; // Variable exists locally, all good
+                }
+                
+                // Skip undefined check for known classes/namespaces/functions
+                if self.defined_classes.contains(name) || self.defined_functions.contains(name) {
                     return;
                 }
                 
-                if self.resolve_var(name).is_none() {
-                    self.diagnostics.push(Diagnostic {
-                        range: span_to_range(span),
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        source: Some("sald".to_string()),
-                        message: format!("Undefined variable '{}'", name),
-                        ..Default::default()
-                    });
-                }
+                // Report undefined variable
+                self.diagnostics.push(Diagnostic {
+                    range: span_to_range(span),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    source: Some("sald".to_string()),
+                    message: format!("Undefined variable '{}'", name),
+                    ..Default::default()
+                });
             }
             Expr::Assignment { target, value, span, .. } => {
                 // Check if assigning to const
@@ -400,9 +480,31 @@ impl SemanticAnalyzer {
             Expr::Throw { value, .. } => {
                 self.analyze_expr(value);
             }
-            // Literals and spread don't need analysis
-            Expr::Literal { .. } | Expr::SelfExpr { .. } | Expr::Super { .. } |
-            Expr::Break { .. } | Expr::Continue { .. } => {}
+            // Literals don't need analysis
+            Expr::Literal { .. } | Expr::Break { .. } | Expr::Continue { .. } => {}
+            // Self/super must be inside a class
+            Expr::SelfExpr { span } => {
+                if !self.in_class {
+                    self.diagnostics.push(Diagnostic {
+                        range: span_to_range(span),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        source: Some("sald".to_string()),
+                        message: "'self' can only be used inside a class method".to_string(),
+                        ..Default::default()
+                    });
+                }
+            }
+            Expr::Super { span, .. } => {
+                if !self.in_class {
+                    self.diagnostics.push(Diagnostic {
+                        range: span_to_range(span),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        source: Some("sald".to_string()),
+                        message: "'super' can only be used inside a class method".to_string(),
+                        ..Default::default()
+                    });
+                }
+            }
             Expr::Spread { expr, .. } => {
                 self.analyze_expr(expr);
             }

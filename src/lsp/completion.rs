@@ -73,8 +73,7 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
                 detail: Some(sig.to_string()),
                 documentation: None,
                 children: Vec::new(),
-                type_hint: None,
-            }
+                type_hint: None, source_uri: None }
         }).collect();
         
         // Add properties as constants
@@ -87,8 +86,7 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
                 detail: Some(doc.to_string()),
                 documentation: None,
                 children: Vec::new(),
-                type_hint: None,
-            }
+                type_hint: None, source_uri: None }
         }));
         
         Symbol {
@@ -99,8 +97,7 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
             detail: Some(format!("{} (built-in)", cls.doc)),
             documentation: Some(cls.doc.to_string()),
             children,
-            type_hint: None,
-        }
+            type_hint: None, source_uri: None }
     }).collect()
 }
 
@@ -295,27 +292,40 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
             ("length", "length()", "Get array length"),
             ("push", "push(item)", "Add item to end"),
             ("pop", "pop()", "Remove and return last item"),
+            ("shift", "shift()", "Remove and return first item"),
+            ("unshift", "unshift(item)", "Add item to beginning"),
             ("first", "first()", "Get first item"),
             ("last", "last()", "Get last item"),
             ("get", "get(index)", "Get item at index"),
             ("set", "set(index, value)", "Set item at index"),
+            ("at", "at(index)", "Get item at index (negative allowed)"),
             ("contains", "contains(item)", "Check if contains item"),
             ("indexOf", "indexOf(item)", "Find index of item"),
+            ("lastIndexOf", "lastIndexOf(item)", "Find last index of item"),
             ("join", "join(separator)", "Join items to string"),
             ("reverse", "reverse()", "Reverse in-place"),
+            ("toReversed", "toReversed()", "Return reversed copy"),
             ("slice", "slice(start, end?)", "Get sub-array"),
+            ("splice", "splice(start, deleteCount, ...items)", "Remove/insert items"),
             ("concat", "concat(other)", "Concatenate arrays"),
             ("clear", "clear()", "Remove all items"),
             ("isEmpty", "isEmpty()", "Check if empty"),
+            ("fill", "fill(value, start?, end?)", "Fill with value"),
+            ("flat", "flat(depth?)", "Flatten nested arrays"),
+            ("flatMap", "flatMap(fn)", "Map then flatten"),
             ("map", "map(fn)", "Transform each item"),
             ("filter", "filter(fn)", "Filter items"),
             ("forEach", "forEach(fn)", "Iterate items"),
             ("reduce", "reduce(fn, initial?)", "Reduce to single value"),
             ("find", "find(fn)", "Find first matching item"),
             ("findIndex", "findIndex(fn)", "Find index of first match"),
+            ("findLast", "findLast(fn)", "Find last matching item"),
+            ("findLastIndex", "findLastIndex(fn)", "Find index of last match"),
             ("some", "some(fn)", "Check if any match"),
             ("every", "every(fn)", "Check if all match"),
             ("sort", "sort(fn?)", "Sort in-place"),
+            ("toSorted", "toSorted(fn?)", "Return sorted copy"),
+            ("includes", "includes(item)", "Check if includes item"),
         ],
         properties: &[],
     },
@@ -344,15 +354,31 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
             ("length", "length()", "Get string length"),
             ("upper", "upper()", "Convert to uppercase"),
             ("lower", "lower()", "Convert to lowercase"),
-            ("trim", "trim()", "Remove whitespace"),
-            ("contains", "contains(substr)", "Check if contains"),
+            ("trim", "trim()", "Remove whitespace from both ends"),
+            ("trimStart", "trimStart()", "Remove leading whitespace"),
+            ("trimEnd", "trimEnd()", "Remove trailing whitespace"),
+            ("contains", "contains(substr)", "Check if contains substring"),
+            ("includes", "includes(substr)", "Check if contains substring"),
             ("startsWith", "startsWith(prefix)", "Check prefix"),
             ("endsWith", "endsWith(suffix)", "Check suffix"),
             ("charAt", "charAt(index)", "Get character at index"),
+            ("charCodeAt", "charCodeAt(index)", "Get char code at index"),
             ("substring", "substring(start, end?)", "Get substring"),
-            ("replace", "replace(old, new)", "Replace substring"),
+            ("slice", "slice(start, end?)", "Get slice (negative allowed)"),
+            ("indexOf", "indexOf(substr)", "Find first index of substring"),
+            ("lastIndexOf", "lastIndexOf(substr)", "Find last index of substring"),
+            ("replace", "replace(old, new)", "Replace first occurrence"),
+            ("replaceAll", "replaceAll(old, new)", "Replace all occurrences"),
             ("split", "split(separator)", "Split to array"),
+            ("repeat", "repeat(count)", "Repeat string n times"),
+            ("padStart", "padStart(length, pad?)", "Pad start to length"),
+            ("padEnd", "padEnd(length, pad?)", "Pad end to length"),
+            ("concat", "concat(...strings)", "Concatenate strings"),
             ("isDigit", "isDigit()", "Check if single digit"),
+            ("isAlpha", "isAlpha()", "Check if alphabetic"),
+            ("isAlphanumeric", "isAlphanumeric()", "Check if alphanumeric"),
+            ("isWhitespace", "isWhitespace()", "Check if whitespace"),
+            ("toNumber", "toNumber()", "Parse as number"),
             ("toString", "toString()", "Convert to string"),
         ],
         properties: &[],
@@ -371,3 +397,4 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
         ],
     },
 ];
+

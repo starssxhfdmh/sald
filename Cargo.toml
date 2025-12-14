@@ -1,6 +1,6 @@
 [package]
 name = "sald"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Sald Programming Language - A fast, class-based interpreter"
 authors = ["Sald Team"]
@@ -27,6 +27,7 @@ hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
 opener = "0.7"
 dirs = "5"
 zip = "2.2"
+parking_lot = "0.12"
 
 [[bin]]
 name = "sald"

@@ -30,6 +30,9 @@ pub enum ExecutionResult {
     Suspended {
         receiver: oneshot::Receiver<Result<Value, String>>,
     },
+    
+    /// VM encountered an unhandled error
+    Error(SaldError),
 }
 
 /// Call frame for function execution
@@ -172,6 +175,10 @@ impl ValueCaller for VM {
                             return Err("Future was cancelled".to_string());
                         }
                     }
+                }
+                Ok(Some(ExecutionResult::Error(e))) => {
+                    // Runtime error - return as string error
+                    return Err(e.message);
                 }
                 Err(e) => return Err(e.message),
             }
@@ -410,6 +417,10 @@ impl VM {
                         }
                     }
                 }
+                ExecutionResult::Error(e) => {
+                    // Unhandled runtime error - propagate to caller
+                    return Err(e);
+                }
             }
         }
     }
@@ -433,16 +444,16 @@ impl VM {
                     if !self.exception_handlers.is_empty() {
                         // Route through exception handler
                         if let Err(handler_err) = self.handle_native_error(e.message.clone()) {
-                            // Handler itself failed, print and exit
+                            // Handler itself failed, print and return error
                             eprintln!("{}", handler_err);
-                            return ExecutionResult::Completed(Value::Null);
+                            return ExecutionResult::Error(handler_err);
                         }
                         // Handler set up the catch block, continue execution
                         continue;
                     } else {
-                        // No handler, print error and exit as before
+                        // No handler - print error for CLI and return Error for programmatic handling
                         eprintln!("{}", e);
-                        return ExecutionResult::Completed(Value::Null);
+                        return ExecutionResult::Error(e);
                     }
                 }
             }
@@ -2407,6 +2418,16 @@ impl VM {
                             return Err(self.create_error(ErrorKind::ImportError, "Import future cancelled"));
                         }
                     }
+                }
+                ExecutionResult::Error(e) => {
+                    // Import had a runtime error - restore state and propagate
+                    crate::pop_script_dir();
+                    self.stack = saved_stack;
+                    self.frames = saved_frames;
+                    self.file = saved_file;
+                    self.source = saved_source;
+                    self.globals = saved_globals;
+                    return Err(e);
                 }
             }
         }

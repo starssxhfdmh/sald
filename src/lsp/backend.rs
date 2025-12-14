@@ -2,22 +2,26 @@
 // Implements tower_lsp::LanguageServer trait with full LSP support
 
 use std::sync::Arc;
+use std::path::PathBuf;
+use parking_lot::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use super::analyzer::SemanticAnalyzer;
 use super::completion::{get_builtin_symbols, get_keyword_completions};
-use super::symbols::{span_to_range, Symbol, SymbolKind, SymbolTable};
+use super::import_resolver::ImportResolver;
+use super::symbols::{span_to_range, Symbol, SymbolKind, SymbolTable, WorkspaceIndex};
 use crate::lexer::Scanner;
 use crate::parser::Parser;
 use crate::ast::{Stmt, Expr, FunctionDef, ClassDef};
-use crate::compiler::Compiler;
 
 /// Sald Language Server
 pub struct SaldLanguageServer {
     client: Client,
     symbols: Arc<SymbolTable>,
+    import_resolver: Arc<RwLock<ImportResolver>>,
+    workspace_index: Arc<WorkspaceIndex>,
 }
 
 impl SaldLanguageServer {
@@ -25,75 +29,105 @@ impl SaldLanguageServer {
         Self {
             client,
             symbols: Arc::new(SymbolTable::new()),
+            import_resolver: Arc::new(RwLock::new(ImportResolver::new())),
+            workspace_index: Arc::new(WorkspaceIndex::new()),
         }
     }
 
+    /// Convert URL to file path
+    fn url_to_path(uri: &Url) -> Option<PathBuf> {
+        uri.to_file_path().ok()
+    }
+
     /// Analyze a document and publish diagnostics
+    /// Uses Scanner/Parser for syntax errors and SemanticAnalyzer for semantic errors
     async fn analyze_document(&self, uri: Url, text: String) {
         let mut diagnostics = Vec::new();
         let mut symbols = Vec::new();
 
         let file_name = uri.path().to_string();
+        let file_path = Self::url_to_path(&uri);
 
-        // Tokenize
+        // Step 1: Tokenize
         let mut scanner = Scanner::new(&text, &file_name);
-        match scanner.scan_tokens() {
-            Ok(tokens) => {
-                // Parse
-                let mut parser = Parser::new(tokens, &file_name, &text);
-                match parser.parse() {
-                    Ok(program) => {
-                        // Extract symbols from AST (including nested ones)
-                        for stmt in &program.statements {
-                            self.extract_symbols_recursive(stmt, &mut symbols);
-                        }
-
-                        // Run semantic analysis
-                        let mut analyzer = SemanticAnalyzer::new();
-                        let semantic_diagnostics = analyzer.analyze(&program);
-                        diagnostics.extend(semantic_diagnostics);
-
-                        // Also run compiler to catch additional errors
-                        let mut compiler = Compiler::new(&file_name, &text);
-                        if let Err(e) = compiler.compile(&program) {
-                            diagnostics.push(Diagnostic {
-                                range: span_to_range(&e.span),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                source: Some("sald".to_string()),
-                                message: e.message.clone(),
-                                ..Default::default()
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        diagnostics.push(Diagnostic {
-                            range: span_to_range(&e.span),
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            source: Some("sald".to_string()),
-                            message: e.message.clone(),
-                            ..Default::default()
-                        });
-                    }
-                }
-            }
+        let tokens = match scanner.scan_tokens() {
+            Ok(t) => t,
             Err(e) => {
-                diagnostics.push(Diagnostic {
-                    range: span_to_range(&e.span),
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    source: Some("sald".to_string()),
-                    message: e.message.clone(),
-                    ..Default::default()
-                });
+                // Lexer error - publish and return early
+                diagnostics.push(self.error_to_diagnostic(&e));
+                self.client.publish_diagnostics(uri, diagnostics, None).await;
+                return;
             }
+        };
+
+        // Step 2: Parse
+        let mut parser = Parser::new(tokens, &file_name, &text);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(e) => {
+                // Parser error - publish and return early
+                diagnostics.push(self.error_to_diagnostic(&e));
+                self.client.publish_diagnostics(uri, diagnostics, None).await;
+                return;
+            }
+        };
+
+        // Step 3: Extract symbols from AST
+        for stmt in &program.statements {
+            self.extract_symbols_recursive(stmt, &mut symbols);
         }
+
+        // Step 4: Resolve imports and add imported symbols
+        if let Some(ref path) = file_path {
+            let resolver = self.import_resolver.read();
+            let all_symbols = resolver.get_all_symbols_for_document(path, &program, &symbols);
+            symbols = all_symbols;
+            
+            // Re-index this file for workspace tracking
+            self.workspace_index.clear_file_references(path);
+            self.index_file(path);
+        }
+
+        // Step 5: Semantic analysis - catches undefined variables, const assignments, etc.
+        let mut analyzer = SemanticAnalyzer::new();
+        // Register imported symbols so they don't trigger undefined errors
+        analyzer.add_imported_symbols(&symbols);
+        
+        // Pass workspace info for cross-file usage tracking
+        if let Some(ref path) = file_path {
+            let exported_names = self.workspace_index.get_exported_names(path);
+            let externally_used: std::collections::HashSet<String> = exported_names
+                .iter()
+                .filter(|name| self.workspace_index.is_symbol_used_externally(name, path))
+                .cloned()
+                .collect();
+            analyzer.set_externally_used_symbols(externally_used);
+        }
+        
+        let semantic_diagnostics = analyzer.analyze(&program);
+        diagnostics.extend(semantic_diagnostics);
 
         // Update symbol table
         self.symbols.update_document(uri.clone(), text, symbols);
 
-        // Publish diagnostics
-        self.client
-            .publish_diagnostics(uri, diagnostics, None)
-            .await;
+        // Invalidate import cache for this file
+        if let Some(path) = file_path {
+            self.import_resolver.read().invalidate_cache(&path);
+        }
+
+        // Publish all diagnostics
+        self.client.publish_diagnostics(uri, diagnostics, None).await;
+    }
+
+    /// Convert SaldError to LSP Diagnostic
+    fn error_to_diagnostic(&self, e: &crate::error::SaldError) -> Diagnostic {
+        Diagnostic {
+            range: span_to_range(&e.span),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("sald".to_string()),
+            message: e.message.to_string(),
+            ..Default::default()
+        }
     }
 
     /// Extract symbols recursively from statements
@@ -112,8 +146,11 @@ impl SaldLanguageServer {
                     detail: Some(format!("let {}", name)),
                     documentation: None,
                     children: Vec::new(),
-                    type_hint,
-                });
+                    type_hint, source_uri: None });
+                // Also extract symbols from initializer (lambdas, etc.)
+                if let Some(init) = initializer {
+                    self.extract_expr_symbols(init, symbols);
+                }
             }
             Stmt::Const { name, value, span } => {
                 let type_hint = self.infer_type(value);
@@ -125,8 +162,9 @@ impl SaldLanguageServer {
                     detail: Some(format!("const {}", name)),
                     documentation: None,
                     children: Vec::new(),
-                    type_hint,
-                });
+                    type_hint, source_uri: None });
+                // Also extract symbols from value
+                self.extract_expr_symbols(value, symbols);
             }
             Stmt::Namespace { name, body, span } => {
                 let mut children = Vec::new();
@@ -141,8 +179,7 @@ impl SaldLanguageServer {
                     detail: Some(format!("namespace {}", name)),
                     documentation: None,
                     children,
-                    type_hint: None,
-                });
+                    type_hint: None, source_uri: None });
             }
             Stmt::Enum { name, variants, span } => {
                 let children: Vec<Symbol> = variants.iter().map(|v| Symbol {
@@ -153,8 +190,7 @@ impl SaldLanguageServer {
                     detail: Some(format!("{}.{}", name, v)),
                     documentation: None,
                     children: Vec::new(),
-                    type_hint: None,
-                }).collect();
+                    type_hint: None, source_uri: None }).collect();
                 symbols.push(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Enum,
@@ -163,28 +199,126 @@ impl SaldLanguageServer {
                     detail: Some(format!("enum {} ({} variants)", name, variants.len())),
                     documentation: None,
                     children,
-                    type_hint: None,
-                });
+                    type_hint: None, source_uri: None });
             }
             Stmt::Block { statements, .. } => {
                 for s in statements {
                     self.extract_symbols_recursive(s, symbols);
                 }
             }
+            Stmt::Expression { expr, .. } => {
+                // Extract symbols from expression (like method calls with lambda args)
+                self.extract_expr_symbols(expr, symbols);
+            }
+            _ => {}
+        }
+    }
+    
+    /// Extract symbols from expressions (mainly for lambda parameters)
+    fn extract_expr_symbols(&self, expr: &Expr, symbols: &mut Vec<Symbol>) {
+        match expr {
+            Expr::Lambda { params, body, is_async: _, span } => {
+                // Lambda parameters are local symbols
+                for param in params {
+                    symbols.push(Symbol {
+                        name: param.name.clone(),
+                        kind: SymbolKind::Parameter,
+                        range: span_to_range(&param.span),
+                        selection_range: span_to_range(&param.span),
+                        detail: Some(format!("param {}", param.name)),
+                        documentation: None,
+                        children: Vec::new(),
+                        type_hint: None,
+                        source_uri: None,
+                    });
+                }
+                // Also extract from lambda body
+                match body {
+                    crate::ast::LambdaBody::Expr(e) => self.extract_expr_symbols(e, symbols),
+                    crate::ast::LambdaBody::Block(stmts) => {
+                        for stmt in stmts {
+                            self.extract_symbols_recursive(stmt, symbols);
+                        }
+                    }
+                }
+            }
+            Expr::Call { callee, args, .. } => {
+                self.extract_expr_symbols(callee, symbols);
+                for arg in args {
+                    self.extract_expr_symbols(&arg.value, symbols);
+                }
+            }
+            Expr::Binary { left, right, .. } => {
+                self.extract_expr_symbols(left, symbols);
+                self.extract_expr_symbols(right, symbols);
+            }
+            Expr::Unary { operand, .. } => {
+                self.extract_expr_symbols(operand, symbols);
+            }
+            Expr::Get { object, .. } => {
+                self.extract_expr_symbols(object, symbols);
+            }
+            Expr::Set { object, value, .. } => {
+                self.extract_expr_symbols(object, symbols);
+                self.extract_expr_symbols(value, symbols);
+            }
+            Expr::Index { object, index, .. } => {
+                self.extract_expr_symbols(object, symbols);
+                self.extract_expr_symbols(index, symbols);
+            }
+            Expr::Array { elements, .. } => {
+                for el in elements {
+                    self.extract_expr_symbols(el, symbols);
+                }
+            }
+            Expr::Dictionary { entries, .. } => {
+                for (k, v) in entries {
+                    self.extract_expr_symbols(k, symbols);
+                    self.extract_expr_symbols(v, symbols);
+                }
+            }
+            Expr::Ternary { condition, then_expr, else_expr, .. } => {
+                self.extract_expr_symbols(condition, symbols);
+                self.extract_expr_symbols(then_expr, symbols);
+                self.extract_expr_symbols(else_expr, symbols);
+            }
+            Expr::Await { expr: e, .. } | Expr::Grouping { expr: e, .. } => {
+                self.extract_expr_symbols(e, symbols);
+            }
             _ => {}
         }
     }
 
-    /// Infer type from expression (simple heuristic)
+    /// Infer type from expression (heuristic-based type inference)
     fn infer_type(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Call { callee, .. } => {
-                // If calling a class constructor, the type is that class
-                if let Expr::Identifier { name, .. } = callee.as_ref() {
-                    // Check if first letter is uppercase (class naming convention)
-                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        return Some(name.clone());
+                match callee.as_ref() {
+                    // Direct class constructor: ClassName()
+                    Expr::Identifier { name, .. } => {
+                        if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                            return Some(name.clone());
+                        }
                     }
+                    // Namespace/Class method call: Namespace.method() or Class.staticMethod()
+                    // e.g., Spark.createApp() → type is "Spark.App"
+                    Expr::Get { object, property, .. } => {
+                        // Get full path like "Spark" or "Spark.Response"
+                        if let Some(base_path) = self.get_expr_full_path(object) {
+                            // Check for factory pattern: createXxx -> Xxx
+                            if property.starts_with("create") && property.len() > 6 {
+                                // createApp -> App, createRouter -> Router
+                                let class_name = &property[6..];
+                                // Return full path like "Spark.App"
+                                return Some(format!("{}.{}", base_path, class_name));
+                            }
+                            // For other methods, just return the base namespace
+                            if base_path.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                                return Some(base_path);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
                 None
             }
@@ -198,9 +332,26 @@ impl SaldLanguageServer {
                     crate::ast::Literal::Null => None,
                 }
             }
+            Expr::Lambda { .. } => Some("Function".to_string()),
             _ => None
         }
     }
+
+    /// Get full path from expression chain (e.g., Spark.Response -> "Spark.Response")
+    fn get_expr_full_path(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier { name, .. } => Some(name.clone()),
+            Expr::Get { object, property, .. } => {
+                if let Some(base) = self.get_expr_full_path(object) {
+                    Some(format!("{}.{}", base, property))
+                } else {
+                    Some(property.clone())
+                }
+            }
+            _ => None
+        }
+    }
+
 
     fn function_to_symbol(&self, def: &FunctionDef) -> Symbol {
         let params: Vec<String> = def.params.iter().map(|p| p.name.clone()).collect();
@@ -214,8 +365,7 @@ impl SaldLanguageServer {
             detail: Some(detail),
             documentation: None,
             children: Vec::new(),
-            type_hint: None,
-        }
+            type_hint: None, source_uri: None }
     }
 
     fn class_to_symbol(&self, def: &ClassDef) -> Symbol {
@@ -239,8 +389,7 @@ impl SaldLanguageServer {
                     detail: Some(detail),
                     documentation: None,
                     children: Vec::new(),
-                    type_hint: None,
-                }
+                    type_hint: None, source_uri: None }
             })
             .collect();
         
@@ -264,8 +413,7 @@ impl SaldLanguageServer {
             detail: Some(detail),
             documentation: None,
             children,
-            type_hint: None,
-        }
+            type_hint: None, source_uri: None }
     }
     
     /// Extract self.xxx = yyy property assignments from statements
@@ -320,8 +468,7 @@ impl SaldLanguageServer {
                             detail: Some(format!("self.{}", property)),
                             documentation: None,
                             children: Vec::new(),
-                            type_hint,
-                        });
+                            type_hint, source_uri: None });
                     }
                 }
                 self.extract_properties_from_expr(value, children, seen);
@@ -391,17 +538,25 @@ impl SaldLanguageServer {
 
                     // Check if it's a variable and get its type
                     if let Some(type_name) = self.find_variable_type(&doc.symbols, var_name) {
-                        // Get methods from that class (check both doc symbols and builtins)
-                        if let Some(class_sym) = self.find_symbol_by_name(&doc.symbols, &type_name)
-                            .or_else(|| self.find_symbol_by_name(&builtin_symbols, &type_name)) {
-                            if class_sym.kind == SymbolKind::Class {
-                                for child in &class_sym.children {
+                        // Resolve type path (handles nested paths like "Spark.App")
+                        if let Some(type_sym) = self.resolve_type_path(&doc.symbols, &type_name)
+                            .or_else(|| self.resolve_type_path(&builtin_symbols, &type_name)) {
+                            // For both Class and Namespace, show children (methods/functions)
+                            if matches!(type_sym.kind, SymbolKind::Class | SymbolKind::Namespace) {
+                                for child in &type_sym.children {
+                                    let insert = if matches!(child.kind, SymbolKind::Method | SymbolKind::Function) {
+                                        Some(format!("{}($0)", child.name))
+                                    } else {
+                                        None
+                                    };
                                     items.push(CompletionItem {
                                         label: child.name.clone(),
                                         kind: Some(child.kind.to_completion_kind()),
                                         detail: child.detail.clone(),
-                                        insert_text: Some(format!("{}($0)", child.name)),
-                                        insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                        insert_text: insert,
+                                        insert_text_format: if matches!(child.kind, SymbolKind::Method | SymbolKind::Function) {
+                                            Some(InsertTextFormat::SNIPPET)
+                                        } else { None },
                                         ..Default::default()
                                     });
                                 }
@@ -412,16 +567,19 @@ impl SaldLanguageServer {
                         }
                     }
 
-                    // Check if var_name itself is a class/namespace in symbols (doc or builtin)
+                    // Check if var_name itself is a class/namespace/enum in symbols (doc or builtin)
                     if let Some(sym) = self.find_symbol_by_name(&doc.symbols, var_name)
                         .or_else(|| self.find_symbol_by_name(&builtin_symbols, var_name)) {
                         match sym.kind {
                             SymbolKind::Class | SymbolKind::Namespace | SymbolKind::Enum => {
                                 for child in &sym.children {
+                                    let is_callable = matches!(child.kind, SymbolKind::Method | SymbolKind::Function);
                                     items.push(CompletionItem {
                                         label: child.name.clone(),
                                         kind: Some(child.kind.to_completion_kind()),
                                         detail: child.detail.clone(),
+                                        insert_text: if is_callable { Some(format!("{}($0)", child.name)) } else { None },
+                                        insert_text_format: if is_callable { Some(InsertTextFormat::SNIPPET) } else { None },
                                         ..Default::default()
                                     });
                                 }
@@ -485,6 +643,31 @@ impl SaldLanguageServer {
         }
         None
     }
+
+    /// Resolve a type path like "Spark.App" by traversing namespace children
+    fn resolve_type_path<'a>(&self, symbols: &'a [Symbol], type_path: &str) -> Option<&'a Symbol> {
+        let parts: Vec<&str> = type_path.split('.').collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        // Find the root symbol
+        let root = self.find_symbol_by_name(symbols, parts[0])?;
+        
+        if parts.len() == 1 {
+            return Some(root);
+        }
+
+        // Traverse children for remaining parts
+        let mut current = root;
+        for part in &parts[1..] {
+            let found = current.children.iter().find(|c| c.name == *part)?;
+            current = found;
+        }
+        
+        Some(current)
+    }
+
     
     /// Find the class that contains the given position (for self. completion)
     fn find_class_at_position<'a>(&self, symbols: &'a [Symbol], position: Position) -> Option<&'a Symbol> {
@@ -540,12 +723,16 @@ impl SaldLanguageServer {
         let lines: Vec<&str> = doc.content.lines().collect();
         let line = lines.get(position.line as usize)?;
 
-        // Find word at position
         let char_pos = position.character as usize;
         if char_pos > line.len() {
             return None;
         }
         
+        // Get the full qualified name (e.g., "Spark.Response.json")
+        let full_expr = self.get_full_qualified_name(line, char_pos);
+        let parts: Vec<&str> = full_expr.split('.').collect();
+        
+        // Simple word extraction for the current identifier
         let start = line[..char_pos]
             .rfind(|c: char| !c.is_alphanumeric() && c != '_')
             .map(|i| i + 1)
@@ -561,15 +748,144 @@ impl SaldLanguageServer {
 
         let word = &line[start..end];
 
-        // Search for symbol definition (including methods)
-        if let Some(sym) = self.find_symbol_deep(&doc.symbols, word) {
-            return Some(Location {
-                uri: uri.clone(),
-                range: sym.selection_range,
-            });
+        // Helper to create Location from symbol
+        let make_location = |sym: &Symbol, fallback_uri: &Url| -> Option<Location> {
+            // If symbol has source_uri (which is a file path), convert to URL
+            if let Some(ref source_path) = sym.source_uri {
+                if !source_path.is_empty() {
+                    // Convert file path to URL using from_file_path for correct handling on all platforms
+                    let path = std::path::Path::new(source_path);
+                    if let Ok(file_uri) = Url::from_file_path(path) {
+                        // Only use if range seems valid (not all zeros)
+                        if sym.selection_range.end.line > 0 || sym.selection_range.end.character > 0 
+                            || sym.selection_range.start.character > 0 {
+                            return Some(Location {
+                                uri: file_uri,
+                                range: sym.selection_range,
+                            });
+                        }
+                    }
+                }
+            }
+            // Use fallback URI - only if range is valid
+            if sym.selection_range.end.line > 0 || sym.selection_range.end.character > 0 
+                || sym.selection_range.start.character > 0 
+                || sym.range.start.line > 0 {
+                return Some(Location {
+                    uri: fallback_uri.clone(),
+                    range: sym.selection_range,
+                });
+            }
+            None
+        };
+
+        // First try: Handle qualified names like Spark.Response.json
+        if parts.len() > 1 {
+            // Resolve the full path using our resolve_type_path helper
+            if let Some(sym) = self.resolve_type_path(&doc.symbols, &full_expr) {
+                if let Some(loc) = make_location(sym, uri) {
+                    return Some(loc);
+                }
+            }
+            
+            // If full path didn't work, try to find the specific part we're hovering
+            // Find the part before the current word
+            let word_index = parts.iter().position(|&p| p == word);
+            if let Some(idx) = word_index {
+                // Build path up to and including current word
+                let path_to_word = parts[..=idx].join(".");
+                if let Some(sym) = self.resolve_type_path(&doc.symbols, &path_to_word) {
+                    if let Some(loc) = make_location(sym, uri) {
+                        return Some(loc);
+                    }
+                }
+            }
         }
 
+        // Second try: Search in document symbols (local definitions)
+        if let Some(sym) = self.find_symbol_deep(&doc.symbols, word) {
+            if let Some(loc) = make_location(&sym, uri) {
+                return Some(loc);
+            }
+        }
+
+        // Third try: builtin symbols (no location available for builtins)
+        // Builtins don't have real file locations
         None
+    }
+
+    /// Get the full qualified name around position (e.g., "Spark.Response.json")
+    fn get_full_qualified_name(&self, line: &str, char_pos: usize) -> String {
+        let chars: Vec<char> = line.chars().collect();
+        
+        // Find start - go backwards
+        let mut start = char_pos;
+        while start > 0 {
+            let c = chars[start - 1];
+            if c.is_alphanumeric() || c == '_' || c == '.' {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        
+        // Find end - go forwards
+        let mut end = char_pos;
+        while end < chars.len() {
+            let c = chars[end];
+            if c.is_alphanumeric() || c == '_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        
+        chars[start..end].iter().collect()
+    }
+
+
+    /// Find if cursor is inside a string literal and return (content, start, end)
+    fn find_string_at_position(&self, line: &str, char_pos: usize) -> Option<(String, usize, usize)> {
+        // Find all string literals in the line
+        let mut in_string = false;
+        let mut string_start = 0;
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        
+        while i < chars.len() {
+            if chars[i] == '"' && (i == 0 || chars[i-1] != '\\') {
+                if !in_string {
+                    in_string = true;
+                    string_start = i;
+                } else {
+                    // End of string
+                    let string_end = i + 1;
+                    // Check if cursor is inside this string
+                    if char_pos >= string_start && char_pos < string_end {
+                        let content: String = chars[string_start+1..i].iter().collect();
+                        return Some((content, string_start, string_end));
+                    }
+                    in_string = false;
+                }
+            }
+            i += 1;
+        }
+        
+        None
+    }
+
+    /// Check if cursor position is inside a comment
+    fn is_in_comment(&self, line: &str, char_pos: usize) -> bool {
+        // Check for single-line comment //
+        if let Some(comment_start) = line.find("//") {
+            if char_pos >= comment_start {
+                return true;
+            }
+        }
+        
+        // For simplicity, we don't handle multi-line comments here
+        // as they would require cross-line analysis
+        false
     }
 
     /// Get hover info with fallback
@@ -581,6 +897,38 @@ impl SaldLanguageServer {
         let char_pos = position.character as usize;
         if char_pos > line.len() {
             return None;
+        }
+
+        // Check if cursor is inside a string literal
+        if let Some((string_content, string_start, string_end)) = self.find_string_at_position(line, char_pos) {
+            let word_range = Range {
+                start: Position { line: position.line, character: string_start as u32 },
+                end: Position { line: position.line, character: string_end as u32 },
+            };
+            
+            // Check if this looks like an import path
+            if string_content.ends_with(".sald") || !string_content.contains(' ') {
+                return Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("**\"{}\"** (string literal)", string_content),
+                    }),
+                    range: Some(word_range),
+                });
+            }
+            
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("**String literal**\n\n`\"{}\"`", string_content),
+                }),
+                range: Some(word_range),
+            });
+        }
+
+        // Check if cursor is inside a comment
+        if self.is_in_comment(line, char_pos) {
+            return None; // Don't show hover for comments
         }
 
         let start = line[..char_pos]
@@ -602,7 +950,54 @@ impl SaldLanguageServer {
             end: Position { line: position.line, character: end as u32 },
         };
 
-        // Check builtin symbols first
+        // Check keywords first (including self, super, true, false, null)
+        let keywords = [
+            ("let", "Variable declaration"),
+            ("const", "Constant declaration"),
+            ("fun", "Function declaration"),
+            ("class", "Class declaration"),
+            ("if", "Conditional statement"),
+            ("else", "Else branch"),
+            ("while", "While loop"),
+            ("for", "For-in loop"),
+            ("in", "In keyword for loops"),
+            ("do", "Do-while loop"),
+            ("return", "Return from function"),
+            ("break", "Break from loop"),
+            ("continue", "Continue to next iteration"),
+            ("import", "Import module"),
+            ("as", "Import alias"),
+            ("namespace", "Namespace declaration"),
+            ("enum", "Enum declaration"),
+            ("try", "Try block"),
+            ("catch", "Catch block"),
+            ("throw", "Throw exception"),
+            ("switch", "Switch expression"),
+            ("default", "Default case"),
+            ("async", "Async function modifier"),
+            ("await", "Await async expression"),
+            ("self", "Reference to current instance"),
+            ("super", "Reference to parent class"),
+            ("extends", "Class inheritance"),
+            ("static", "Static method/property"),
+            ("true", "Boolean true"),
+            ("false", "Boolean false"),
+            ("null", "Null value"),
+        ];
+        
+        for (kw, doc) in keywords {
+            if word == kw {
+                return Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("**{}** (keyword)\n\n{}", kw, doc),
+                    }),
+                    range: Some(word_range),
+                });
+            }
+        }
+
+        // Check builtin symbols
         let builtin_symbols = get_builtin_symbols();
         if let Some(sym) = self.find_symbol_deep(&builtin_symbols, word) {
             let kind_str = format!("{:?}", sym.kind).to_lowercase();
@@ -624,34 +1019,58 @@ impl SaldLanguageServer {
             });
         }
 
-        // Check keywords
-        let keywords = ["let", "const", "fun", "class", "if", "else", "while", "for", 
-                       "in", "return", "break", "continue", "import", "namespace", 
-                       "enum", "try", "catch", "throw", "switch", "default", "async", "await"];
-        if keywords.contains(&word) {
-            return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("**{}** (keyword)", word),
-                }),
-                range: Some(word_range),
-            });
-        }
-
         // Check document symbols (including nested methods)
         if let Some(sym) = self.find_symbol_deep(&doc.symbols, word) {
             let kind_str = format!("{:?}", sym.kind).to_lowercase();
+            
+            // Build type info string
             let type_info = sym.type_hint.as_ref()
-                .map(|t| format!(" → {}", t))
+                .map(|t| format!(": {}", t))
                 .unwrap_or_default();
             
-            let content = format!(
-                "**{}** ({}){}\n\n```sald\n{}\n```",
-                sym.name,
-                kind_str,
-                type_info,
-                sym.detail.as_deref().unwrap_or(&sym.name)
-            );
+            // Build hover content based on symbol kind
+            let content = match sym.kind {
+                SymbolKind::Variable | SymbolKind::Constant => {
+                    let decl_keyword = if sym.kind == SymbolKind::Constant { "const" } else { "let" };
+                    format!(
+                        "```sald\n{} {}{}\n```\n\n_{}_",
+                        decl_keyword,
+                        sym.name,
+                        type_info,
+                        kind_str
+                    )
+                }
+                SymbolKind::Function | SymbolKind::Method => {
+                    format!(
+                        "```sald\n{}\n```\n\n_{}_",
+                        sym.detail.as_deref().unwrap_or(&sym.name),
+                        kind_str
+                    )
+                }
+                SymbolKind::Class => {
+                    format!(
+                        "```sald\nclass {}\n```\n\n_{}_",
+                        sym.name,
+                        kind_str
+                    )
+                }
+                SymbolKind::Namespace => {
+                    format!(
+                        "```sald\nnamespace {}\n```\n\n_{}_",
+                        sym.name,
+                        kind_str
+                    )
+                }
+                _ => {
+                    format!(
+                        "**{}**{}\n\n_{}_",
+                        sym.name,
+                        type_info,
+                        kind_str
+                    )
+                }
+            };
+            
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -661,21 +1080,298 @@ impl SaldLanguageServer {
             });
         }
 
-        // Fallback: show the word itself with inferred info
-        let fallback = format!("**{}** (identifier)", word);
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: fallback,
-            }),
-            range: Some(word_range),
-        })
+        // No symbol found - don't show unhelpful fallback
+        None
+    }
+    
+    /// Index the entire workspace for cross-file symbol tracking
+    async fn index_workspace(&self) {
+        use super::symbols::WorkspaceIndex;
+        
+        let files = self.workspace_index.scan_workspace_files();
+        
+        self.client
+            .log_message(MessageType::INFO, format!("Indexing {} workspace files...", files.len()))
+            .await;
+        
+        // First pass: index all files for exports/references
+        for file_path in &files {
+            self.index_file(file_path);
+        }
+        
+        self.client
+            .log_message(MessageType::INFO, "Workspace indexing complete")
+            .await;
+        
+        // Count non-module files
+        let analyze_files: Vec<_> = files.iter()
+            .filter(|p| !WorkspaceIndex::is_sald_modules_path(p))
+            .collect();
+        
+        self.client
+            .log_message(MessageType::INFO, format!("Analyzing {} project files for diagnostics...", analyze_files.len()))
+            .await;
+        
+        // Second pass: run diagnostics for non-sald_modules files
+        for file_path in analyze_files {
+            // Read and analyze file
+            if let Ok(content) = std::fs::read_to_string(file_path) {
+                if let Ok(uri) = Url::from_file_path(file_path) {
+                    self.client
+                        .log_message(MessageType::LOG, format!("Analyzing: {}", file_path.display()))
+                        .await;
+                    self.analyze_document(uri, content).await;
+                }
+            }
+        }
+        
+        self.client
+            .log_message(MessageType::INFO, "Workspace analysis complete")
+            .await;
+    }
+    
+    /// Index a single file for exports and references
+    fn index_file(&self, file_path: &std::path::Path) {
+        // Read file content
+        let content = match std::fs::read_to_string(file_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        
+        let file_name = file_path.to_string_lossy().to_string();
+        
+        // Tokenize
+        let mut scanner = Scanner::new(&content, &file_name);
+        let tokens = match scanner.scan_tokens() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        
+        // Parse
+        let mut parser = Parser::new(tokens, &file_name, &content);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        
+        // Extract exported symbols (top-level)
+        let mut exports = Vec::new();
+        for stmt in &program.statements {
+            self.extract_export_symbol(stmt, &mut exports);
+        }
+        
+        // Register exports
+        self.workspace_index.register_exports(file_path.to_path_buf(), exports);
+        
+        // Collect referenced symbols (identifiers used in this file)
+        let mut references = Vec::new();
+        for stmt in &program.statements {
+            self.collect_references_from_stmt(stmt, &mut references);
+        }
+        
+        // Register references
+        self.workspace_index.register_references(&file_path.to_path_buf(), references);
+    }
+    
+    /// Extract top-level exported symbols from a statement
+    fn extract_export_symbol(&self, stmt: &Stmt, exports: &mut Vec<Symbol>) {
+        match stmt {
+            Stmt::Function { def } => exports.push(self.function_to_symbol(def)),
+            Stmt::Class { def } => exports.push(self.class_to_symbol(def)),
+            Stmt::Let { name, span, .. } => {
+                exports.push(Symbol {
+                    name: name.clone(),
+                    kind: SymbolKind::Variable,
+                    range: span_to_range(span),
+                    selection_range: span_to_range(span),
+                    detail: Some(format!("let {}", name)),
+                    documentation: None,
+                    children: Vec::new(),
+                    type_hint: None,
+                    source_uri: None,
+                });
+            }
+            Stmt::Const { name, span, .. } => {
+                exports.push(Symbol {
+                    name: name.clone(),
+                    kind: SymbolKind::Constant,
+                    range: span_to_range(span),
+                    selection_range: span_to_range(span),
+                    detail: Some(format!("const {}", name)),
+                    documentation: None,
+                    children: Vec::new(),
+                    type_hint: None,
+                    source_uri: None,
+                });
+            }
+            Stmt::Namespace { name, span, .. } => {
+                exports.push(Symbol {
+                    name: name.clone(),
+                    kind: SymbolKind::Namespace,
+                    range: span_to_range(span),
+                    selection_range: span_to_range(span),
+                    detail: Some(format!("namespace {}", name)),
+                    documentation: None,
+                    children: Vec::new(),
+                    type_hint: None,
+                    source_uri: None,
+                });
+            }
+            Stmt::Enum { name, span, .. } => {
+                exports.push(Symbol {
+                    name: name.clone(),
+                    kind: SymbolKind::Enum,
+                    range: span_to_range(span),
+                    selection_range: span_to_range(span),
+                    detail: Some(format!("enum {}", name)),
+                    documentation: None,
+                    children: Vec::new(),
+                    type_hint: None,
+                    source_uri: None,
+                });
+            }
+            _ => {}
+        }
+    }
+    
+    /// Collect referenced symbol names from a statement
+    fn collect_references_from_stmt(&self, stmt: &Stmt, refs: &mut Vec<String>) {
+        match stmt {
+            Stmt::Expression { expr, .. } => self.collect_references_from_expr(expr, refs),
+            Stmt::Let { initializer, .. } => {
+                if let Some(init) = initializer {
+                    self.collect_references_from_expr(init, refs);
+                }
+            }
+            Stmt::Const { value, .. } => self.collect_references_from_expr(value, refs),
+            Stmt::Block { statements, .. } => {
+                for s in statements {
+                    self.collect_references_from_stmt(s, refs);
+                }
+            }
+            Stmt::If { condition, then_branch, else_branch, .. } => {
+                self.collect_references_from_expr(condition, refs);
+                self.collect_references_from_stmt(then_branch, refs);
+                if let Some(eb) = else_branch {
+                    self.collect_references_from_stmt(eb, refs);
+                }
+            }
+            Stmt::While { condition, body, .. } => {
+                self.collect_references_from_expr(condition, refs);
+                self.collect_references_from_stmt(body, refs);
+            }
+            Stmt::For { iterable, body, .. } => {
+                self.collect_references_from_expr(iterable, refs);
+                self.collect_references_from_stmt(body, refs);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value {
+                    self.collect_references_from_expr(v, refs);
+                }
+            }
+            Stmt::Function { def } => {
+                for s in &def.body {
+                    self.collect_references_from_stmt(s, refs);
+                }
+            }
+            Stmt::Class { def } => {
+                for method in &def.methods {
+                    for s in &method.body {
+                        self.collect_references_from_stmt(s, refs);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    
+    /// Collect referenced symbol names from an expression
+    fn collect_references_from_expr(&self, expr: &Expr, refs: &mut Vec<String>) {
+        match expr {
+            Expr::Identifier { name, .. } => {
+                refs.push(name.clone());
+            }
+            Expr::Call { callee, args, .. } => {
+                self.collect_references_from_expr(callee, refs);
+                for arg in args {
+                    self.collect_references_from_expr(&arg.value, refs);
+                }
+            }
+            Expr::Get { object, .. } => {
+                self.collect_references_from_expr(object, refs);
+            }
+            Expr::Binary { left, right, .. } => {
+                self.collect_references_from_expr(left, refs);
+                self.collect_references_from_expr(right, refs);
+            }
+            Expr::Unary { operand, .. } => {
+                self.collect_references_from_expr(operand, refs);
+            }
+            Expr::Lambda { body, .. } => {
+                match body {
+                    crate::ast::LambdaBody::Expr(e) => self.collect_references_from_expr(e, refs),
+                    crate::ast::LambdaBody::Block(stmts) => {
+                        for s in stmts {
+                            self.collect_references_from_stmt(s, refs);
+                        }
+                    }
+                }
+            }
+            Expr::Array { elements, .. } => {
+                for el in elements {
+                    self.collect_references_from_expr(el, refs);
+                }
+            }
+            Expr::Dictionary { entries, .. } => {
+                for (k, v) in entries {
+                    self.collect_references_from_expr(k, refs);
+                    self.collect_references_from_expr(v, refs);
+                }
+            }
+            Expr::Assignment { value, .. } | Expr::Set { value, .. } => {
+                self.collect_references_from_expr(value, refs);
+            }
+            Expr::Index { object, index, .. } => {
+                self.collect_references_from_expr(object, refs);
+                self.collect_references_from_expr(index, refs);
+            }
+            Expr::Ternary { condition, then_expr, else_expr, .. } => {
+                self.collect_references_from_expr(condition, refs);
+                self.collect_references_from_expr(then_expr, refs);
+                self.collect_references_from_expr(else_expr, refs);
+            }
+            Expr::Await { expr: e, .. } | Expr::Grouping { expr: e, .. } => {
+                self.collect_references_from_expr(e, refs);
+            }
+            _ => {}
+        }
     }
 }
 
 #[tower_lsp::async_trait]
 impl LanguageServer for SaldLanguageServer {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Set workspace root for import resolution
+        if let Some(root_uri) = params.root_uri {
+            if let Ok(path) = root_uri.to_file_path() {
+                self.import_resolver.write().set_workspace_root(path.clone());
+                self.workspace_index.set_workspace_root(path.clone());
+                crate::set_project_root(&path);
+                // Initial workspace indexing
+                self.index_workspace().await;
+            }
+        } else if let Some(folders) = params.workspace_folders {
+            if let Some(first) = folders.first() {
+                if let Ok(path) = first.uri.to_file_path() {
+                    self.import_resolver.write().set_workspace_root(path.clone());
+                    self.workspace_index.set_workspace_root(path.clone());
+                    crate::set_project_root(&path);
+                    // Initial workspace indexing
+                    self.index_workspace().await;
+                }
+            }
+        }
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -693,7 +1389,7 @@ impl LanguageServer for SaldLanguageServer {
             },
             server_info: Some(ServerInfo {
                 name: "sald-lsp".to_string(),
-                version: Some("0.2.0".to_string()),
+                version: Some("0.3.0".to_string()),
             }),
         })
     }
@@ -794,3 +1490,5 @@ fn symbol_to_document_symbol(sym: &Symbol) -> DocumentSymbol {
         children,
     }
 }
+
+

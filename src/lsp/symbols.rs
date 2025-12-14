@@ -47,7 +47,7 @@ impl SymbolKind {
 }
 
 /// A symbol definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
@@ -56,7 +56,14 @@ pub struct Symbol {
     pub detail: Option<String>,
     pub documentation: Option<String>,
     pub children: Vec<Symbol>,
-    pub type_hint: Option<String>, // Inferred type for variables
+    pub type_hint: Option<String>,
+    pub source_uri: Option<String>,
+}
+
+impl Default for SymbolKind {
+    fn default() -> Self {
+        SymbolKind::Variable
+    }
 }
 
 /// Document symbols and diagnostics
@@ -92,7 +99,117 @@ impl SymbolTable {
     }
 }
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+/// Workspace-wide index for cross-file symbol tracking
+/// Tracks exported symbols and their usage across the entire project
+#[derive(Debug, Default)]
+pub struct WorkspaceIndex {
+    /// Exported symbols by file path
+    exports: DashMap<PathBuf, Vec<Symbol>>,
+    /// Symbol references: which files use which symbol names
+    /// Key: symbol name, Value: set of files that use this symbol
+    references: DashMap<String, HashSet<PathBuf>>,
+    /// Workspace root path
+    workspace_root: parking_lot::RwLock<Option<PathBuf>>,
+}
+
+impl WorkspaceIndex {
+    pub fn new() -> Self {
+        Self {
+            exports: DashMap::new(),
+            references: DashMap::new(),
+            workspace_root: parking_lot::RwLock::new(None),
+        }
+    }
+    
+    /// Set the workspace root
+    pub fn set_workspace_root(&self, root: PathBuf) {
+        *self.workspace_root.write() = Some(root);
+    }
+    
+    /// Get the workspace root
+    pub fn get_workspace_root(&self) -> Option<PathBuf> {
+        self.workspace_root.read().clone()
+    }
+    
+    /// Register exported symbols for a file
+    pub fn register_exports(&self, file_path: PathBuf, symbols: Vec<Symbol>) {
+        self.exports.insert(file_path, symbols);
+    }
+    
+    /// Register that a file uses certain symbol names
+    pub fn register_references(&self, file_path: &PathBuf, symbol_names: Vec<String>) {
+        for name in symbol_names {
+            self.references
+                .entry(name)
+                .or_insert_with(HashSet::new)
+                .insert(file_path.clone());
+        }
+    }
+    
+    /// Check if a symbol is used by any file other than the defining file
+    pub fn is_symbol_used_externally(&self, symbol_name: &str, defining_file: &PathBuf) -> bool {
+        if let Some(refs) = self.references.get(symbol_name) {
+            // Check if any file other than the defining file uses this symbol
+            refs.iter().any(|f| f != defining_file)
+        } else {
+            false
+        }
+    }
+    
+    /// Get all exported symbol names for determining if a symbol is exported
+    pub fn get_exported_names(&self, file_path: &PathBuf) -> HashSet<String> {
+        if let Some(exports) = self.exports.get(file_path) {
+            exports.iter().map(|s| s.name.clone()).collect()
+        } else {
+            HashSet::new()
+        }
+    }
+    
+    /// Clear references for a file (before re-analyzing)
+    pub fn clear_file_references(&self, file_path: &PathBuf) {
+        // Remove this file from all reference sets
+        for mut entry in self.references.iter_mut() {
+            entry.value_mut().remove(file_path);
+        }
+    }
+    
+    /// Check if a path is inside sald_modules (for skipping diagnostics, not exports)
+    pub fn is_sald_modules_path(path: &std::path::Path) -> bool {
+        path.components().any(|c| c.as_os_str() == "sald_modules")
+    }
+    
+    /// Scan workspace for all .sald files (INCLUDING sald_modules for exports)
+    pub fn scan_workspace_files(&self) -> Vec<PathBuf> {
+        let root = match self.get_workspace_root() {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+        
+        let mut files = Vec::new();
+        Self::scan_directory(&root, &mut files);
+        files
+    }
+    
+    fn scan_directory(dir: &PathBuf, files: &mut Vec<PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    Self::scan_directory(&path, files);
+                } else if path.extension().map_or(false, |e| e == "sald") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+}
+
 /// Convert Sald Span to LSP Range
+/// Note: LSP uses 0-based line/column, Sald uses 1-based
+/// LSP range end is EXCLUSIVE, so we don't subtract 1 from end column
 pub fn span_to_range(span: &crate::error::Span) -> Range {
     Range {
         start: Position {
@@ -101,7 +218,8 @@ pub fn span_to_range(span: &crate::error::Span) -> Range {
         },
         end: Position {
             line: span.end.line.saturating_sub(1) as u32,
-            character: span.end.column.saturating_sub(1) as u32,
+            // End column: don't subtract 1 because LSP end is exclusive
+            character: span.end.column as u32,
         },
     }
 }
