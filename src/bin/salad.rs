@@ -777,9 +777,29 @@ async fn install_package(client: &reqwest::Client, modules_dir: &Path, name: &st
     let cursor = std::io::Cursor::new(bytes.as_ref());
     let mut archive = zip::ZipArchive::new(cursor).ok()?;
     
+    // Canonicalize module_dir for path validation
+    let module_dir_canonical = module_dir.canonicalize().unwrap_or_else(|_| module_dir.clone());
+    
     for i in 0..archive.len() {
         if let Ok(mut file) = archive.by_index(i) {
             let outpath = module_dir.join(file.name());
+            
+            // SECURITY: Prevent Zip Slip attack - validate path doesn't escape module_dir
+            let outpath_canonical = outpath.canonicalize().unwrap_or_else(|_| {
+                // If file doesn't exist yet, check parent
+                if let Some(parent) = outpath.parent() {
+                    if let Ok(parent_canonical) = parent.canonicalize() {
+                        return parent_canonical.join(outpath.file_name().unwrap_or_default());
+                    }
+                }
+                outpath.clone()
+            });
+            
+            if !outpath_canonical.starts_with(&module_dir_canonical) {
+                // Skip malicious paths that try to escape module directory
+                continue;
+            }
+            
             if file.name().ends_with('/') {
                 fs::create_dir_all(&outpath).ok();
             } else {
