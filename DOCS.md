@@ -308,17 +308,17 @@ try {
 ```javascript
 class Animal {
     // Constructor (receives self implicitly)
-    fun init(name) {
+    fun init(self, name) {
         self.name = name
     }
     
     // Instance method
-    fun speak() {
+    fun speak(self) {
         Console.println($"{self.name} makes a sound")
     }
     
     // Static method (no self parameter)
-    fun create(name) {
+    fun create(self, name) {
         return Animal(name)
     }
 }
@@ -335,11 +335,11 @@ let cat = Animal.create("Whiskers")
 
 ```javascript
 class Dog extends Animal {
-    fun speak() {
+    fun speak(self) {
         Console.println($"{self.name} barks!")
     }
     
-    fun speakTwice() {
+    fun speakTwice(self) {
         super.speak()  // call parent
         self.speak()
     }
