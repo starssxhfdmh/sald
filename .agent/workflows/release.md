@@ -56,6 +56,7 @@ Workflow to create a new release with binaries for Linux and Windows.
 | Linux (glibc) | x86_64-unknown-linux-gnu | `sald-linux-x86_64` |
 | Linux (musl) | x86_64-unknown-linux-musl | `sald-linux-x86_64-musl` |
 | Windows | x86_64-pc-windows-msvc | `sald-windows-x86_64.exe` |
+| VSCode Extension | N/A | `sald-vscode-extension.vsix` |
 
 ## Troubleshooting
 

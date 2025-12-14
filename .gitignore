@@ -1,7 +1,11 @@
-/target
-/modules
-/salad-web
-/sald-programming-language
-/.cargo
-/.vscode
+target
+modules
+salad-web
+sald-programming-language
+.cargo
+.vscode
 sald_modules
+node_modules
+out
+*.vsix
+package-lock.json

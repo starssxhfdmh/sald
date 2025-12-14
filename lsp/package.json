@@ -1,0 +1,95 @@
+{
+  "name": "sald-programming-language",
+  "displayName": "Sald Programming Language",
+  "description": "Syntax highlighting and language support for Sald",
+  "version": "0.1.0",
+  "publisher": "sald-team",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "sald",
+    "scripting",
+    "async",
+    "programming language"
+  ],
+  "activationEvents": [
+    
+  ],
+  "main": "./out/extension.js",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sald-team/sald"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "sald",
+        "aliases": ["Sald", "sald"],
+        "extensions": [".sald"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sald",
+        "scopeName": "source.sald",
+        "path": "./syntaxes/sald.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Sald",
+      "properties": {
+        "sald.lsp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to sald-lsp executable. If empty, uses PATH."
+        },
+        "sald.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Language Server Protocol features."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "sald.showAllDiagnostics",
+        "title": "Sald: Analyze All Workspace Files"
+      },
+      {
+        "command": "sald.startServer",
+        "title": "Sald: Start Language Server"
+      },
+      {
+        "command": "sald.stopServer",
+        "title": "Sald: Stop Language Server"
+      },
+      {
+        "command": "sald.restartServer",
+        "title": "Sald: Restart Language Server"
+      },
+      {
+        "command": "sald.configurePath",
+        "title": "Sald: Configure LSP Executable Path"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}

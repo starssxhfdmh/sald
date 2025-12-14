@@ -217,7 +217,7 @@ impl SaldLanguageServer {
     /// Extract symbols from expressions (mainly for lambda parameters)
     fn extract_expr_symbols(&self, expr: &Expr, symbols: &mut Vec<Symbol>) {
         match expr {
-            Expr::Lambda { params, body, is_async: _, span } => {
+            Expr::Lambda { params, body, is_async: _, span: _ } => {
                 // Lambda parameters are local symbols
                 for param in params {
                     symbols.push(Symbol {
