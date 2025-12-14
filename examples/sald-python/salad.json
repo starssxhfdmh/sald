@@ -1,0 +1,9 @@
+{
+  "name": "sald-python",
+  "version": "1.0.0",
+  "description": "A Python interpreter written in Sald language",
+  "author": "starssxproject",
+  "license": "MIT",
+  "main": "interpreter.sald",
+  "modules": {}
+}

@@ -1,0 +1,1223 @@
+// ============================================================
+// Sald-Python: Interpreter (Evaluator)
+// A Python interpreter written in Sald using idiomatic features
+// ============================================================
+
+import "lexer.sald"
+import "parser.sald"
+
+// ============================================================
+// Control Flow Exceptions (using enum for type safety)
+// ============================================================
+
+enum ControlFlow {
+    RETURN,
+    BREAK,
+    CONTINUE
+}
+
+class ControlFlowException {
+    fun init(self, type, value) {
+        self.type = type
+        self.value = value
+    }
+}
+
+// ============================================================
+// Environment (Scope)
+// ============================================================
+
+class Environment {
+    fun init(self, parent) {
+        self.values = {}
+        self.parent = parent
+    }
+    
+    fun define(self, name, value) {
+        self.values[name] = value
+    }
+    
+    fun get(self, name) {
+        if self.values.has(name) {
+            return self.values[name]
+        }
+        if self.parent != null {
+            return self.parent.get(name)
+        }
+        throw $"NameError: name '{name}' is not defined"
+    }
+    
+    fun set(self, name, value) {
+        if self.values.has(name) {
+            self.values[name] = value
+            return true
+        }
+        if self.parent != null {
+            return self.parent.set(name, value)
+        }
+        // Python allows creating new variable with assignment
+        self.values[name] = value
+        return true
+    }
+    
+    fun has(self, name) {
+        if self.values.has(name) {
+            return true
+        }
+        if self.parent != null {
+            return self.parent.has(name)
+        }
+        return false
+    }
+    
+    fun assign(self, name, value) {
+        // For assignment - search up the scope chain or create in current
+        if self.values.has(name) {
+            self.values[name] = value
+            return
+        }
+        if self.parent != null && self.parent.has(name) {
+            self.parent.assign(name, value)
+            return
+        }
+        // Create in current scope (like Python does)
+        self.values[name] = value
+    }
+}
+
+// ============================================================
+// Python Function
+// ============================================================
+
+class PythonFunction {
+    fun init(self, name, params, body, closure) {
+        self.name = name
+        self.params = params
+        self.body = body
+        self.closure = closure
+        self.isMethod = false
+        self.boundInstance = null
+    }
+    
+    fun bind(self, instance) {
+        let bound = PythonFunction(self.name, self.params, self.body, self.closure)
+        bound.isMethod = true
+        bound.boundInstance = instance
+        return bound
+    }
+    
+    fun call(self, interpreter, args) {
+        let env = Environment(self.closure)
+        
+        // Bind 'self' for methods
+        let paramOffset = 0
+        if self.isMethod && self.boundInstance != null {
+            if self.params.length() > 0 {
+                env.define(self.params[0], self.boundInstance)
+                paramOffset = 1
+            }
+        }
+        
+        // Bind parameters
+        for i in Array.range(self.params.length() - paramOffset) {
+            let paramIndex = i + paramOffset
+            let value = null
+            if i < args.length() {
+                value = args[i]
+            }
+            if paramIndex < self.params.length() {
+                env.define(self.params[paramIndex], value)
+            }
+        }
+        
+        // Execute body
+        try {
+            interpreter.executeBlock(self.body, env)
+            return null
+        } catch e {
+            if Type.isInstance(e) && e.type == ControlFlow.RETURN {
+                return e.value
+            }
+            throw e
+        }
+    }
+}
+
+// ============================================================
+// Python Lambda
+// ============================================================
+
+class PythonLambda {
+    fun init(self, params, body, closure) {
+        self.params = params
+        self.body = body
+        self.closure = closure
+    }
+    
+    fun call(self, interpreter, args) {
+        let env = Environment(self.closure)
+        
+        // Bind parameters
+        for i in Array.range(self.params.length()) {
+            let value = null
+            if i < args.length() {
+                value = args[i]
+            }
+            env.define(self.params[i], value)
+        }
+        
+        // Evaluate body expression
+        let previousEnv = interpreter.environment
+        interpreter.environment = env
+        let result = interpreter.evaluate(self.body)
+        interpreter.environment = previousEnv
+        return result
+    }
+}
+
+// ============================================================
+// Python Class
+// ============================================================
+
+class PythonClass {
+    fun init(self, name, superclass, methods) {
+        self.name = name
+        self.superclass = superclass
+        self.methods = methods
+    }
+    
+    fun call(self, interpreter, args) {
+        let instance = PythonInstance(self)
+        
+        // Call __init__ if exists
+        let initMethod = self.findMethod("__init__")
+        if initMethod != null {
+            initMethod.bind(instance).call(interpreter, args)
+        }
+        
+        return instance
+    }
+    
+    fun findMethod(self, name) {
+        if self.methods.has(name) {
+            return self.methods[name]
+        }
+        if self.superclass != null {
+            return self.superclass.findMethod(name)
+        }
+        return null
+    }
+}
+
+// ============================================================
+// Python Instance
+// ============================================================
+
+class PythonInstance {
+    fun init(self, klass) {
+        self.klass = klass
+        self.fields = {}
+    }
+    
+    fun get(self, name) {
+        if self.fields.has(name) {
+            return self.fields[name]
+        }
+        
+        let method = self.klass.findMethod(name)
+        if method != null {
+            return method.bind(self)
+        }
+        
+        throw $"AttributeError: '{self.klass.name}' object has no attribute '{name}'"
+    }
+    
+    fun set(self, name, value) {
+        self.fields[name] = value
+    }
+}
+
+// ============================================================
+// Native Function
+// ============================================================
+
+class NativeFunction {
+    fun init(self, name, func) {
+        self.name = name
+        self.func = func
+    }
+    
+    fun call(self, interpreter, args) {
+        return self.func(args)
+    }
+}
+
+// ============================================================
+// Interpreter
+// ============================================================
+
+class Interpreter {
+    fun init(self) {
+        self.globals = Environment(null)
+        self.environment = self.globals
+        
+        // Register native functions
+        self.registerNatives()
+    }
+    
+    fun registerNatives(self) {
+        // print(*args)
+        self.globals.define("print", NativeFunction("print", |args| {
+            let output = args.map(|v| self.stringify(v)).join(" ")
+            Console.println(output)
+            return null
+        }))
+        
+        // input([prompt])
+        self.globals.define("input", NativeFunction("input", |args| {
+            if args.length() > 0 {
+                Console.print(self.stringify(args[0]))
+            }
+            return Console.input()
+        }))
+        
+        // len(obj)
+        self.globals.define("len", NativeFunction("len", |args| {
+            let obj = args[0]
+            if Type.isString(obj) { return obj.length() }
+            if Type.isArray(obj) { return obj.length() }
+            if Type.isDict(obj) { return obj.keys().length() }
+            throw "TypeError: object has no len()"
+        }))
+        
+        // range(stop) or range(start, stop) or range(start, stop, step)
+        self.globals.define("range", NativeFunction("range", |args| {
+            switch args.length() {
+                1 -> return Array.range(args[0])
+                2 -> return Array.range(args[0], args[1])
+                3 -> return Array.range(args[0], args[1], args[2])
+                default -> throw "TypeError: range expected 1-3 arguments"
+            }
+        }))
+        
+        // str(obj)
+        self.globals.define("str", NativeFunction("str", |args| {
+            return self.stringify(args[0])
+        }))
+        
+        // int(obj)
+        self.globals.define("int", NativeFunction("int", |args| {
+            let v = args[0]
+            if Type.isNumber(v) { return Math.floor(v) }
+            if Type.isString(v) { return Number(v).floor() }
+            throw "TypeError: int() argument must be a string or number"
+        }))
+        
+        // float(obj)
+        self.globals.define("float", NativeFunction("float", |args| {
+            let v = args[0]
+            if Type.isNumber(v) { return v }
+            if Type.isString(v) { return Number(v) }
+            throw "TypeError: float() argument must be a string or number"
+        }))
+        
+        // bool(obj)  
+        self.globals.define("bool", NativeFunction("bool", |args| {
+            return self.isTruthy(args[0])
+        }))
+        
+        // type(obj)
+        self.globals.define("type", NativeFunction("type", |args| {
+            return self.pythonType(args[0])
+        }))
+        
+        // list(iterable)
+        self.globals.define("list", NativeFunction("list", |args| {
+            if args.length() == 0 { return [] }
+            let v = args[0]
+            if Type.isArray(v) { return v.slice(0) }
+            if Type.isString(v) {
+                let result = []
+                for i in Array.range(v.length()) {
+                    result.push(v.charAt(i))
+                }
+                return result
+            }
+            throw "TypeError: cannot convert to list"
+        }))
+        
+        // dict()
+        self.globals.define("dict", NativeFunction("dict", |args| {
+            if args.length() == 0 { return {} }
+            return args[0]
+        }))
+        
+        // abs(x)
+        self.globals.define("abs", NativeFunction("abs", |args| {
+            return Math.abs(args[0])
+        }))
+        
+        // min(*args)
+        self.globals.define("min", NativeFunction("min", |args| {
+            if args.length() == 1 && Type.isArray(args[0]) {
+                return args[0].reduce(|a, b| a < b ? a : b, args[0][0])
+            }
+            return args.reduce(|a, b| a < b ? a : b, args[0])
+        }))
+        
+        // max(*args)
+        self.globals.define("max", NativeFunction("max", |args| {
+            if args.length() == 1 && Type.isArray(args[0]) {
+                return args[0].reduce(|a, b| a > b ? a : b, args[0][0])
+            }
+            return args.reduce(|a, b| a > b ? a : b, args[0])
+        }))
+        
+        // sum(iterable)
+        self.globals.define("sum", NativeFunction("sum", |args| {
+            return args[0].reduce(|a, b| a + b, 0)
+        }))
+        
+        // sorted(iterable)
+        self.globals.define("sorted", NativeFunction("sorted", |args| {
+            let arr = args[0].slice(0)
+            arr.sort(|a, b| a < b ? -1 : (a > b ? 1 : 0))
+            return arr
+        }))
+        
+        // reversed(iterable)
+        self.globals.define("reversed", NativeFunction("reversed", |args| {
+            let arr = args[0].slice(0)
+            arr.reverse()
+            return arr
+        }))
+        
+        // enumerate(iterable)
+        self.globals.define("enumerate", NativeFunction("enumerate", |args| {
+            let result = []
+            let arr = args[0]
+            for i in Array.range(arr.length()) {
+                result.push([i, arr[i]])
+            }
+            return result
+        }))
+        
+        // zip(*iterables)
+        self.globals.define("zip", NativeFunction("zip", |args| {
+            if args.length() == 0 { return [] }
+            let result = []
+            let minLen = args[0].length()
+            for arr in args {
+                if arr.length() < minLen { minLen = arr.length() }
+            }
+            for i in Array.range(minLen) {
+                let tuple = []
+                for arr in args {
+                    tuple.push(arr[i])
+                }
+                result.push(tuple)
+            }
+            return result
+        }))
+        
+        // map(func, iterable)
+        self.globals.define("map", NativeFunction("map", |args| {
+            let func = args[0]
+            let arr = args[1]
+            return arr.map(|x| func.call(self, [x]))
+        }))
+        
+        // filter(func, iterable)
+        self.globals.define("filter", NativeFunction("filter", |args| {
+            let func = args[0]
+            let arr = args[1]
+            return arr.filter(|x| self.isTruthy(func.call(self, [x])))
+        }))
+        
+        // isinstance (simplified)
+        self.globals.define("isinstance", NativeFunction("isinstance", |args| {
+            let obj = args[0]
+            let typeStr = args[1]
+            return self.pythonType(obj) == typeStr
+        }))
+        
+        // hasattr
+        self.globals.define("hasattr", NativeFunction("hasattr", |args| {
+            let obj = args[0]
+            let name = args[1]
+            if Type.isInstance(obj) && obj.fields != null {
+                return obj.fields.has(name) || obj.klass.findMethod(name) != null
+            }
+            if Type.isDict(obj) {
+                return obj.has(name)
+            }
+            return false
+        }))
+        
+        // getattr
+        self.globals.define("getattr", NativeFunction("getattr", |args| {
+            let obj = args[0]
+            let name = args[1]
+            let defaultVal = args.length() > 2 ? args[2] : null
+            try {
+                if Type.isInstance(obj) {
+                    return obj.get(name)
+                }
+                if Type.isDict(obj) {
+                    return obj.get(name, defaultVal)
+                }
+            } catch e {
+                if args.length() > 2 { return defaultVal }
+                throw e
+            }
+            return defaultVal
+        }))
+        
+        // setattr
+        self.globals.define("setattr", NativeFunction("setattr", |args| {
+            let obj = args[0]
+            let name = args[1]
+            let value = args[2]
+            if Type.isInstance(obj) {
+                obj.set(name, value)
+            } else if Type.isDict(obj) {
+                obj[name] = value
+            }
+            return null
+        }))
+        
+        // ord(char)
+        self.globals.define("ord", NativeFunction("ord", |args| {
+            return String.charCodeAt(args[0], 0)
+        }))
+        
+        // chr(code)
+        self.globals.define("chr", NativeFunction("chr", |args| {
+            return String.fromCharCode(args[0])
+        }))
+        
+        // round(number, [digits])
+        self.globals.define("round", NativeFunction("round", |args| {
+            let n = args[0]
+            if args.length() > 1 {
+                let digits = args[1]
+                let factor = Math.pow(10, digits)
+                return Math.round(n * factor) / factor
+            }
+            return Math.round(n)
+        }))
+        
+        // pow(base, exp)
+        self.globals.define("pow", NativeFunction("pow", |args| {
+            return Math.pow(args[0], args[1])
+        }))
+    }
+    
+    // ==================== Execution ====================
+    
+    fun run(self, source) {
+        // Tokenize
+        let lexer = Lexer(source)
+        let tokens = lexer.scanTokens()
+        
+        // Parse
+        let parser = Parser(tokens)
+        let ast = parser.parse()
+        
+        // Execute
+        return self.execute(ast)
+    }
+    
+    fun execute(self, node) {
+        switch node.nodeType {
+            NodeType.BLOCK -> return self.executeBlock(node, self.environment)
+            NodeType.ASSIGN -> return self.executeAssign(node)
+            NodeType.AUG_ASSIGN -> return self.executeAugAssign(node)
+            NodeType.IF -> return self.executeIf(node)
+            NodeType.WHILE -> return self.executeWhile(node)
+            NodeType.FOR -> return self.executeFor(node)
+            NodeType.FUNCTION -> return self.executeFunction(node)
+            NodeType.CLASS -> return self.executeClass(node)
+            NodeType.RETURN -> throw ControlFlowException(ControlFlow.RETURN, node.value != null ? self.evaluate(node.value) : null)
+            NodeType.BREAK -> throw ControlFlowException(ControlFlow.BREAK, null)
+            NodeType.CONTINUE -> throw ControlFlowException(ControlFlow.CONTINUE, null)
+            NodeType.PASS -> return null
+            NodeType.EXPR_STMT -> return self.evaluate(node.expr)
+            default -> return self.evaluate(node)
+        }
+    }
+    
+    fun executeBlock(self, block, env) {
+        let previous = self.environment
+        self.environment = env
+        
+        let result = null
+        try {
+            for stmt in block.statements {
+                result = self.execute(stmt)
+            }
+        } catch e {
+            self.environment = previous
+            throw e
+        }
+        
+        self.environment = previous
+        return result
+    }
+    
+    fun executeAssign(self, node) {
+        let value = self.evaluate(node.value)
+        
+        switch node.target.nodeType {
+            NodeType.IDENTIFIER -> {
+                self.environment.assign(node.target.name, value)
+            }
+            NodeType.INDEX -> {
+                let obj = self.evaluate(node.target.object)
+                let index = self.evaluate(node.target.index)
+                obj[index] = value
+            }
+            NodeType.ATTRIBUTE -> {
+                let obj = self.evaluate(node.target.object)
+                if Type.isInstance(obj) {
+                    obj.set(node.target.attribute, value)
+                } else {
+                    obj[node.target.attribute] = value
+                }
+            }
+            default -> throw "SyntaxError: cannot assign to expression"
+        }
+        
+        return value
+    }
+    
+    fun executeAugAssign(self, node) {
+        let current = self.evaluate(node.target)
+        let operand = self.evaluate(node.value)
+        
+        let newValue = switch node.operator {
+            "+" -> current + operand
+            "-" -> current - operand
+            "*" -> current * operand
+            "/" -> current / operand
+            default -> throw $"Unknown augmented assignment operator: {node.operator}"
+        }
+        
+        // Assign back using the same logic as executeAssign
+        switch node.target.nodeType {
+            NodeType.IDENTIFIER -> {
+                self.environment.assign(node.target.name, newValue)
+            }
+            NodeType.INDEX -> {
+                let obj = self.evaluate(node.target.object)
+                let index = self.evaluate(node.target.index)
+                obj[index] = newValue
+            }
+            NodeType.ATTRIBUTE -> {
+                let obj = self.evaluate(node.target.object)
+                if Type.isInstance(obj) {
+                    obj.set(node.target.attribute, newValue)
+                } else {
+                    obj[node.target.attribute] = newValue
+                }
+            }
+            default -> {}
+        }
+        
+        return newValue
+    }
+    
+    fun executeIf(self, node) {
+        if self.isTruthy(self.evaluate(node.condition)) {
+            return self.executeBlock(node.thenBranch, Environment(self.environment))
+        } else if node.elseBranch != null {
+            if node.elseBranch.nodeType == NodeType.IF {
+                return self.executeIf(node.elseBranch)
+            } else {
+                return self.executeBlock(node.elseBranch, Environment(self.environment))
+            }
+        }
+        return null
+    }
+    
+    fun executeWhile(self, node) {
+        while self.isTruthy(self.evaluate(node.condition)) {
+            try {
+                self.executeBlock(node.body, Environment(self.environment))
+            } catch e {
+                if Type.isInstance(e) && e.type == ControlFlow.BREAK {
+                    break
+                }
+                if Type.isInstance(e) && e.type == ControlFlow.CONTINUE {
+                    continue
+                }
+                throw e
+            }
+        }
+        return null
+    }
+    
+    fun executeFor(self, node) {
+        let iterable = self.evaluate(node.iterable)
+        
+        for item in iterable {
+            let loopEnv = Environment(self.environment)
+            loopEnv.define(node.variable, item)
+            
+            try {
+                self.executeBlock(node.body, loopEnv)
+            } catch e {
+                if Type.isInstance(e) && e.type == ControlFlow.BREAK {
+                    break
+                }
+                if Type.isInstance(e) && e.type == ControlFlow.CONTINUE {
+                    continue
+                }
+                throw e
+            }
+        }
+        return null
+    }
+    
+    fun executeFunction(self, node) {
+        let func = PythonFunction(node.name, node.params, node.body, self.environment)
+        self.environment.define(node.name, func)
+        return func
+    }
+    
+    fun executeClass(self, node) {
+        let superclass = null
+        if node.superclass != null {
+            superclass = self.environment.get(node.superclass)
+        }
+        
+        let methods = {}
+        
+        // Execute class body to collect methods
+        for stmt in node.body.statements {
+            if stmt.nodeType == NodeType.FUNCTION {
+                let method = PythonFunction(stmt.name, stmt.params, stmt.body, self.environment)
+                methods[stmt.name] = method
+            }
+        }
+        
+        let klass = PythonClass(node.name, superclass, methods)
+        self.environment.define(node.name, klass)
+        return klass
+    }
+    
+    // ==================== Evaluation ====================
+    
+    fun evaluate(self, node) {
+        switch node.nodeType {
+            NodeType.LITERAL -> return node.value
+            NodeType.IDENTIFIER -> return self.environment.get(node.name)
+            NodeType.BINARY -> return self.evalBinary(node)
+            NodeType.UNARY -> return self.evalUnary(node)
+            NodeType.CALL -> return self.evalCall(node)
+            NodeType.INDEX -> return self.evalIndex(node)
+            NodeType.ATTRIBUTE -> return self.evalAttribute(node)
+            NodeType.LIST -> return self.evalList(node)
+            NodeType.DICT -> return self.evalDict(node)
+            NodeType.TUPLE -> return self.evalTuple(node)
+            NodeType.LAMBDA -> return PythonLambda(node.params, node.body, self.environment)
+            NodeType.TERNARY -> return self.evalTernary(node)
+            default -> throw $"Unknown node type: {node.nodeType}"
+        }
+    }
+    
+    fun evalBinary(self, node) {
+        // Short-circuit for 'and' and 'or'
+        if node.operator == "and" {
+            let left = self.evaluate(node.left)
+            if !self.isTruthy(left) { return left }
+            return self.evaluate(node.right)
+        }
+        
+        if node.operator == "or" {
+            let left = self.evaluate(node.left)
+            if self.isTruthy(left) { return left }
+            return self.evaluate(node.right)
+        }
+        
+        let left = self.evaluate(node.left)
+        let right = self.evaluate(node.right)
+        
+        switch node.operator {
+            "+" -> {
+                if Type.isString(left) || Type.isString(right) {
+                    return self.stringify(left) + self.stringify(right)
+                }
+                return left + right
+            }
+            "-" -> return left - right
+            "*" -> {
+                // Handle string repetition
+                if Type.isString(left) && Type.isNumber(right) {
+                    let result = ""
+                    for i in Array.range(right) { result += left }
+                    return result
+                }
+                if Type.isNumber(left) && Type.isString(right) {
+                    let result = ""
+                    for i in Array.range(left) { result += right }
+                    return result
+                }
+                return left * right
+            }
+            "/" -> return left / right
+            "//" -> return Math.floor(left / right)
+            "%" -> return left % right
+            "**" -> return Math.pow(left, right)
+            "==" -> return left == right
+            "!=" -> return left != right
+            "<" -> return left < right
+            "<=" -> return left <= right
+            ">" -> return left > right
+            ">=" -> return left >= right
+            "in" -> {
+                if Type.isArray(right) {
+                    return right.contains(left)
+                }
+                if Type.isString(right) {
+                    return right.contains(left)
+                }
+                if Type.isDict(right) {
+                    return right.has(left)
+                }
+                return false
+            }
+            "is" -> return left == right  // Simplified identity check
+            "is not" -> return left != right
+            default -> throw $"Unknown operator: {node.operator}"
+        }
+    }
+    
+    fun evalUnary(self, node) {
+        let operand = self.evaluate(node.operand)
+        
+        switch node.operator {
+            "-" -> return -operand
+            "not" -> return !self.isTruthy(operand)
+            default -> throw $"Unknown unary operator: {node.operator}"
+        }
+    }
+    
+    fun evalCall(self, node) {
+        let callee = self.evaluate(node.callee)
+        let args = node.args.map(|arg| self.evaluate(arg))
+        
+        if callee == null {
+            throw "TypeError: 'NoneType' object is not callable"
+        }
+        
+        // Check if it's callable
+        if Type.isInstance(callee) {
+            // PythonFunction, PythonLambda, PythonClass, NativeFunction
+            return callee.call(self, args)
+        }
+        
+        throw $"TypeError: '{self.pythonType(callee)}' object is not callable"
+    }
+    
+    fun evalIndex(self, node) {
+        let obj = self.evaluate(node.object)
+        let index = self.evaluate(node.index)
+        
+        if obj == null {
+            throw "TypeError: 'NoneType' object is not subscriptable"
+        }
+        
+        if Type.isArray(obj) {
+            // Handle negative indexing
+            if index < 0 {
+                index = obj.length() + index
+            }
+            return obj[index]
+        }
+        
+        if Type.isString(obj) {
+            // Handle negative indexing
+            if index < 0 {
+                index = obj.length() + index
+            }
+            return obj.charAt(index)
+        }
+        
+        if Type.isDict(obj) {
+            return obj[index]
+        }
+        
+        throw $"TypeError: '{self.pythonType(obj)}' object is not subscriptable"
+    }
+    
+    fun evalAttribute(self, node) {
+        let obj = self.evaluate(node.object)
+        let name = node.attribute
+        
+        if obj == null {
+            throw "AttributeError: 'NoneType' object has no attribute"
+        }
+        
+        // Check if it's a PythonInstance
+        if Type.isInstance(obj) && obj.klass != null {
+            return obj.get(name)
+        }
+        
+        // Handle list methods
+        if Type.isArray(obj) {
+            switch name {
+                "append" -> return NativeFunction("append", |args| {
+                    obj.push(args[0])
+                    return null
+                })
+                "extend" -> return NativeFunction("extend", |args| {
+                    for item in args[0] { obj.push(item) }
+                    return null
+                })
+                "pop" -> return NativeFunction("pop", |args| {
+                    if args.length() > 0 {
+                        let idx = args[0]
+                        if idx < 0 { idx = obj.length() + idx }
+                        return obj.removeAt(idx)
+                    }
+                    return obj.pop()
+                })
+                "insert" -> return NativeFunction("insert", |args| {
+                    let idx = args[0]
+                    if idx < 0 { idx = obj.length() + idx }
+                    obj.splice(idx, 0, args[1])
+                    return null
+                })
+                "remove" -> return NativeFunction("remove", |args| {
+                    let idx = obj.indexOf(args[0])
+                    if idx >= 0 { obj.removeAt(idx) }
+                    return null
+                })
+                "index" -> return NativeFunction("index", |args| {
+                    return obj.indexOf(args[0])
+                })
+                "count" -> return NativeFunction("count", |args| {
+                    let c = 0
+                    for item in obj { if item == args[0] { c += 1 } }
+                    return c
+                })
+                "clear" -> return NativeFunction("clear", |args| {
+                    obj.clear()
+                    return null
+                })
+                "reverse" -> return NativeFunction("reverse", |args| {
+                    obj.reverse()
+                    return null
+                })
+                "sort" -> return NativeFunction("sort", |args| {
+                    obj.sort(|a, b| a < b ? -1 : (a > b ? 1 : 0))
+                    return null
+                })
+                "copy" -> return NativeFunction("copy", |args| {
+                    return obj.slice(0)
+                })
+                default -> throw $"AttributeError: 'list' object has no attribute '{name}'"
+            }
+        }
+        
+        // Handle string methods
+        if Type.isString(obj) {
+            switch name {
+                "upper" -> return NativeFunction("upper", |args| obj.upper())
+                "lower" -> return NativeFunction("lower", |args| obj.lower())
+                "strip" -> return NativeFunction("strip", |args| obj.trim())
+                "lstrip" -> return NativeFunction("lstrip", |args| obj.trim())
+                "rstrip" -> return NativeFunction("rstrip", |args| obj.trim())
+                "split" -> return NativeFunction("split", |args| {
+                    if args.length() > 0 {
+                        return obj.split(args[0])
+                    }
+                    return obj.split(" ")
+                })
+                "join" -> return NativeFunction("join", |args| {
+                    return args[0].join(obj)
+                })
+                "replace" -> return NativeFunction("replace", |args| {
+                    return obj.replace(args[0], args[1])
+                })
+                "startswith" -> return NativeFunction("startswith", |args| {
+                    return obj.startsWith(args[0])
+                })
+                "endswith" -> return NativeFunction("endswith", |args| {
+                    return obj.endsWith(args[0])
+                })
+                "find" -> return NativeFunction("find", |args| {
+                    return obj.indexOf(args[0])
+                })
+                "count" -> return NativeFunction("count", |args| {
+                    let c = 0
+                    let sub = args[0]
+                    let idx = 0
+                    while true {
+                        let found = obj.indexOf(sub, idx)
+                        if found < 0 { break }
+                        c += 1
+                        idx = found + 1
+                    }
+                    return c
+                })
+                "isdigit" -> return NativeFunction("isdigit", |args| obj.isDigit())
+                "isalpha" -> return NativeFunction("isalpha", |args| {
+                    for i in Array.range(obj.length()) {
+                        let c = obj.charAt(i)
+                        if !((c >= "a" && c <= "z") || (c >= "A" && c <= "Z")) {
+                            return false
+                        }
+                    }
+                    return obj.length() > 0
+                })
+                "format" -> return NativeFunction("format", |args| {
+                    // Simplified format - just replace {} with args
+                    let result = obj
+                    for arg in args {
+                        result = result.replace("{}", self.stringify(arg))
+                    }
+                    return result
+                })
+                default -> throw $"AttributeError: 'str' object has no attribute '{name}'"
+            }
+        }
+        
+        // Handle dict methods
+        if Type.isDict(obj) {
+            switch name {
+                "keys" -> return NativeFunction("keys", |args| obj.keys())
+                "values" -> return NativeFunction("values", |args| obj.values())
+                "items" -> return NativeFunction("items", |args| obj.entries())
+                "get" -> return NativeFunction("get", |args| {
+                    let key = args[0]
+                    let defaultVal = args.length() > 1 ? args[1] : null
+                    return obj.get(key, defaultVal)
+                })
+                "pop" -> return NativeFunction("pop", |args| {
+                    return obj.remove(args[0])
+                })
+                "update" -> return NativeFunction("update", |args| {
+                    let other = args[0]
+                    for key in other.keys() {
+                        obj[key] = other[key]
+                    }
+                    return null
+                })
+                "clear" -> return NativeFunction("clear", |args| {
+                    obj.clear()
+                    return null
+                })
+                "copy" -> return NativeFunction("copy", |args| {
+                    return Dict(obj)
+                })
+                default -> {
+                    // Try accessing as dict key
+                    if obj.has(name) {
+                        return obj[name]
+                    }
+                    throw $"AttributeError: 'dict' object has no attribute '{name}'"
+                }
+            }
+        }
+        
+        throw $"AttributeError: object has no attribute '{name}'"
+    }
+    
+    fun evalList(self, node) {
+        return node.elements.map(|elem| self.evaluate(elem))
+    }
+    
+    fun evalDict(self, node) {
+        let dict = {}
+        for entry in node.entries {
+            let key = self.evaluate(entry["key"])
+            let value = self.evaluate(entry["value"])
+            dict[key] = value
+        }
+        return dict
+    }
+    
+    fun evalTuple(self, node) {
+        return node.elements.map(|elem| self.evaluate(elem))
+    }
+    
+    fun evalTernary(self, node) {
+        if self.isTruthy(self.evaluate(node.condition)) {
+            return self.evaluate(node.thenExpr)
+        }
+        return self.evaluate(node.elseExpr)
+    }
+    
+    // ==================== Helpers ====================
+    
+    fun isTruthy(self, value) {
+        // Python: None, False, 0, "", [], {} are falsy
+        if value == null { return false }
+        if value == false { return false }
+        if Type.isNumber(value) && value == 0 { return false }
+        if Type.isString(value) && value == "" { return false }
+        if Type.isArray(value) && value.length() == 0 { return false }
+        if Type.isDict(value) && value.keys().length() == 0 { return false }
+        return true
+    }
+    
+    fun stringify(self, value) {
+        if value == null { return "None" }
+        if value == true { return "True" }
+        if value == false { return "False" }
+        if Type.isNumber(value) {
+            let s = value.toString()
+            if s.endsWith(".0") && !s.contains("e") {
+                return s.substring(0, s.length() - 2)
+            }
+            return s
+        }
+        if Type.isString(value) { return value }
+        if Type.isArray(value) {
+            let items = value.map(|v| self.repr(v)).join(", ")
+            return $"[{items}]"
+        }
+        if Type.isDict(value) {
+            let entries = []
+            for key in value.keys() {
+                entries.push($"{self.repr(key)}: {self.repr(value[key])}")
+            }
+            return "{" + entries.join(", ") + "}"
+        }
+        if Type.isInstance(value) {
+            // Safely check for function-like instances (PythonFunction, PythonLambda, NativeFunction)
+            try {
+                if value.name != null {
+                    return $"<function {value.name}>"
+                }
+            } catch e {}
+            
+            // Safely check for class instances (PythonInstance with klass)
+            try {
+                if value.klass != null {
+                    return $"<{value.klass.name} object>"
+                }
+            } catch e {}
+            
+            // Fallback for other instances
+            return "<instance>"
+        }
+        
+        // Last resort fallback
+        try {
+            return value.toString()
+        } catch e {
+            return "<unknown>"
+        }
+    }
+    
+    fun repr(self, value) {
+        if Type.isString(value) {
+            return $"'{value}'"
+        }
+        return self.stringify(value)
+    }
+    
+    fun pythonType(self, value) {
+        if value == null { return "NoneType" }
+        if value == true || value == false { return "bool" }
+        if Type.isNumber(value) {
+            if value == Math.floor(value) { return "int" }
+            return "float"
+        }
+        if Type.isString(value) { return "str" }
+        if Type.isArray(value) { return "list" }
+        if Type.isDict(value) { return "dict" }
+        if Type.isInstance(value) {
+            if value.klass != null { return value.klass.name }
+            return "function"
+        }
+        return "object"
+    }
+}
+
+// ============================================================
+// REPL / Main Entry Point
+// ============================================================
+
+fun main() {
+    Console.println("Sald-Python Interpreter")
+    Console.println("Type Python code to execute, or 'exit' to quit.")
+    Console.println("")
+    
+    let interpreter = Interpreter()
+    
+    // Simple multiline input support
+    let running = true
+    let buffer = ""
+    let indentLevel = 0
+    
+    while running {
+        Console.println($"[REPL] indentLevel={indentLevel}, bufferLen={buffer.length()}")
+        let prompt = indentLevel > 0 ? "... " : ">>> "
+        Console.print(prompt)
+        let input = Console.input()
+        Console.println($"[REPL] Got input: '{input}'")
+        
+        if input == null || input == "exit" || input == "quit" {
+            Console.println("[REPL] Exit branch")
+            running = false
+            Console.println("Goodbye!")
+        } else if input.trim() == "" && indentLevel > 0 {
+            Console.println("[REPL] Empty line + multiline branch")
+            // Empty line in multiline mode - execute the buffer
+            if buffer.trim() != "" {
+                try {
+                    Console.println("[REPL] Executing buffer...")
+                    let result = interpreter.run(buffer)
+                    Console.println("[REPL] Execution done")
+                    Console.println($"[REPL] result type: {Type.of(result)}")
+                    if result != null {
+                        Console.println("[REPL] Result is not null, calling repr...")
+                        Console.println(interpreter.repr(result))
+                        Console.println("[REPL] repr done")
+                    } else {
+                        Console.println("[REPL] Result is null")
+                    }
+                } catch e {
+                    Console.println($"Error: {e}")
+                }
+            }
+            buffer = ""
+            indentLevel = 0
+            Console.println("[REPL] Reset complete, continuing loop")
+        } else if input.trim() != "" {
+            Console.println("[REPL] Non-empty input branch")
+            buffer += input + "\n"
+            
+            // Check if line ends with ':'
+            if input.trim().endsWith(":") {
+                indentLevel += 1
+                Console.println($"[REPL] Increased indentLevel to {indentLevel}")
+            }
+            
+            // If not in multiline mode, try to execute
+            if indentLevel == 0 {
+                if buffer.trim() != "" {
+                    try {
+                        let result = interpreter.run(buffer)
+                        if result != null {
+                            Console.println(interpreter.repr(result))
+                        }
+                    } catch e {
+                        Console.println($"Error: {e}")
+                    }
+                }
+                buffer = ""
+            }
+        } else {
+            Console.println("[REPL] No branch matched!")
+        }
+        Console.println("[REPL] End of iteration")
+    }
+}
+
+// Run main
+main()

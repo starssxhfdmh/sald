@@ -1,0 +1,494 @@
+// ============================================================
+// Sald-Python: Lexer (Tokenizer)
+// A Python lexer written in Sald using idiomatic features
+// ============================================================
+
+// Token types using enum (idiomatic Sald)
+enum TokenType {
+    // Literals
+    NUMBER,
+    STRING,
+    TRUE,
+    FALSE,
+    NONE,
+    IDENTIFIER,
+    
+    // Keywords
+    DEF,
+    CLASS,
+    IF,
+    ELIF,
+    ELSE,
+    WHILE,
+    FOR,
+    IN,
+    RETURN,
+    BREAK,
+    CONTINUE,
+    PASS,
+    AND,
+    OR,
+    NOT,
+    IS,
+    LAMBDA,
+    
+    // Operators
+    PLUS,
+    MINUS,
+    STAR,
+    STAR_STAR,
+    SLASH,
+    SLASH_SLASH,
+    PERCENT,
+    EQUAL,
+    EQUAL_EQUAL,
+    NOT_EQUAL,
+    LESS,
+    LESS_EQUAL,
+    GREATER,
+    GREATER_EQUAL,
+    PLUS_EQUAL,
+    MINUS_EQUAL,
+    STAR_EQUAL,
+    SLASH_EQUAL,
+    
+    // Delimiters
+    LEFT_PAREN,
+    RIGHT_PAREN,
+    LEFT_BRACKET,
+    RIGHT_BRACKET,
+    LEFT_BRACE,
+    RIGHT_BRACE,
+    COMMA,
+    DOT,
+    COLON,
+    ARROW,
+    
+    // Indentation
+    INDENT,
+    DEDENT,
+    NEWLINE,
+    
+    // Special
+    EOF
+}
+
+// Token class
+class Token {
+    fun init(self, type, lexeme, literal, line, column) {
+        self.type = type
+        self.lexeme = lexeme
+        self.literal = literal
+        self.line = line
+        self.column = column
+    }
+    
+    fun toString(self) {
+        return $"[{self.type}] '{self.lexeme}' @ line {self.line}:{self.column}"
+    }
+}
+
+// Keywords lookup table
+let KEYWORDS = {
+    "def": TokenType.DEF,
+    "class": TokenType.CLASS,
+    "if": TokenType.IF,
+    "elif": TokenType.ELIF,
+    "else": TokenType.ELSE,
+    "while": TokenType.WHILE,
+    "for": TokenType.FOR,
+    "in": TokenType.IN,
+    "return": TokenType.RETURN,
+    "break": TokenType.BREAK,
+    "continue": TokenType.CONTINUE,
+    "pass": TokenType.PASS,
+    "and": TokenType.AND,
+    "or": TokenType.OR,
+    "not": TokenType.NOT,
+    "is": TokenType.IS,
+    "lambda": TokenType.LAMBDA,
+    "True": TokenType.TRUE,
+    "False": TokenType.FALSE,
+    "None": TokenType.NONE
+}
+
+// Lexer class
+class Lexer {
+    fun init(self, source) {
+        self.source = source
+        self.tokens = []
+        self.start = 0
+        self.current = 0
+        self.line = 1
+        self.column = 1
+        self.indentStack = [0]  // Stack of indentation levels
+        self.atLineStart = true
+        self.pendingTokens = []  // For INDENT/DEDENT tokens
+    }
+    
+    // Main scan method
+    fun scanTokens(self) {
+        while !self.isAtEnd() {
+            self.start = self.current
+            self.scanToken()
+        }
+        
+        // Emit remaining DEDENTs at end of file
+        while self.indentStack.length() > 1 {
+            self.indentStack.pop()
+            self.tokens.push(Token(TokenType.DEDENT, "", null, self.line, self.column))
+        }
+        
+        self.tokens.push(Token(TokenType.EOF, "", null, self.line, self.column))
+        return self.tokens
+    }
+    
+    fun scanToken(self) {
+        // Handle indentation at start of line
+        if self.atLineStart {
+            self.handleIndentation()
+            self.atLineStart = false
+            if self.isAtEnd() { return }
+        }
+        
+        let c = self.advance()
+        
+        // Using switch expression (idiomatic Sald)
+        switch c {
+            // Single character tokens
+            "(" -> self.addToken(TokenType.LEFT_PAREN)
+            ")" -> self.addToken(TokenType.RIGHT_PAREN)
+            "[" -> self.addToken(TokenType.LEFT_BRACKET)
+            "]" -> self.addToken(TokenType.RIGHT_BRACKET)
+            "{" -> self.addToken(TokenType.LEFT_BRACE)
+            "}" -> self.addToken(TokenType.RIGHT_BRACE)
+            "," -> self.addToken(TokenType.COMMA)
+            "." -> self.addToken(TokenType.DOT)
+            ":" -> self.addToken(TokenType.COLON)
+            
+            // Operators that may have compound forms
+            "+" -> {
+                if self.match("=") {
+                    self.addToken(TokenType.PLUS_EQUAL)
+                } else {
+                    self.addToken(TokenType.PLUS)
+                }
+            }
+            
+            "-" -> {
+                if self.match(">") {
+                    self.addToken(TokenType.ARROW)
+                } else if self.match("=") {
+                    self.addToken(TokenType.MINUS_EQUAL)
+                } else {
+                    self.addToken(TokenType.MINUS)
+                }
+            }
+            
+            "*" -> {
+                if self.match("*") {
+                    self.addToken(TokenType.STAR_STAR)
+                } else if self.match("=") {
+                    self.addToken(TokenType.STAR_EQUAL)
+                } else {
+                    self.addToken(TokenType.STAR)
+                }
+            }
+            
+            "/" -> {
+                if self.match("/") {
+                    self.addToken(TokenType.SLASH_SLASH)
+                } else if self.match("=") {
+                    self.addToken(TokenType.SLASH_EQUAL)
+                } else {
+                    self.addToken(TokenType.SLASH)
+                }
+            }
+            
+            "%" -> self.addToken(TokenType.PERCENT)
+            
+            "=" -> {
+                if self.match("=") {
+                    self.addToken(TokenType.EQUAL_EQUAL)
+                } else {
+                    self.addToken(TokenType.EQUAL)
+                }
+            }
+            
+            "!" -> {
+                if self.match("=") {
+                    self.addToken(TokenType.NOT_EQUAL)
+                } else {
+                    self.error($"Unexpected character '!'")
+                }
+            }
+            
+            "<" -> {
+                if self.match("=") {
+                    self.addToken(TokenType.LESS_EQUAL)
+                } else {
+                    self.addToken(TokenType.LESS)
+                }
+            }
+            
+            ">" -> {
+                if self.match("=") {
+                    self.addToken(TokenType.GREATER_EQUAL)
+                } else {
+                    self.addToken(TokenType.GREATER)
+                }
+            }
+            
+            // Comment
+            "#" -> {
+                while self.peek() != "\n" && !self.isAtEnd() {
+                    self.advance()
+                }
+            }
+            
+            // Whitespace (not at line start)
+            " ", "\r", "\t" -> { /* ignore */ }
+            
+            // Newline
+            "\n" -> {
+                self.addToken(TokenType.NEWLINE)
+                self.line += 1
+                self.column = 1
+                self.atLineStart = true
+            }
+            
+            // String literals
+            "\"", "'" -> self.string(c)
+            
+            default -> {
+                if self.isDigit(c) {
+                    self.number()
+                } else if self.isAlpha(c) {
+                    self.identifier()
+                } else {
+                    self.error($"Unexpected character '{c}'")
+                }
+            }
+        }
+    }
+    
+    // Handle Python-style indentation
+    fun handleIndentation(self) {
+        let indent = 0
+        
+        // Count spaces (tabs count as spaces for simplicity)
+        while !self.isAtEnd() && (self.peek() == " " || self.peek() == "\t") {
+            if self.peek() == "\t" {
+                indent += 4  // Tab = 4 spaces
+            } else {
+                indent += 1
+            }
+            self.advance()
+        }
+        
+        // Skip blank lines and comment-only lines
+        if self.isAtEnd() || self.peek() == "\n" || self.peek() == "#" {
+            return
+        }
+        
+        let currentIndent = self.indentStack.last()
+        
+        if indent > currentIndent {
+            self.indentStack.push(indent)
+            self.tokens.push(Token(TokenType.INDENT, "", null, self.line, self.column))
+        } else if indent < currentIndent {
+            while self.indentStack.length() > 1 && self.indentStack.last() > indent {
+                self.indentStack.pop()
+                self.tokens.push(Token(TokenType.DEDENT, "", null, self.line, self.column))
+            }
+            
+            if self.indentStack.last() != indent {
+                self.error("Inconsistent indentation")
+            }
+        }
+        
+        self.start = self.current
+    }
+    
+    // String literal (single or double quotes, with triple quote support)
+    fun string(self, quote) {
+        let isTriple = false
+        
+        // Check for triple quotes
+        if self.peek() == quote && self.peekNext() == quote {
+            isTriple = true
+            self.advance()
+            self.advance()
+        }
+        
+        let value = ""
+        
+        while !self.isAtEnd() {
+            let c = self.peek()
+            
+            if isTriple {
+                // Triple quote: look for """
+                if c == quote && self.peekNext() == quote && self.peekAt(2) == quote {
+                    self.advance()
+                    self.advance()
+                    self.advance()
+                    break
+                }
+            } else {
+                // Single quote: terminate at matching quote or newline
+                if c == quote {
+                    self.advance()
+                    break
+                }
+                if c == "\n" {
+                    self.error("Unterminated string")
+                    return
+                }
+            }
+            
+            // Handle escape sequences
+            if c == "\\" && !self.isAtEnd() {
+                self.advance()
+                let escaped = self.peek()
+                switch escaped {
+                    "n" -> { value += "\n" self.advance() }
+                    "t" -> { value += "\t" self.advance() }
+                    "r" -> { value += "\r" self.advance() }
+                    "\\" -> { value += "\\" self.advance() }
+                    "\"" -> { value += "\"" self.advance() }
+                    "'" -> { value += "'" self.advance() }
+                    default -> { value += escaped self.advance() }
+                }
+            } else {
+                if c == "\n" {
+                    self.line += 1
+                    self.column = 1
+                }
+                value += c
+                self.advance()
+            }
+        }
+        
+        if self.isAtEnd() && !isTriple {
+            self.error("Unterminated string")
+            return
+        }
+        
+        self.addTokenLiteral(TokenType.STRING, value)
+    }
+    
+    // Number literal
+    fun number(self) {
+        while self.isDigit(self.peek()) {
+            self.advance()
+        }
+        
+        // Look for decimal part
+        if self.peek() == "." && self.isDigit(self.peekNext()) {
+            self.advance()  // consume '.'
+            while self.isDigit(self.peek()) {
+                self.advance()
+            }
+        }
+        
+        // Look for exponent
+        if self.peek() == "e" || self.peek() == "E" {
+            self.advance()
+            if self.peek() == "+" || self.peek() == "-" {
+                self.advance()
+            }
+            while self.isDigit(self.peek()) {
+                self.advance()
+            }
+        }
+        
+        let value = Number(self.source.substring(self.start, self.current))
+        self.addTokenLiteral(TokenType.NUMBER, value)
+    }
+    
+    // Identifier or keyword
+    fun identifier(self) {
+        while self.isAlphaNumeric(self.peek()) {
+            self.advance()
+        }
+        
+        let text = self.source.substring(self.start, self.current)
+        let tokenType = KEYWORDS.get(text)
+        
+        if tokenType == null {
+            tokenType = TokenType.IDENTIFIER
+            self.addToken(tokenType)
+        } else {
+            // Handle boolean/None literals
+            switch tokenType {
+                TokenType.TRUE -> self.addTokenLiteral(TokenType.TRUE, true)
+                TokenType.FALSE -> self.addTokenLiteral(TokenType.FALSE, false)
+                TokenType.NONE -> self.addTokenLiteral(TokenType.NONE, null)
+                default -> self.addToken(tokenType)
+            }
+        }
+    }
+    
+    // ==================== Helper Methods ====================
+    
+    fun isAtEnd(self) {
+        return self.current >= self.source.length()
+    }
+    
+    fun advance(self) {
+        let c = self.source.charAt(self.current)
+        self.current += 1
+        self.column += 1
+        return c
+    }
+    
+    fun peek(self) {
+        if self.isAtEnd() { return "\0" }
+        return self.source.charAt(self.current)
+    }
+    
+    fun peekNext(self) {
+        if self.current + 1 >= self.source.length() { return "\0" }
+        return self.source.charAt(self.current + 1)
+    }
+    
+    fun peekAt(self, offset) {
+        if self.current + offset >= self.source.length() { return "\0" }
+        return self.source.charAt(self.current + offset)
+    }
+    
+    fun match(self, expected) {
+        if self.isAtEnd() { return false }
+        if self.source.charAt(self.current) != expected { return false }
+        self.current += 1
+        self.column += 1
+        return true
+    }
+    
+    fun isDigit(self, c) {
+        return c >= "0" && c <= "9"
+    }
+    
+    fun isAlpha(self, c) {
+        return (c >= "a" && c <= "z") ||
+               (c >= "A" && c <= "Z") ||
+               c == "_"
+    }
+    
+    fun isAlphaNumeric(self, c) {
+        return self.isAlpha(c) || self.isDigit(c)
+    }
+    
+    fun addToken(self, type) {
+        self.addTokenLiteral(type, null)
+    }
+    
+    fun addTokenLiteral(self, type, literal) {
+        let text = self.source.substring(self.start, self.current)
+        self.tokens.push(Token(type, text, literal, self.line, self.column))
+    }
+    
+    fun error(self, message) {
+        throw $"[Lexer Error] Line {self.line}:{self.column}: {message}"
+    }
+}

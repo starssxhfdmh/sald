@@ -1,0 +1,900 @@
+// ============================================================
+// Sald-Python: Parser (AST Builder)
+// A Python parser written in Sald using idiomatic features
+// ============================================================
+
+import "lexer.sald"
+
+// AST Node types using enum (idiomatic Sald)
+enum NodeType {
+    // Expressions
+    LITERAL,
+    IDENTIFIER,
+    BINARY,
+    UNARY,
+    CALL,
+    INDEX,
+    ATTRIBUTE,
+    LIST,
+    DICT,
+    TUPLE,
+    LAMBDA,
+    TERNARY,
+    
+    // Statements
+    BLOCK,
+    ASSIGN,
+    AUG_ASSIGN,
+    IF,
+    WHILE,
+    FOR,
+    FUNCTION,
+    CLASS,
+    RETURN,
+    BREAK,
+    CONTINUE,
+    PASS,
+    EXPR_STMT
+}
+
+// ============================================================
+// AST Node Classes (using inheritance with extends)
+// ============================================================
+
+// Base node class
+class ASTNode {
+    fun init(self, type) {
+        self.nodeType = type
+    }
+}
+
+// Literal: number, string, boolean, None
+class LiteralNode extends ASTNode {
+    fun init(self, value) {
+        super.init(NodeType.LITERAL)
+        self.value = value
+    }
+}
+
+// Identifier: variable name
+class IdentifierNode extends ASTNode {
+    fun init(self, name) {
+        super.init(NodeType.IDENTIFIER)
+        self.name = name
+    }
+}
+
+// Binary expression: left op right
+class BinaryNode extends ASTNode {
+    fun init(self, left, operator, right) {
+        super.init(NodeType.BINARY)
+        self.left = left
+        self.operator = operator
+        self.right = right
+    }
+}
+
+// Unary expression: op operand
+class UnaryNode extends ASTNode {
+    fun init(self, operator, operand) {
+        super.init(NodeType.UNARY)
+        self.operator = operator
+        self.operand = operand
+    }
+}
+
+// Function call: callee(args)
+class CallNode extends ASTNode {
+    fun init(self, callee, args) {
+        super.init(NodeType.CALL)
+        self.callee = callee
+        self.args = args
+    }
+}
+
+// Index access: object[index]
+class IndexNode extends ASTNode {
+    fun init(self, object, index) {
+        super.init(NodeType.INDEX)
+        self.object = object
+        self.index = index
+    }
+}
+
+// Attribute access: object.attribute
+class AttributeNode extends ASTNode {
+    fun init(self, object, attribute) {
+        super.init(NodeType.ATTRIBUTE)
+        self.object = object
+        self.attribute = attribute
+    }
+}
+
+// List literal: [elements]
+class ListNode extends ASTNode {
+    fun init(self, elements) {
+        super.init(NodeType.LIST)
+        self.elements = elements
+    }
+}
+
+// Dict literal: {key: value, ...}
+class DictNode extends ASTNode {
+    fun init(self, entries) {
+        super.init(NodeType.DICT)
+        self.entries = entries  // Array of {key, value}
+    }
+}
+
+// Tuple: (a, b, c)
+class TupleNode extends ASTNode {
+    fun init(self, elements) {
+        super.init(NodeType.TUPLE)
+        self.elements = elements
+    }
+}
+
+// Lambda: lambda args: expr
+class LambdaNode extends ASTNode {
+    fun init(self, params, body) {
+        super.init(NodeType.LAMBDA)
+        self.params = params
+        self.body = body
+    }
+}
+
+// Ternary: value if condition else other
+class TernaryNode extends ASTNode {
+    fun init(self, condition, thenExpr, elseExpr) {
+        super.init(NodeType.TERNARY)
+        self.condition = condition
+        self.thenExpr = thenExpr
+        self.elseExpr = elseExpr
+    }
+}
+
+// Block: list of statements (suite)
+class BlockNode extends ASTNode {
+    fun init(self, statements) {
+        super.init(NodeType.BLOCK)
+        self.statements = statements
+    }
+}
+
+// Assignment: target = value
+class AssignNode extends ASTNode {
+    fun init(self, target, value) {
+        super.init(NodeType.ASSIGN)
+        self.target = target
+        self.value = value
+    }
+}
+
+// Augmented assignment: target += value, etc.
+class AugAssignNode extends ASTNode {
+    fun init(self, target, operator, value) {
+        super.init(NodeType.AUG_ASSIGN)
+        self.target = target
+        self.operator = operator
+        self.value = value
+    }
+}
+
+// If statement: if/elif/else
+class IfNode extends ASTNode {
+    fun init(self, condition, thenBranch, elseBranch) {
+        super.init(NodeType.IF)
+        self.condition = condition
+        self.thenBranch = thenBranch
+        self.elseBranch = elseBranch  // Can be null, IfNode, or BlockNode
+    }
+}
+
+// While loop: while condition: body
+class WhileNode extends ASTNode {
+    fun init(self, condition, body) {
+        super.init(NodeType.WHILE)
+        self.condition = condition
+        self.body = body
+    }
+}
+
+// For loop: for variable in iterable: body
+class ForNode extends ASTNode {
+    fun init(self, variable, iterable, body) {
+        super.init(NodeType.FOR)
+        self.variable = variable
+        self.iterable = iterable
+        self.body = body
+    }
+}
+
+// Function definition: def name(params): body
+class FunctionNode extends ASTNode {
+    fun init(self, name, params, body) {
+        super.init(NodeType.FUNCTION)
+        self.name = name
+        self.params = params  // Array of parameter names
+        self.body = body
+    }
+}
+
+// Class definition: class Name: body
+class ClassNode extends ASTNode {
+    fun init(self, name, superclass, body) {
+        super.init(NodeType.CLASS)
+        self.name = name
+        self.superclass = superclass  // Can be null
+        self.body = body
+    }
+}
+
+// Return statement: return [value]
+class ReturnNode extends ASTNode {
+    fun init(self, value) {
+        super.init(NodeType.RETURN)
+        self.value = value  // Can be null
+    }
+}
+
+// Break statement
+class BreakNode extends ASTNode {
+    fun init(self) {
+        super.init(NodeType.BREAK)
+    }
+}
+
+// Continue statement
+class ContinueNode extends ASTNode {
+    fun init(self) {
+        super.init(NodeType.CONTINUE)
+    }
+}
+
+// Pass statement
+class PassNode extends ASTNode {
+    fun init(self) {
+        super.init(NodeType.PASS)
+    }
+}
+
+// Expression statement
+class ExprStmtNode extends ASTNode {
+    fun init(self, expr) {
+        super.init(NodeType.EXPR_STMT)
+        self.expr = expr
+    }
+}
+
+// ============================================================
+// Parser Class
+// ============================================================
+
+class Parser {
+    fun init(self, tokens) {
+        self.tokens = tokens
+        self.current = 0
+    }
+    
+    // Parse the entire program
+    fun parse(self) {
+        let statements = []
+        
+        while !self.isAtEnd() {
+            // Skip newlines at top level
+            while self.check(TokenType.NEWLINE) {
+                self.advance()
+            }
+            
+            if !self.isAtEnd() {
+                let stmt = self.declaration()
+                if stmt != null {
+                    statements.push(stmt)
+                }
+            }
+        }
+        
+        return BlockNode(statements)
+    }
+    
+    // ==================== Declarations ====================
+    
+    fun declaration(self) {
+        // Using switch expression (idiomatic Sald)
+        switch self.peek().type {
+            TokenType.DEF -> return self.functionDeclaration()
+            TokenType.CLASS -> return self.classDeclaration()
+            default -> return self.statement()
+        }
+    }
+    
+    fun functionDeclaration(self) {
+        self.advance()  // consume 'def'
+        
+        let name = self.consume(TokenType.IDENTIFIER, "Expected function name").lexeme
+        
+        self.consume(TokenType.LEFT_PAREN, "Expected '(' after function name")
+        
+        let params = []
+        if !self.check(TokenType.RIGHT_PAREN) {
+            params.push(self.consume(TokenType.IDENTIFIER, "Expected parameter name").lexeme)
+            while self.match(TokenType.COMMA) {
+                params.push(self.consume(TokenType.IDENTIFIER, "Expected parameter name").lexeme)
+            }
+        }
+        
+        self.consume(TokenType.RIGHT_PAREN, "Expected ')' after parameters")
+        self.consume(TokenType.COLON, "Expected ':' after function parameters")
+        
+        let body = self.suite()
+        
+        return FunctionNode(name, params, body)
+    }
+    
+    fun classDeclaration(self) {
+        self.advance()  // consume 'class'
+        
+        let name = self.consume(TokenType.IDENTIFIER, "Expected class name").lexeme
+        
+        let superclass = null
+        if self.match(TokenType.LEFT_PAREN) {
+            if !self.check(TokenType.RIGHT_PAREN) {
+                superclass = self.consume(TokenType.IDENTIFIER, "Expected superclass name").lexeme
+            }
+            self.consume(TokenType.RIGHT_PAREN, "Expected ')' after superclass")
+        }
+        
+        self.consume(TokenType.COLON, "Expected ':' after class declaration")
+        
+        let body = self.suite()
+        
+        return ClassNode(name, superclass, body)
+    }
+    
+    // ==================== Statements ====================
+    
+    fun statement(self) {
+        switch self.peek().type {
+            TokenType.IF -> return self.ifStatement()
+            TokenType.WHILE -> return self.whileStatement()
+            TokenType.FOR -> return self.forStatement()
+            TokenType.RETURN -> return self.returnStatement()
+            TokenType.BREAK -> {
+                self.advance()
+                self.skipNewlines()
+                return BreakNode()
+            }
+            TokenType.CONTINUE -> {
+                self.advance()
+                self.skipNewlines()
+                return ContinueNode()
+            }
+            TokenType.PASS -> {
+                self.advance()
+                self.skipNewlines()
+                return PassNode()
+            }
+            default -> return self.expressionStatement()
+        }
+    }
+    
+    fun ifStatement(self) {
+        self.advance()  // consume 'if'
+        
+        let condition = self.expression()
+        self.consume(TokenType.COLON, "Expected ':' after if condition")
+        
+        let thenBranch = self.suite()
+        
+        let elseBranch = null
+        if self.check(TokenType.ELIF) {
+            self.advance()  // consume 'elif'
+            // Treat elif as nested if
+            let elifCondition = self.expression()
+            self.consume(TokenType.COLON, "Expected ':' after elif condition")
+            let elifBody = self.suite()
+            
+            // Check for more elif/else
+            let elifElse = null
+            if self.check(TokenType.ELIF) {
+                elifElse = self.ifStatement()
+            } else if self.check(TokenType.ELSE) {
+                self.advance()
+                self.consume(TokenType.COLON, "Expected ':' after else")
+                elifElse = self.suite()
+            }
+            
+            elseBranch = IfNode(elifCondition, elifBody, elifElse)
+        } else if self.check(TokenType.ELSE) {
+            self.advance()  // consume 'else'
+            self.consume(TokenType.COLON, "Expected ':' after else")
+            elseBranch = self.suite()
+        }
+        
+        return IfNode(condition, thenBranch, elseBranch)
+    }
+    
+    fun whileStatement(self) {
+        self.advance()  // consume 'while'
+        
+        let condition = self.expression()
+        self.consume(TokenType.COLON, "Expected ':' after while condition")
+        
+        let body = self.suite()
+        
+        return WhileNode(condition, body)
+    }
+    
+    fun forStatement(self) {
+        self.advance()  // consume 'for'
+        
+        let varName = self.consume(TokenType.IDENTIFIER, "Expected variable name").lexeme
+        self.consume(TokenType.IN, "Expected 'in' after for variable")
+        
+        let iterable = self.expression()
+        self.consume(TokenType.COLON, "Expected ':' after for iterable")
+        
+        let body = self.suite()
+        
+        return ForNode(varName, iterable, body)
+    }
+    
+    fun returnStatement(self) {
+        self.advance()  // consume 'return'
+        
+        let value = null
+        if !self.check(TokenType.NEWLINE) && !self.isAtEnd() {
+            value = self.expression()
+        }
+        
+        self.skipNewlines()
+        
+        return ReturnNode(value)
+    }
+    
+    fun expressionStatement(self) {
+        let expr = self.expression()
+        
+        // Check for assignment or augmented assignment
+        switch self.peek().type {
+            TokenType.EQUAL -> {
+                self.advance()
+                let value = self.expression()
+                self.skipNewlines()
+                return AssignNode(expr, value)
+            }
+            TokenType.PLUS_EQUAL -> {
+                self.advance()
+                let value = self.expression()
+                self.skipNewlines()
+                return AugAssignNode(expr, "+", value)
+            }
+            TokenType.MINUS_EQUAL -> {
+                self.advance()
+                let value = self.expression()
+                self.skipNewlines()
+                return AugAssignNode(expr, "-", value)
+            }
+            TokenType.STAR_EQUAL -> {
+                self.advance()
+                let value = self.expression()
+                self.skipNewlines()
+                return AugAssignNode(expr, "*", value)
+            }
+            TokenType.SLASH_EQUAL -> {
+                self.advance()
+                let value = self.expression()
+                self.skipNewlines()
+                return AugAssignNode(expr, "/", value)
+            }
+            default -> {
+                self.skipNewlines()
+                return ExprStmtNode(expr)
+            }
+        }
+    }
+    
+    // Suite: indented block of statements
+    fun suite(self) {
+        let statements = []
+        
+        // Expect NEWLINE followed by INDENT
+        if self.check(TokenType.NEWLINE) {
+            self.advance()
+            
+            if !self.check(TokenType.INDENT) {
+                throw $"[Parser Error] Line {self.peek().line}: Expected indented block"
+            }
+            self.advance()  // consume INDENT
+            
+            while !self.check(TokenType.DEDENT) && !self.isAtEnd() {
+                // Skip empty lines
+                while self.check(TokenType.NEWLINE) {
+                    self.advance()
+                }
+                
+                if !self.check(TokenType.DEDENT) && !self.isAtEnd() {
+                    let stmt = self.declaration()
+                    if stmt != null {
+                        statements.push(stmt)
+                    }
+                }
+            }
+            
+            if self.check(TokenType.DEDENT) {
+                self.advance()  // consume DEDENT
+            }
+        } else {
+            // Single line after colon (e.g., if x: pass)
+            let stmt = self.statement()
+            if stmt != null {
+                statements.push(stmt)
+            }
+        }
+        
+        return BlockNode(statements)
+    }
+    
+    // ==================== Expressions ====================
+    
+    fun expression(self) {
+        return self.ternary()
+    }
+    
+    // Ternary: value if condition else other
+    fun ternary(self) {
+        let expr = self.orExpr()
+        
+        if self.match(TokenType.IF) {
+            let condition = self.orExpr()
+            self.consume(TokenType.ELSE, "Expected 'else' in ternary expression")
+            let elseExpr = self.ternary()
+            return TernaryNode(condition, expr, elseExpr)
+        }
+        
+        return expr
+    }
+    
+    fun orExpr(self) {
+        let expr = self.andExpr()
+        
+        while self.match(TokenType.OR) {
+            let right = self.andExpr()
+            expr = BinaryNode(expr, "or", right)
+        }
+        
+        return expr
+    }
+    
+    fun andExpr(self) {
+        let expr = self.notExpr()
+        
+        while self.match(TokenType.AND) {
+            let right = self.notExpr()
+            expr = BinaryNode(expr, "and", right)
+        }
+        
+        return expr
+    }
+    
+    fun notExpr(self) {
+        if self.match(TokenType.NOT) {
+            let operand = self.notExpr()
+            return UnaryNode("not", operand)
+        }
+        
+        return self.comparison()
+    }
+    
+    fun comparison(self) {
+        let expr = self.term()
+        
+        while true {
+            switch self.peek().type {
+                TokenType.EQUAL_EQUAL -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "==", self.term())
+                }
+                TokenType.NOT_EQUAL -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "!=", self.term())
+                }
+                TokenType.LESS -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "<", self.term())
+                }
+                TokenType.LESS_EQUAL -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "<=", self.term())
+                }
+                TokenType.GREATER -> {
+                    self.advance()
+                    expr = BinaryNode(expr, ">", self.term())
+                }
+                TokenType.GREATER_EQUAL -> {
+                    self.advance()
+                    expr = BinaryNode(expr, ">=", self.term())
+                }
+                TokenType.IN -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "in", self.term())
+                }
+                TokenType.IS -> {
+                    self.advance()
+                    if self.match(TokenType.NOT) {
+                        expr = BinaryNode(expr, "is not", self.term())
+                    } else {
+                        expr = BinaryNode(expr, "is", self.term())
+                    }
+                }
+                default -> { break }
+            }
+        }
+        
+        return expr
+    }
+    
+    fun term(self) {
+        let expr = self.factor()
+        
+        while true {
+            switch self.peek().type {
+                TokenType.PLUS -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "+", self.factor())
+                }
+                TokenType.MINUS -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "-", self.factor())
+                }
+                default -> { break }
+            }
+        }
+        
+        return expr
+    }
+    
+    fun factor(self) {
+        let expr = self.unary()
+        
+        while true {
+            switch self.peek().type {
+                TokenType.STAR -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "*", self.unary())
+                }
+                TokenType.SLASH -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "/", self.unary())
+                }
+                TokenType.SLASH_SLASH -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "//", self.unary())
+                }
+                TokenType.PERCENT -> {
+                    self.advance()
+                    expr = BinaryNode(expr, "%", self.unary())
+                }
+                default -> { break }
+            }
+        }
+        
+        return expr
+    }
+    
+    fun unary(self) {
+        if self.match(TokenType.MINUS) {
+            return UnaryNode("-", self.unary())
+        }
+        
+        return self.power()
+    }
+    
+    fun power(self) {
+        let expr = self.call()
+        
+        // Right-associative
+        if self.match(TokenType.STAR_STAR) {
+            let right = self.unary()
+            expr = BinaryNode(expr, "**", right)
+        }
+        
+        return expr
+    }
+    
+    fun call(self) {
+        let expr = self.primary()
+        
+        while true {
+            switch self.peek().type {
+                TokenType.LEFT_PAREN -> {
+                    self.advance()
+                    let args = []
+                    if !self.check(TokenType.RIGHT_PAREN) {
+                        args.push(self.expression())
+                        while self.match(TokenType.COMMA) {
+                            args.push(self.expression())
+                        }
+                    }
+                    self.consume(TokenType.RIGHT_PAREN, "Expected ')' after arguments")
+                    expr = CallNode(expr, args)
+                }
+                TokenType.DOT -> {
+                    self.advance()
+                    let name = self.consume(TokenType.IDENTIFIER, "Expected attribute name").lexeme
+                    expr = AttributeNode(expr, name)
+                }
+                TokenType.LEFT_BRACKET -> {
+                    self.advance()
+                    let index = self.expression()
+                    self.consume(TokenType.RIGHT_BRACKET, "Expected ']' after index")
+                    expr = IndexNode(expr, index)
+                }
+                default -> { break }
+            }
+        }
+        
+        return expr
+    }
+    
+    fun primary(self) {
+        let token = self.peek()
+        
+        switch token.type {
+            // Literals
+            TokenType.NUMBER, TokenType.STRING -> {
+                self.advance()
+                return LiteralNode(self.previous().literal)
+            }
+            TokenType.TRUE -> {
+                self.advance()
+                return LiteralNode(true)
+            }
+            TokenType.FALSE -> {
+                self.advance()
+                return LiteralNode(false)
+            }
+            TokenType.NONE -> {
+                self.advance()
+                return LiteralNode(null)
+            }
+            
+            // Identifier
+            TokenType.IDENTIFIER -> {
+                self.advance()
+                return IdentifierNode(self.previous().lexeme)
+            }
+            
+            // Grouping or tuple
+            TokenType.LEFT_PAREN -> {
+                self.advance()
+                if self.check(TokenType.RIGHT_PAREN) {
+                    self.advance()
+                    return TupleNode([])  // Empty tuple
+                }
+                let expr = self.expression()
+                if self.match(TokenType.COMMA) {
+                    // It's a tuple
+                    let elements = [expr]
+                    if !self.check(TokenType.RIGHT_PAREN) {
+                        elements.push(self.expression())
+                        while self.match(TokenType.COMMA) {
+                            if !self.check(TokenType.RIGHT_PAREN) {
+                                elements.push(self.expression())
+                            }
+                        }
+                    }
+                    self.consume(TokenType.RIGHT_PAREN, "Expected ')' after tuple")
+                    return TupleNode(elements)
+                }
+                self.consume(TokenType.RIGHT_PAREN, "Expected ')' after expression")
+                return expr
+            }
+            
+            // List literal
+            TokenType.LEFT_BRACKET -> {
+                self.advance()
+                let elements = []
+                if !self.check(TokenType.RIGHT_BRACKET) {
+                    elements.push(self.expression())
+                    while self.match(TokenType.COMMA) {
+                        if !self.check(TokenType.RIGHT_BRACKET) {
+                            elements.push(self.expression())
+                        }
+                    }
+                }
+                self.consume(TokenType.RIGHT_BRACKET, "Expected ']' after list")
+                return ListNode(elements)
+            }
+            
+            // Dict literal
+            TokenType.LEFT_BRACE -> {
+                self.advance()
+                let entries = []
+                if !self.check(TokenType.RIGHT_BRACE) {
+                    let key = self.expression()
+                    self.consume(TokenType.COLON, "Expected ':' after dict key")
+                    let value = self.expression()
+                    entries.push({"key": key, "value": value})
+                    
+                    while self.match(TokenType.COMMA) {
+                        if !self.check(TokenType.RIGHT_BRACE) {
+                            key = self.expression()
+                            self.consume(TokenType.COLON, "Expected ':' after dict key")
+                            value = self.expression()
+                            entries.push({"key": key, "value": value})
+                        }
+                    }
+                }
+                self.consume(TokenType.RIGHT_BRACE, "Expected '}' after dict")
+                return DictNode(entries)
+            }
+            
+            // Lambda
+            TokenType.LAMBDA -> {
+                self.advance()
+                let params = []
+                if !self.check(TokenType.COLON) {
+                    params.push(self.consume(TokenType.IDENTIFIER, "Expected parameter name").lexeme)
+                    while self.match(TokenType.COMMA) {
+                        params.push(self.consume(TokenType.IDENTIFIER, "Expected parameter name").lexeme)
+                    }
+                }
+                self.consume(TokenType.COLON, "Expected ':' after lambda parameters")
+                let body = self.expression()
+                return LambdaNode(params, body)
+            }
+            
+            default -> {
+                throw $"[Parser Error] Line {token.line}: Unexpected token '{token.lexeme}'"
+            }
+        }
+    }
+    
+    // ==================== Helper Methods ====================
+    
+    fun isAtEnd(self) {
+        return self.peek().type == TokenType.EOF
+    }
+    
+    fun peek(self) {
+        return self.tokens[self.current]
+    }
+    
+    fun previous(self) {
+        return self.tokens[self.current - 1]
+    }
+    
+    fun advance(self) {
+        if !self.isAtEnd() {
+            self.current += 1
+        }
+        return self.previous()
+    }
+    
+    fun check(self, type) {
+        if self.isAtEnd() { return false }
+        return self.peek().type == type
+    }
+    
+    fun match(self, type) {
+        if self.check(type) {
+            self.advance()
+            return true
+        }
+        return false
+    }
+    
+    fun consume(self, type, message) {
+        if self.check(type) {
+            return self.advance()
+        }
+        throw $"[Parser Error] Line {self.peek().line}: {message}, got '{self.peek().lexeme}'"
+    }
+    
+    fun skipNewlines(self) {
+        while self.check(TokenType.NEWLINE) {
+            self.advance()
+        }
+    }
+}
