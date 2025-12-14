@@ -141,7 +141,16 @@ let dict = {"name": "Sald", "version": 1}
 // Access
 arr[0]          // 1
 dict["name"]    // "Sald"
-dict.name       // "Sald"
+
+// Array Destructuring
+let [a, b, c] = [1, 2, 3]       // a=1, b=2, c=3
+let [first, ...rest] = [1,2,3]  // first=1, rest=[2,3]
+let [x, , z] = [1, 2, 3]        // x=1, z=3 (skip middle)
+
+// Dict Unpacking (spread)
+let base = {"a": 1, "b": 2}
+let extended = {**base, "c": 3}  // {"a": 1, "b": 2, "c": 3}
+let override = {**base, "a": 10} // {"a": 10, "b": 2}
 ```
 
 ---
@@ -156,6 +165,16 @@ dict.name       // "Sald"
 
 ### Logical
 `&&` `||` `!`
+
+### Bitwise
+```javascript
+5 & 3   // 1  (AND)
+5 | 3   // 7  (OR)
+5 ^ 3   // 6  (XOR)
+~5      // -6 (NOT)
+5 << 2  // 20 (Left Shift)
+20 >> 2 // 5  (Right Shift)
+```
 
 ### Assignment
 `=` `+=` `-=` `*=` `/=` `%=`
@@ -174,6 +193,19 @@ condition ? trueValue : falseValue
 ```javascript
 let args = [1, 2, 3]
 func(...args)  // expands to func(1, 2, 3)
+```
+
+### Optional Chaining
+```javascript
+// Safe property/method access on nullable values
+let maybeNull = null
+maybeNull?.length()   // null (no error)
+maybeNull?.toString() // null (no error)
+
+// Works with method calls
+let arr = [1, 2, 3]
+arr?.first()          // 1
+null?.first()         // null
 ```
 
 ---
@@ -388,17 +420,25 @@ s.length()              // 11
 s.upper()               // "HELLO WORLD"
 s.lower()               // "hello world"
 s.trim()                // remove whitespace
+s.trimStart()           // remove leading whitespace
+s.trimEnd()             // remove trailing whitespace
 s.contains("World")     // true
+s.includes("World")     // true (alias for contains)
 s.startsWith("Hello")   // true
 s.endsWith("World")     // true
 s.indexOf("o")          // 4 (first occurrence)
 s.indexOf("o", 5)       // 7 (from index 5)
+s.lastIndexOf("o")      // 7 (last occurrence)
 s.replace("World", "Sald")  // "Hello Sald"
+s.replaceAll("o", "0")  // "Hell0 W0rld"
 s.split(" ")            // ["Hello", "World"]
 s.substring(0, 5)       // "Hello"
 s.slice(-5)             // "World" (negative index)
 s.charAt(0)             // "H"
 s.isDigit()             // false
+s.padStart(15, "*")     // "****Hello World"
+s.padEnd(15, "*")       // "Hello World****"
+s.repeat(2)             // "Hello WorldHello World"
 s.toString()            // "Hello World"
 ```
 
@@ -490,6 +530,17 @@ arr.some(|x| x > 2)          // true
 arr.every(|x| x > 0)         // true
 arr.sort()                   // sort in-place (string comparison)
 arr.sort(|a, b| a - b)       // sort with comparator
+arr.flatMap(|x| [x, x*2])    // flatten mapped arrays
+
+// New array methods
+arr.at(-1)               // 3 (last element, negative index)
+arr.fill(0)              // [0, 0, 0] (fill all with 0)
+arr.fill(0, 1, 2)        // [1, 0, 3] (fill range)
+arr.flat()               // flatten nested arrays 1 level
+arr.flat(2)              // flatten 2 levels deep
+arr.toReversed()         // new reversed array (non-mutating)
+arr.toSorted()           // new sorted array (non-mutating)
+arr.toSorted(|a,b| b-a)  // with comparator
 ```
 
 ---
