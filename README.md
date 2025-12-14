@@ -51,7 +51,7 @@ Start the interactive shell by running `sald` without arguments:
 20
 ```
 
-### Package Manager (Simulated)
+### Package Manager
 
 Initialize a new project:
 
