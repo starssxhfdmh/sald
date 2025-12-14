@@ -37,6 +37,7 @@ pub fn create_array_class() -> Class {
     instance_methods.insert("concat".to_string(), array_concat);
     instance_methods.insert("clear".to_string(), array_clear);
     instance_methods.insert("isEmpty".to_string(), array_is_empty);
+    instance_methods.insert("keys".to_string(), array_keys);
 
     // Callable instance methods (can call closures)
     callable_methods.insert("map".to_string(), array_map);
@@ -426,6 +427,18 @@ fn array_is_empty(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
         Ok(Value::Boolean(arr.lock().unwrap().is_empty()))
+    } else {
+        Err("Receiver must be an array".to_string())
+    }
+}
+
+/// array.keys() - Return array of indices [0, 1, 2, ...]
+fn array_keys(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    check_arity(0, args.len())?;
+    if let Value::Array(arr) = recv {
+        let len = arr.lock().unwrap().len();
+        let keys: Vec<Value> = (0..len).map(|i| Value::Number(i as f64)).collect();
+        Ok(Value::Array(Arc::new(Mutex::new(keys))))
     } else {
         Err("Receiver must be an array".to_string())
     }
