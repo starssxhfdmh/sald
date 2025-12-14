@@ -177,6 +177,13 @@ impl Compiler {
             } => {
                 self.compile_let(name, initializer.as_ref(), *span)?;
             }
+            Stmt::LetDestructure {
+                pattern,
+                initializer,
+                span,
+            } => {
+                self.compile_let_destructure(pattern, initializer, *span)?;
+            }
             Stmt::Expression { expr, .. } => {
                 self.compile_expr(expr)?;
                 self.emit_op(OpCode::Pop, expr.span());
@@ -306,6 +313,82 @@ impl Compiler {
             self.emit_op(OpCode::DefineGlobal, span);
             self.emit_u16(const_idx as u16, span);
         }
+
+        Ok(())
+    }
+
+    fn compile_let_destructure(
+        &mut self,
+        pattern: &crate::ast::ArrayPattern,
+        initializer: &Expr,
+        span: Span,
+    ) -> SaldResult<()> {
+        use crate::ast::ArrayPatternElement;
+
+        // Compile the initializer (should be an array)
+        self.compile_expr(initializer)?;
+
+        // Extract elements from array
+        for (i, elem) in pattern.elements.iter().enumerate() {
+            match elem {
+                ArrayPatternElement::Variable { name, span: var_span } => {
+                    // Duplicate the array for each extraction
+                    self.emit_op(OpCode::Dup, span);
+                    // Push the index
+                    let idx_const = self.current_chunk().add_constant(Constant::Number(i as f64));
+                    self.emit_op(OpCode::Constant, span);
+                    self.emit_u16(idx_const as u16, span);
+                    // Get element at index
+                    self.emit_op(OpCode::GetIndex, span);
+
+                    // Declare as local variable
+                    if self.current_scope().scope_depth > 0 {
+                        self.declare_local(name, *var_span)?;
+                        self.mark_initialized();
+                    } else {
+                        let const_idx = self
+                            .current_chunk()
+                            .add_constant(Constant::String(name.to_string()));
+                        self.emit_op(OpCode::DefineGlobal, span);
+                        self.emit_u16(const_idx as u16, span);
+                    }
+                }
+                ArrayPatternElement::Rest { name, span: var_span } => {
+                    // For rest: slice from current index to end
+                    // Duplicate array
+                    self.emit_op(OpCode::Dup, span);
+                    // Push start index
+                    let start_const = self.current_chunk().add_constant(Constant::Number(i as f64));
+                    self.emit_op(OpCode::Constant, span);
+                    self.emit_u16(start_const as u16, span);
+                    // Call slice method - need to invoke the slice builtin
+                    // For simplicity, we'll use GetIndex with a special marker
+                    // Actually, let's just call the slice method directly
+                    let slice_name = self.current_chunk().add_constant(Constant::String("slice".to_string()));
+                    self.emit_op(OpCode::Invoke, span);
+                    self.emit_u16(slice_name as u16, span);
+                    self.emit_u16(1, span); // 1 arg (start index only, to end)
+
+                    // Declare as local variable
+                    if self.current_scope().scope_depth > 0 {
+                        self.declare_local(name, *var_span)?;
+                        self.mark_initialized();
+                    } else {
+                        let const_idx = self
+                            .current_chunk()
+                            .add_constant(Constant::String(name.to_string()));
+                        self.emit_op(OpCode::DefineGlobal, span);
+                        self.emit_u16(const_idx as u16, span);
+                    }
+                }
+                ArrayPatternElement::Hole => {
+                    // Skip this element, don't bind to anything
+                }
+            }
+        }
+
+        // Pop the original array from stack
+        self.emit_op(OpCode::Pop, span);
 
         Ok(())
     }
@@ -1297,15 +1380,103 @@ impl Compiler {
             } => {
                 self.compile_assignment(target, op, value, *span)?;
             }
-            Expr::Call { callee, args, span } => {
-                self.compile_call(callee, args, *span)?;
+            Expr::Call { callee, args, is_optional: _, span } => {
+                // Check for method invocation optimization: obj.method(args) or obj?.method(args)
+                if let Expr::Get {
+                    object, property, is_optional, ..
+                } = callee.as_ref()
+                {
+                    // Compile receiver first
+                    self.compile_expr(object)?;
+                    
+                    if *is_optional {
+                        // Optional method call: obj?.method(args)
+                        // If obj is null, skip the method call and return null
+                        self.emit_op(OpCode::Dup, *span);
+                        let normal_jump = self.emit_jump(OpCode::JumpIfNotNull, *span);
+                        // Null path: pop the dup'd null, skip invoke
+                        self.emit_op(OpCode::Pop, *span);
+                        let end_jump = self.emit_jump(OpCode::Jump, *span);
+                        // Normal path: pop duplicate, proceed with invoke
+                        self.patch_jump(normal_jump);
+                        self.emit_op(OpCode::Pop, *span);
+                        // Re-compile receiver for the actual call
+                        self.compile_expr(object)?;
+                        // Compile arguments
+                        for arg in args {
+                            self.compile_expr(&arg.value)?;
+                        }
+                        let const_idx = self
+                            .current_chunk()
+                            .add_constant(Constant::String(property.clone()));
+                        self.emit_op(OpCode::Invoke, *span);
+                        self.emit_u16(const_idx as u16, *span);
+                        self.emit_u16(args.len() as u16, *span);
+                        self.patch_jump(end_jump);
+                    } else {
+                        // Non-optional method call
+                        for arg in args {
+                            self.compile_expr(&arg.value)?;
+                        }
+                        let const_idx = self
+                            .current_chunk()
+                            .add_constant(Constant::String(property.clone()));
+                        self.emit_op(OpCode::Invoke, *span);
+                        self.emit_u16(const_idx as u16, *span);
+                        self.emit_u16(args.len() as u16, *span);
+                    }
+                } else {
+                    // Regular function call
+                    self.compile_expr(callee)?;
+                    for arg in args {
+                        self.compile_expr(&arg.value)?;
+                    }
+                    self.emit_op(OpCode::Call, *span);
+                    self.emit_u16(args.len() as u16, *span);
+                }
             }
             Expr::Get {
                 object,
                 property,
+                is_optional,
                 span,
             } => {
-                self.compile_get(object, property, *span)?;
+                self.compile_expr(object)?;
+                
+                if *is_optional {
+                    // Optional chaining: obj?.property
+                    // Stack: [obj]
+                    // 1. Dup the object to check for null
+                    self.emit_op(OpCode::Dup, *span);
+                    // Stack: [obj, obj]
+                    // 2. Jump to normal path if not null (JumpIfNotNull peeks, doesn't pop)
+                    let normal_jump = self.emit_jump(OpCode::JumpIfNotNull, *span);
+                    // Stack if null: [null, null]
+                    // 3. Object is null - pop both, push one null
+                    self.emit_op(OpCode::Pop, *span);
+                    // Stack: [null]
+                    // 4. Skip over the property access
+                    let end_jump = self.emit_jump(OpCode::Jump, *span);
+                    // 5. Normal path - stack has [obj, obj], pop duplicate
+                    self.patch_jump(normal_jump);
+                    self.emit_op(OpCode::Pop, *span);
+                    // Stack: [obj]
+                    // 6. Do normal property access on obj already on stack
+                    let const_idx = self
+                        .current_chunk()
+                        .add_constant(Constant::String(property.clone()));
+                    self.emit_op(OpCode::GetProperty, *span);
+                    self.emit_u16(const_idx as u16, *span);
+                    // Stack: [prop_value]
+                    // 7. End
+                    self.patch_jump(end_jump);
+                } else {
+                    let const_idx = self
+                        .current_chunk()
+                        .add_constant(Constant::String(property.clone()));
+                    self.emit_op(OpCode::GetProperty, *span);
+                    self.emit_u16(const_idx as u16, *span);
+                }
             }
             Expr::Set {
                 object,
@@ -1343,6 +1514,7 @@ impl Compiler {
             Expr::Index {
                 object,
                 index,
+                is_optional: _,
                 span,
             } => {
                 // Get index
@@ -1643,6 +1815,12 @@ impl Compiler {
             BinaryOp::LessEqual => self.emit_op(OpCode::LessEqual, span),
             BinaryOp::Greater => self.emit_op(OpCode::Greater, span),
             BinaryOp::GreaterEqual => self.emit_op(OpCode::GreaterEqual, span),
+            // Bitwise operators
+            BinaryOp::BitAnd => self.emit_op(OpCode::BitAnd, span),
+            BinaryOp::BitOr => self.emit_op(OpCode::BitOr, span),
+            BinaryOp::BitXor => self.emit_op(OpCode::BitXor, span),
+            BinaryOp::LeftShift => self.emit_op(OpCode::LeftShift, span),
+            BinaryOp::RightShift => self.emit_op(OpCode::RightShift, span),
             BinaryOp::And | BinaryOp::Or | BinaryOp::NullCoalesce => unreachable!(),
         }
 
@@ -1657,6 +1835,7 @@ impl Compiler {
         match op {
             UnaryOp::Negate => self.emit_op(OpCode::Negate, span),
             UnaryOp::Not => self.emit_op(OpCode::Not, span),
+            UnaryOp::BitNot => self.emit_op(OpCode::BitNot, span),
         }
 
         Ok(())
@@ -1768,56 +1947,6 @@ impl Compiler {
                 );
             }
         }
-
-        Ok(())
-    }
-
-    fn compile_call(&mut self, callee: &Expr, args: &[CallArg], span: Span) -> SaldResult<()> {
-        // Use span directly
-
-        // Check for method invocation optimization
-        if let Expr::Get {
-            object, property, ..
-        } = callee
-        {
-            self.compile_expr(object)?;
-
-            for arg in args {
-                self.compile_expr(&arg.value)?;
-            }
-
-            let const_idx = self
-                .current_chunk()
-                .add_constant(Constant::String(property.clone()));
-            self.emit_op(OpCode::Invoke, span);
-            self.emit_u16(const_idx as u16, span);
-            self.emit_u16(args.len() as u16, span);
-
-            return Ok(());
-        }
-
-        self.compile_expr(callee)?;
-
-        for arg in args {
-            self.compile_expr(&arg.value)?;
-        }
-
-        self.emit_op(OpCode::Call, span);
-        self.emit_u16(args.len() as u16, span);
-
-        Ok(())
-    }
-
-    fn compile_get(&mut self, object: &Expr, property: &str, span: Span) -> SaldResult<()> {
-        // Use span directly
-
-        self.compile_expr(object)?;
-
-        let const_idx = self
-            .current_chunk()
-            .add_constant(Constant::String(property.to_string()));
-        self.emit_op(OpCode::GetProperty, span);
-        self.emit_u16(const_idx as u16, span);
 
         Ok(())
     }

@@ -98,6 +98,14 @@ pub enum OpCode {
 
     // Spread
     SpreadArray, // Mark value to be spread as arguments
+
+    // Bitwise operations
+    BitAnd,     // a & b
+    BitOr,      // a | b
+    BitXor,     // a ^ b
+    BitNot,     // ~a
+    LeftShift,  // a << b
+    RightShift, // a >> b
 }
 
 impl OpCode {

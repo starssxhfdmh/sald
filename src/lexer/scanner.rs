@@ -72,6 +72,8 @@ impl Scanner {
             '?' => {
                 if self.match_char('?') {
                     self.add_token(TokenKind::QuestionQuestion);
+                } else if self.match_char('.') {
+                    self.add_token(TokenKind::QuestionDot);
                 } else {
                     self.add_token(TokenKind::Question);
                 }
@@ -154,32 +156,34 @@ impl Scanner {
                 }
             }
             '<' => {
-                let kind = if self.match_char('=') {
-                    TokenKind::LessEqual
+                if self.match_char('=') {
+                    self.add_token(TokenKind::LessEqual);
+                } else if self.match_char('<') {
+                    self.add_token(TokenKind::LessLess);
                 } else {
-                    TokenKind::Less
-                };
-                self.add_token(kind);
+                    self.add_token(TokenKind::Less);
+                }
             }
             '>' => {
-                let kind = if self.match_char('=') {
-                    TokenKind::GreaterEqual
+                if self.match_char('=') {
+                    self.add_token(TokenKind::GreaterEqual);
+                } else if self.match_char('>') {
+                    self.add_token(TokenKind::GreaterGreater);
                 } else {
-                    TokenKind::Greater
-                };
-                self.add_token(kind);
+                    self.add_token(TokenKind::Greater);
+                }
             }
 
-            // Logical operators
+            // Logical and Bitwise operators
             '&' => {
                 if self.match_char('&') {
                     self.add_token(TokenKind::And);
                 } else {
-                    return Err(self
-                        .error("Expected '&' after '&'")
-                        .with_help("Use '&&' for logical AND"));
+                    self.add_token(TokenKind::Ampersand);
                 }
             }
+            '^' => self.add_token(TokenKind::Caret),
+            '~' => self.add_token(TokenKind::Tilde),
 
             // Whitespace
             ' ' | '\r' | '\t' => {}

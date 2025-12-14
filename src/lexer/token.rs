@@ -98,8 +98,16 @@ pub enum TokenKind {
     Colon,        // :
     Question,     // ?
     QuestionQuestion, // ??
+    QuestionDot,  // ?. (optional chaining)
     Pipe,         // |
     Arrow,        // =>
+    
+    // Bitwise Operators
+    Ampersand,       // & (bitwise AND)
+    Caret,           // ^ (bitwise XOR)
+    Tilde,           // ~ (bitwise NOT)
+    LessLess,        // << (left shift)
+    GreaterGreater,  // >> (right shift)
 
     // Special
     Newline,
@@ -183,8 +191,14 @@ impl fmt::Display for TokenKind {
             TokenKind::Colon => write!(f, ":"),
             TokenKind::Question => write!(f, "?"),
             TokenKind::QuestionQuestion => write!(f, "??"),
+            TokenKind::QuestionDot => write!(f, "?."),
             TokenKind::Pipe => write!(f, "|"),
             TokenKind::Arrow => write!(f, "=>"),
+            TokenKind::Ampersand => write!(f, "&"),
+            TokenKind::Caret => write!(f, "^"),
+            TokenKind::Tilde => write!(f, "~"),
+            TokenKind::LessLess => write!(f, "<<"),
+            TokenKind::GreaterGreater => write!(f, ">>"),
             TokenKind::Newline => write!(f, "\\n"),
             TokenKind::Eof => write!(f, "EOF"),
         }

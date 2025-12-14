@@ -31,6 +31,17 @@ pub fn create_string_class() -> Class {
     instance_methods.insert("slice".to_string(), string_slice);
     instance_methods.insert("isDigit".to_string(), string_is_digit);
     instance_methods.insert("toString".to_string(), string_to_string);
+    // New methods
+    instance_methods.insert("padStart".to_string(), string_pad_start);
+    instance_methods.insert("padEnd".to_string(), string_pad_end);
+    instance_methods.insert("repeat".to_string(), string_repeat);
+    instance_methods.insert("trimStart".to_string(), string_trim_start);
+    instance_methods.insert("trimLeft".to_string(), string_trim_start);  // alias
+    instance_methods.insert("trimEnd".to_string(), string_trim_end);
+    instance_methods.insert("trimRight".to_string(), string_trim_end);  // alias
+    instance_methods.insert("lastIndexOf".to_string(), string_last_index_of);
+    instance_methods.insert("replaceAll".to_string(), string_replace_all);
+    instance_methods.insert("includes".to_string(), string_contains);  // alias for contains
 
     let mut class = Class::new_with_instance("String", instance_methods, Some(string_constructor));
     class.native_static_methods = static_methods;
@@ -316,6 +327,140 @@ fn string_slice(recv: &Value, args: &[Value]) -> Result<Value, String> {
 
         let result: String = chars[start..end].iter().collect();
         Ok(Value::String(Arc::new(result)))
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+// ==================== New String Methods ====================
+
+/// padStart(length, char?) - Pad start of string to target length
+fn string_pad_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(format!("Expected 1-2 arguments but got {}", args.len()));
+    }
+    if let Value::String(s) = recv {
+        let target_len = get_number_arg(&args[0], "length")? as usize;
+        let pad_char = if args.len() == 2 {
+            let pad_str = get_string_arg(&args[1], "char")?;
+            pad_str.chars().next().unwrap_or(' ')
+        } else {
+            ' '
+        };
+        let current_len = s.chars().count();
+        if current_len >= target_len {
+            return Ok(Value::String(Arc::clone(s)));
+        }
+        let padding: String = std::iter::repeat(pad_char).take(target_len - current_len).collect();
+        Ok(Value::String(Arc::new(format!("{}{}", padding, s))))
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+/// padEnd(length, char?) - Pad end of string to target length
+fn string_pad_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(format!("Expected 1-2 arguments but got {}", args.len()));
+    }
+    if let Value::String(s) = recv {
+        let target_len = get_number_arg(&args[0], "length")? as usize;
+        let pad_char = if args.len() == 2 {
+            let pad_str = get_string_arg(&args[1], "char")?;
+            pad_str.chars().next().unwrap_or(' ')
+        } else {
+            ' '
+        };
+        let current_len = s.chars().count();
+        if current_len >= target_len {
+            return Ok(Value::String(Arc::clone(s)));
+        }
+        let padding: String = std::iter::repeat(pad_char).take(target_len - current_len).collect();
+        Ok(Value::String(Arc::new(format!("{}{}", s, padding))))
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+/// repeat(count) - Repeat string n times
+fn string_repeat(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    check_arity(1, args.len())?;
+    if let Value::String(s) = recv {
+        let count = get_number_arg(&args[0], "count")? as usize;
+        Ok(Value::String(Arc::new(s.repeat(count))))
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+/// trimStart() - Trim whitespace from start of string
+fn string_trim_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    check_arity(0, args.len())?;
+    if let Value::String(s) = recv {
+        Ok(Value::String(Arc::new(s.trim_start().to_string())))
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+/// trimEnd() - Trim whitespace from end of string
+fn string_trim_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    check_arity(0, args.len())?;
+    if let Value::String(s) = recv {
+        Ok(Value::String(Arc::new(s.trim_end().to_string())))
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+/// lastIndexOf(search, from?) - Find last occurrence of substring
+fn string_last_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() || args.len() > 2 {
+        return Err(format!("Expected 1-2 arguments but got {}", args.len()));
+    }
+    if let Value::String(s) = recv {
+        let search = get_string_arg(&args[0], "search")?;
+        if search.is_empty() {
+            return Ok(Value::Number(s.chars().count() as f64));
+        }
+        let chars: Vec<char> = s.chars().collect();
+        let search_chars: Vec<char> = search.chars().collect();
+        let from_idx = if args.len() == 2 {
+            get_number_arg(&args[1], "from")? as usize
+        } else {
+            chars.len()
+        };
+        let search_len = search_chars.len();
+        if search_len > chars.len() {
+            return Ok(Value::Number(-1.0));
+        }
+        // Search backwards
+        let max_start = from_idx.min(chars.len().saturating_sub(search_len));
+        for i in (0..=max_start).rev() {
+            let mut found = true;
+            for j in 0..search_len {
+                if chars[i + j] != search_chars[j] {
+                    found = false;
+                    break;
+                }
+            }
+            if found {
+                return Ok(Value::Number(i as f64));
+            }
+        }
+        Ok(Value::Number(-1.0))
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+/// replaceAll(old, new) - Replace all occurrences of substring
+fn string_replace_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    check_arity(2, args.len())?;
+    if let Value::String(s) = recv {
+        let old = get_string_arg(&args[0], "pattern")?;
+        let new = get_string_arg(&args[1], "replacement")?;
+        Ok(Value::String(Arc::new(s.replace(&old, &new))))
     } else {
         Err("Receiver must be a string".to_string())
     }

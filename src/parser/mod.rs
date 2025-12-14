@@ -74,6 +74,11 @@ impl Parser {
     fn let_declaration(&mut self) -> SaldResult<Stmt> {
         let start_span = self.advance().span; // consume 'let'
 
+        // Check for array destructuring: let [a, b, c] = arr
+        if self.check(&TokenKind::LeftBracket) {
+            return self.parse_array_destructure(start_span);
+        }
+
         // Check for 'self.property' pattern
         if self.check(&TokenKind::SelfKeyword) {
             self.advance(); // consume 'self'
@@ -112,6 +117,70 @@ impl Parser {
 
         Ok(Stmt::Let {
             name,
+            initializer,
+            span: Span::from_positions(
+                start_span.start.line,
+                start_span.start.column,
+                end_span.end.line,
+                end_span.end.column,
+            ),
+        })
+    }
+
+    /// Parse array destructuring: let [a, b, ...rest] = arr
+    fn parse_array_destructure(&mut self, start_span: Span) -> SaldResult<Stmt> {
+        use crate::ast::{ArrayPattern, ArrayPatternElement};
+
+        self.advance(); // consume '['
+
+        let mut elements = Vec::new();
+
+        while !self.check(&TokenKind::RightBracket) && !self.is_at_end() {
+            // Check for rest pattern: ...name
+            if self.match_token(&TokenKind::DotDotDot) {
+                let name_token = self.consume_identifier("Expected variable name after '...'")?;
+                elements.push(ArrayPatternElement::Rest {
+                    name: name_token.lexeme.clone(),
+                    span: name_token.span,
+                });
+            }
+            // Check for hole (empty slot): let [a, , b] = arr
+            else if self.check(&TokenKind::Comma) {
+                elements.push(ArrayPatternElement::Hole);
+            }
+            // Regular variable
+            else {
+                let name_token = self.consume_identifier("Expected variable name in destructuring pattern")?;
+                elements.push(ArrayPatternElement::Variable {
+                    name: name_token.lexeme.clone(),
+                    span: name_token.span,
+                });
+            }
+
+            // Consume comma if not at end
+            if !self.check(&TokenKind::RightBracket) {
+                self.consume(&TokenKind::Comma, "Expected ',' between pattern elements")?;
+            }
+        }
+
+        let bracket_span = self.consume(&TokenKind::RightBracket, "Expected ']' after destructuring pattern")?;
+        
+        let pattern = ArrayPattern {
+            elements,
+            span: Span::from_positions(
+                start_span.start.line,
+                start_span.start.column,
+                bracket_span.span.end.line,
+                bracket_span.span.end.column,
+            ),
+        };
+
+        self.consume(&TokenKind::Equal, "Expected '=' after destructuring pattern")?;
+        let initializer = self.expression()?;
+        let end_span = self.previous().span;
+
+        Ok(Stmt::LetDestructure {
+            pattern,
             initializer,
             span: Span::from_positions(
                 start_span.start.line,
@@ -797,10 +866,10 @@ impl Parser {
     }
 
     fn and(&mut self) -> SaldResult<Expr> {
-        let mut expr = self.equality()?;
+        let mut expr = self.bit_or()?;
 
         while self.match_token(&TokenKind::And) {
-            let right = self.equality()?;
+            let right = self.bit_or()?;
             let span = Span::from_positions(
                 expr.span().start.line,
                 expr.span().start.column,
@@ -810,6 +879,75 @@ impl Parser {
             expr = Expr::Binary {
                 left: Box::new(expr),
                 op: BinaryOp::And,
+                right: Box::new(right),
+                span,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    // Bitwise OR has lower precedence than XOR
+    fn bit_or(&mut self) -> SaldResult<Expr> {
+        let mut expr = self.bit_xor()?;
+
+        while self.match_token(&TokenKind::Pipe) {
+            let right = self.bit_xor()?;
+            let span = Span::from_positions(
+                expr.span().start.line,
+                expr.span().start.column,
+                right.span().end.line,
+                right.span().end.column,
+            );
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::BitOr,
+                right: Box::new(right),
+                span,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    // Bitwise XOR has lower precedence than AND
+    fn bit_xor(&mut self) -> SaldResult<Expr> {
+        let mut expr = self.bit_and()?;
+
+        while self.match_token(&TokenKind::Caret) {
+            let right = self.bit_and()?;
+            let span = Span::from_positions(
+                expr.span().start.line,
+                expr.span().start.column,
+                right.span().end.line,
+                right.span().end.column,
+            );
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::BitXor,
+                right: Box::new(right),
+                span,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    // Bitwise AND has lower precedence than equality
+    fn bit_and(&mut self) -> SaldResult<Expr> {
+        let mut expr = self.equality()?;
+
+        while self.match_token(&TokenKind::Ampersand) {
+            let right = self.equality()?;
+            let span = Span::from_positions(
+                expr.span().start.line,
+                expr.span().start.column,
+                right.span().end.line,
+                right.span().end.column,
+            );
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::BitAnd,
                 right: Box::new(right),
                 span,
             };
@@ -847,7 +985,7 @@ impl Parser {
     }
 
     fn comparison(&mut self) -> SaldResult<Expr> {
-        let mut expr = self.term()?;
+        let mut expr = self.shift()?;
 
         loop {
             let op = if self.match_token(&TokenKind::Less) {
@@ -858,6 +996,37 @@ impl Parser {
                 BinaryOp::Greater
             } else if self.match_token(&TokenKind::GreaterEqual) {
                 BinaryOp::GreaterEqual
+            } else {
+                break;
+            };
+
+            let right = self.shift()?;
+            let span = Span::from_positions(
+                expr.span().start.line,
+                expr.span().start.column,
+                right.span().end.line,
+                right.span().end.column,
+            );
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+                span,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    // Shift operators have lower precedence than term
+    fn shift(&mut self) -> SaldResult<Expr> {
+        let mut expr = self.term()?;
+
+        loop {
+            let op = if self.match_token(&TokenKind::LessLess) {
+                BinaryOp::LeftShift
+            } else if self.match_token(&TokenKind::GreaterGreater) {
+                BinaryOp::RightShift
             } else {
                 break;
             };
@@ -959,7 +1128,7 @@ impl Parser {
             });
         }
 
-        if self.check(&TokenKind::Bang) || self.check(&TokenKind::Minus) {
+        if self.check(&TokenKind::Bang) || self.check(&TokenKind::Minus) || self.check(&TokenKind::Tilde) {
             let op_token = self.peek().clone();
             let op = UnaryOp::from_token(&op_token.kind).unwrap();
             self.advance();
@@ -985,7 +1154,7 @@ impl Parser {
 
         loop {
             if self.match_token(&TokenKind::LeftParen) {
-                expr = self.finish_call(expr)?;
+                expr = self.finish_call(expr, false)?;
             } else if self.match_token(&TokenKind::Dot) {
                 let name_token = self.consume_identifier("Expected property name after '.'")?;
                 let span = Span::from_positions(
@@ -997,6 +1166,22 @@ impl Parser {
                 expr = Expr::Get {
                     object: Box::new(expr),
                     property: name_token.lexeme.clone(),
+                    is_optional: false,
+                    span,
+                };
+            } else if self.match_token(&TokenKind::QuestionDot) {
+                // Optional chaining: obj?.property
+                let name_token = self.consume_identifier("Expected property name after '?.'")?;
+                let span = Span::from_positions(
+                    expr.span().start.line,
+                    expr.span().start.column,
+                    name_token.span.end.line,
+                    name_token.span.end.column,
+                );
+                expr = Expr::Get {
+                    object: Box::new(expr),
+                    property: name_token.lexeme.clone(),
+                    is_optional: true,
                     span,
                 };
             } else if self.match_token(&TokenKind::LeftBracket) {
@@ -1012,6 +1197,7 @@ impl Parser {
                 expr = Expr::Index {
                     object: Box::new(expr),
                     index: Box::new(index),
+                    is_optional: false,
                     span,
                 };
             } else {
@@ -1022,7 +1208,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn finish_call(&mut self, callee: Expr) -> SaldResult<Expr> {
+    fn finish_call(&mut self, callee: Expr, is_optional: bool) -> SaldResult<Expr> {
         let mut args: Vec<CallArg> = Vec::new();
         let mut seen_named = false; // Track if we've seen a named arg
 
@@ -1101,6 +1287,7 @@ impl Parser {
         Ok(Expr::Call {
             callee: Box::new(callee),
             args,
+            is_optional,
             span,
         })
     }
@@ -1452,6 +1639,17 @@ impl Parser {
 
     /// Check if this looks like a dictionary start
     fn is_dictionary_start(&mut self) -> bool {
+        // Check for spread pattern: **expr
+        if self.check(&TokenKind::Star) {
+            let saved = self.current;
+            self.advance(); // consume first *
+            if self.check(&TokenKind::Star) {
+                self.current = saved;
+                return true;
+            }
+            self.current = saved;
+        }
+        
         // Try to parse an expression
         if let Ok(_expr) = self.expression() {
             // Check if followed by colon
@@ -1466,16 +1664,44 @@ impl Parser {
         let mut entries = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Parse key expression
-            let key = self.expression()?;
+            // Check for dict spread: **dict
+            if self.check(&TokenKind::Star) {
+                let star_pos = self.current;
+                self.advance(); // consume first *
+                if self.check(&TokenKind::Star) {
+                    self.advance(); // consume second *
+                    let spread_expr = self.expression()?;
+                    let spread_span = spread_expr.span();
+                    // Use null literal as key to indicate spread
+                    let key = Expr::Literal {
+                        value: Literal::Null,
+                        span: spread_span,
+                    };
+                    let value = Expr::Spread {
+                        expr: Box::new(spread_expr),
+                        span: spread_span,
+                    };
+                    entries.push((key, value));
+                } else {
+                    // Not a spread, restore and parse as normal key
+                    self.current = star_pos;
+                    let key = self.expression()?;
+                    self.consume(&TokenKind::Colon, "Expected ':' after dictionary key")?;
+                    let value = self.expression()?;
+                    entries.push((key, value));
+                }
+            } else {
+                // Parse key expression
+                let key = self.expression()?;
 
-            // Expect colon
-            self.consume(&TokenKind::Colon, "Expected ':' after dictionary key")?;
+                // Expect colon
+                self.consume(&TokenKind::Colon, "Expected ':' after dictionary key")?;
 
-            // Parse value expression
-            let value = self.expression()?;
+                // Parse value expression
+                let value = self.expression()?;
 
-            entries.push((key, value));
+                entries.push((key, value));
+            }
 
             // Optional comma
             if !self.match_token(&TokenKind::Comma) {

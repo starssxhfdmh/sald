@@ -24,6 +24,12 @@ pub enum BinaryOp {
     Or,
     // Null coalescing
     NullCoalesce,
+    // Bitwise
+    BitAnd,     // &
+    BitOr,      // |
+    BitXor,     // ^
+    LeftShift,  // <<
+    RightShift, // >>
 }
 
 impl BinaryOp {
@@ -43,6 +49,12 @@ impl BinaryOp {
             TokenKind::And => Some(BinaryOp::And),
             TokenKind::Or => Some(BinaryOp::Or),
             TokenKind::QuestionQuestion => Some(BinaryOp::NullCoalesce),
+            // Bitwise
+            TokenKind::Ampersand => Some(BinaryOp::BitAnd),
+            TokenKind::Pipe => Some(BinaryOp::BitOr),
+            TokenKind::Caret => Some(BinaryOp::BitXor),
+            TokenKind::LessLess => Some(BinaryOp::LeftShift),
+            TokenKind::GreaterGreater => Some(BinaryOp::RightShift),
             _ => None,
         }
     }
@@ -53,6 +65,7 @@ impl BinaryOp {
 pub enum UnaryOp {
     Negate, // -
     Not,    // !
+    BitNot, // ~ (bitwise NOT)
 }
 
 impl UnaryOp {
@@ -60,6 +73,7 @@ impl UnaryOp {
         match kind {
             TokenKind::Minus => Some(UnaryOp::Negate),
             TokenKind::Bang => Some(UnaryOp::Not),
+            TokenKind::Tilde => Some(UnaryOp::BitNot),
             _ => None,
         }
     }
@@ -152,6 +166,7 @@ pub enum Expr {
     Call {
         callee: Box<Expr>,
         args: Vec<CallArg>,
+        is_optional: bool,  // true for ?.() optional call
         span: Span,
     },
 
@@ -159,6 +174,7 @@ pub enum Expr {
     Get {
         object: Box<Expr>,
         property: String,
+        is_optional: bool,  // true for ?. optional access
         span: Span,
     },
 
@@ -180,6 +196,7 @@ pub enum Expr {
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
+        is_optional: bool,  // true for ?[] optional access
         span: Span,
     },
 

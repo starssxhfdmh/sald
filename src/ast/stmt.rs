@@ -32,6 +32,24 @@ pub struct ClassDef {
     pub span: Span,
 }
 
+/// Array destructuring pattern element
+#[derive(Debug, Clone)]
+pub enum ArrayPatternElement {
+    /// Single variable binding: `a`
+    Variable { name: String, span: Span },
+    /// Rest pattern: `...rest`
+    Rest { name: String, span: Span },
+    /// Hole (skip element): `let [a, , c] = arr`
+    Hole,
+}
+
+/// Array destructuring pattern: `[a, b, ...rest]`
+#[derive(Debug, Clone)]
+pub struct ArrayPattern {
+    pub elements: Vec<ArrayPatternElement>,
+    pub span: Span,
+}
+
 /// Statement nodes
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -39,6 +57,13 @@ pub enum Stmt {
     Let {
         name: String,
         initializer: Option<Expr>,
+        span: Span,
+    },
+
+    /// Array destructuring: let [a, b, c] = arr
+    LetDestructure {
+        pattern: ArrayPattern,
+        initializer: Expr,
         span: Span,
     },
 
@@ -137,6 +162,7 @@ impl Stmt {
     pub fn span(&self) -> Span {
         match self {
             Stmt::Let { span, .. } => *span,
+            Stmt::LetDestructure { span, .. } => *span,
             Stmt::Expression { span, .. } => *span,
             Stmt::Block { span, .. } => *span,
             Stmt::If { span, .. } => *span,

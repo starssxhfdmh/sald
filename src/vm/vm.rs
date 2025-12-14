@@ -673,6 +673,102 @@ impl VM {
                 self.push(Value::Boolean(!value.is_truthy()))?;
             }
 
+            // Bitwise operations
+            OpCode::BitAnd => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                match (&a, &b) {
+                    (Value::Number(a), Value::Number(b)) => {
+                        self.push(Value::Number(((*a as i64) & (*b as i64)) as f64))?;
+                    }
+                    _ => {
+                        return Err(self.create_error(ErrorKind::TypeError, &format!(
+                            "Cannot perform bitwise AND on '{}' and '{}'",
+                            a.type_name(), b.type_name()
+                        )));
+                    }
+                }
+            }
+
+            OpCode::BitOr => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                match (&a, &b) {
+                    (Value::Number(a), Value::Number(b)) => {
+                        self.push(Value::Number(((*a as i64) | (*b as i64)) as f64))?;
+                    }
+                    _ => {
+                        return Err(self.create_error(ErrorKind::TypeError, &format!(
+                            "Cannot perform bitwise OR on '{}' and '{}'",
+                            a.type_name(), b.type_name()
+                        )));
+                    }
+                }
+            }
+
+            OpCode::BitXor => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                match (&a, &b) {
+                    (Value::Number(a), Value::Number(b)) => {
+                        self.push(Value::Number(((*a as i64) ^ (*b as i64)) as f64))?;
+                    }
+                    _ => {
+                        return Err(self.create_error(ErrorKind::TypeError, &format!(
+                            "Cannot perform bitwise XOR on '{}' and '{}'",
+                            a.type_name(), b.type_name()
+                        )));
+                    }
+                }
+            }
+
+            OpCode::BitNot => {
+                let value = self.pop()?;
+                match value {
+                    Value::Number(n) => {
+                        self.push(Value::Number((!(n as i64)) as f64))?;
+                    }
+                    _ => {
+                        return Err(self.create_error(ErrorKind::TypeError, &format!(
+                            "Cannot perform bitwise NOT on '{}'",
+                            value.type_name()
+                        )));
+                    }
+                }
+            }
+
+            OpCode::LeftShift => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                match (&a, &b) {
+                    (Value::Number(a), Value::Number(b)) => {
+                        self.push(Value::Number(((*a as i64) << (*b as u32)) as f64))?;
+                    }
+                    _ => {
+                        return Err(self.create_error(ErrorKind::TypeError, &format!(
+                            "Cannot perform left shift on '{}' and '{}'",
+                            a.type_name(), b.type_name()
+                        )));
+                    }
+                }
+            }
+
+            OpCode::RightShift => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                match (&a, &b) {
+                    (Value::Number(a), Value::Number(b)) => {
+                        self.push(Value::Number(((*a as i64) >> (*b as u32)) as f64))?;
+                    }
+                    _ => {
+                        return Err(self.create_error(ErrorKind::TypeError, &format!(
+                            "Cannot perform right shift on '{}' and '{}'",
+                            a.type_name(), b.type_name()
+                        )));
+                    }
+                }
+            }
+
             OpCode::Jump => {
                 let offset = self.read_u16() as usize;
                 self.current_frame_mut().ip += offset;
@@ -972,15 +1068,39 @@ impl VM {
             OpCode::BuildDict => {
                 let count = self.read_u16() as usize;
                 let mut map = std::collections::HashMap::new();
-                // Pop key-value pairs in reverse order
+                
+                // Collect key-value pairs from stack (they're in reverse order)
+                let mut pairs = Vec::with_capacity(count);
                 for _ in 0..count {
                     let value = self.pop()?;
                     let key = self.pop()?;
-                    let key_str = match key {
-                        Value::String(s) => s.to_string(),
-                        _ => return Err(self.create_error(ErrorKind::TypeError, "Dictionary keys must be strings")),
-                    };
-                    map.insert(key_str, value);
+                    pairs.push((key, value));
+                }
+                // Reverse to get original source order (earlier entries first)
+                pairs.reverse();
+                
+                // Insert in source order - later entries will override earlier ones
+                for (key, value) in pairs {
+                    // Check for dict spread: value is SpreadMarker and key is Null
+                    if let (Value::Null, Value::SpreadMarker(spread_value)) = (&key, &value) {
+                        // Merge entries from the spread dict
+                        if let Value::Dictionary(dict) = spread_value.as_ref() {
+                            if let Ok(dict_map) = dict.lock() {
+                                for (k, v) in dict_map.iter() {
+                                    map.insert(k.clone(), v.clone());
+                                }
+                            }
+                        } else {
+                            return Err(self.create_error(ErrorKind::TypeError, "Can only spread dictionaries with **"));
+                        }
+                    } else {
+                        // Normal key-value pair
+                        let key_str = match key {
+                            Value::String(s) => s.to_string(),
+                            _ => return Err(self.create_error(ErrorKind::TypeError, "Dictionary keys must be strings")),
+                        };
+                        map.insert(key_str, value);
+                    }
                 }
                 let dict = Arc::new(Mutex::new(map));
                 self.track_dict(&dict);

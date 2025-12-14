@@ -568,6 +568,18 @@ fn build_stmt_tree(tree: &mut ptree::TreeBuilder, stmt: &sald::ast::Stmt) {
             }
             tree.end_child();
         }
+        Stmt::LetDestructure { pattern, initializer, .. } => {
+            let vars: Vec<String> = pattern.elements.iter().map(|e| {
+                match e {
+                    sald::ast::ArrayPatternElement::Variable { name, .. } => name.clone(),
+                    sald::ast::ArrayPatternElement::Rest { name, .. } => format!("...{}", name),
+                    sald::ast::ArrayPatternElement::Hole => "_".to_string(),
+                }
+            }).collect();
+            tree.begin_child(format!("LetDestructure [{}]", vars.join(", ")));
+            build_expr_tree(tree, initializer);
+            tree.end_child();
+        }
         Stmt::Expression { expr, .. } => {
             tree.begin_child("Expr".to_string());
             build_expr_tree(tree, expr);
@@ -757,6 +769,11 @@ fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald::ast::Expr) {
                 BinaryOp::And => "&&",
                 BinaryOp::Or => "||",
                 BinaryOp::NullCoalesce => "??",
+                BinaryOp::BitAnd => "&",
+                BinaryOp::BitOr => "|",
+                BinaryOp::BitXor => "^",
+                BinaryOp::LeftShift => "<<",
+                BinaryOp::RightShift => ">>",
             };
             tree.begin_child(format!("Binary({})", op_str));
             build_expr_tree(tree, left);
@@ -767,6 +784,7 @@ fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald::ast::Expr) {
             let op_str = match op {
                 UnaryOp::Negate => "-",
                 UnaryOp::Not => "!",
+                UnaryOp::BitNot => "~",
             };
             tree.begin_child(format!("Unary({})", op_str));
             build_expr_tree(tree, operand);

@@ -160,6 +160,22 @@ impl SemanticAnalyzer {
                 }
                 self.define_var(name, span, false);
             }
+            Stmt::LetDestructure { pattern, initializer, span: _ } => {
+                // Analyze initializer first
+                self.analyze_expr(initializer);
+                // Define all pattern variables
+                for elem in &pattern.elements {
+                    match elem {
+                        crate::ast::ArrayPatternElement::Variable { name, span: var_span } => {
+                            self.define_var(name, var_span, false);
+                        }
+                        crate::ast::ArrayPatternElement::Rest { name, span: var_span } => {
+                            self.define_var(name, var_span, false);
+                        }
+                        crate::ast::ArrayPatternElement::Hole => {}
+                    }
+                }
+            }
             Stmt::Const { name, value, span } => {
                 self.analyze_expr(value);
                 self.define_var(name, span, true);

@@ -38,6 +38,10 @@ pub fn create_array_class() -> Class {
     instance_methods.insert("clear".to_string(), array_clear);
     instance_methods.insert("isEmpty".to_string(), array_is_empty);
     instance_methods.insert("keys".to_string(), array_keys);
+    instance_methods.insert("at".to_string(), array_at);
+    instance_methods.insert("fill".to_string(), array_fill);
+    instance_methods.insert("flat".to_string(), array_flat);
+    instance_methods.insert("toReversed".to_string(), array_to_reversed);
 
     // Callable instance methods (can call closures)
     callable_methods.insert("map".to_string(), array_map);
@@ -49,6 +53,8 @@ pub fn create_array_class() -> Class {
     callable_methods.insert("some".to_string(), array_some);
     callable_methods.insert("every".to_string(), array_every);
     callable_methods.insert("sort".to_string(), array_sort);
+    callable_methods.insert("flatMap".to_string(), array_flat_map);
+    callable_methods.insert("toSorted".to_string(), array_to_sorted);
 
     // Create class with all method types
     let mut class = Class::new_with_instance("Array", instance_methods, Some(array_constructor));
@@ -680,6 +686,180 @@ fn array_sort(recv: &Value, args: &[Value], caller: &mut dyn ValueCaller) -> Res
 
         // Return the array itself for chaining
         Ok(recv.clone())
+    } else {
+        Err("Receiver must be an array".to_string())
+    }
+}
+
+// ==================== New Array Methods ====================
+
+/// array.at(index) - Access element with negative index support
+fn array_at(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    check_arity(1, args.len())?;
+    if let Value::Array(arr) = recv {
+        let idx = get_number_arg(&args[0], "index")? as i64;
+        let arr_ref = arr.lock().unwrap();
+        let len = arr_ref.len() as i64;
+        let actual_idx = if idx < 0 { len + idx } else { idx };
+        if actual_idx < 0 || actual_idx >= len {
+            Ok(Value::Null)
+        } else {
+            Ok(arr_ref[actual_idx as usize].clone())
+        }
+    } else {
+        Err("Receiver must be an array".to_string())
+    }
+}
+
+/// array.fill(value, start?, end?) - Fill array with value (mutating)
+fn array_fill(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() || args.len() > 3 {
+        return Err(format!("Expected 1-3 arguments but got {}", args.len()));
+    }
+    if let Value::Array(arr) = recv {
+        let value = args[0].clone();
+        let mut arr_mut = arr.lock().unwrap();
+        let len = arr_mut.len() as i64;
+        
+        let start = if args.len() > 1 {
+            let s = get_number_arg(&args[1], "start")? as i64;
+            if s < 0 { (len + s).max(0) as usize } else { s.min(len) as usize }
+        } else {
+            0
+        };
+        
+        let end = if args.len() > 2 {
+            let e = get_number_arg(&args[2], "end")? as i64;
+            if e < 0 { (len + e).max(0) as usize } else { e.min(len) as usize }
+        } else {
+            len as usize
+        };
+        
+        for i in start..end {
+            if i < arr_mut.len() {
+                arr_mut[i] = value.clone();
+            }
+        }
+        Ok(recv.clone())
+    } else {
+        Err("Receiver must be an array".to_string())
+    }
+}
+
+/// Helper: flatten an array recursively to given depth
+fn flatten_array(arr: &[Value], depth: i64, result: &mut Vec<Value>) {
+    for item in arr {
+        if depth > 0 {
+            if let Value::Array(inner) = item {
+                let inner_ref = inner.lock().unwrap();
+                flatten_array(&inner_ref, depth - 1, result);
+                continue;
+            }
+        }
+        result.push(item.clone());
+    }
+}
+
+/// array.flat(depth?) - Flatten nested arrays
+fn array_flat(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.len() > 1 {
+        return Err(format!("Expected 0-1 arguments but got {}", args.len()));
+    }
+    if let Value::Array(arr) = recv {
+        let depth = if args.is_empty() {
+            1
+        } else {
+            get_number_arg(&args[0], "depth")? as i64
+        };
+        let arr_ref = arr.lock().unwrap();
+        let mut result = Vec::new();
+        flatten_array(&arr_ref, depth, &mut result);
+        Ok(Value::Array(Arc::new(Mutex::new(result))))
+    } else {
+        Err("Receiver must be an array".to_string())
+    }
+}
+
+/// array.toReversed() - Return new reversed array (non-mutating)
+fn array_to_reversed(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    check_arity(0, args.len())?;
+    if let Value::Array(arr) = recv {
+        let arr_ref = arr.lock().unwrap();
+        let mut result: Vec<Value> = arr_ref.clone();
+        result.reverse();
+        Ok(Value::Array(Arc::new(Mutex::new(result))))
+    } else {
+        Err("Receiver must be an array".to_string())
+    }
+}
+
+/// array.flatMap(fn) - Map then flatten one level
+fn array_flat_map(
+    recv: &Value,
+    args: &[Value],
+    caller: &mut dyn ValueCaller,
+) -> Result<Value, String> {
+    check_arity(1, args.len())?;
+    let callback = &args[0];
+    
+    if let Value::Array(arr) = recv {
+        let arr_ref = arr.lock().unwrap();
+        let mut result = Vec::new();
+        
+        for item in arr_ref.iter() {
+            let mapped = caller.call(callback, vec![item.clone()])?;
+            // Flatten one level if result is array
+            if let Value::Array(inner) = mapped {
+                let inner_ref = inner.lock().unwrap();
+                result.extend(inner_ref.iter().cloned());
+            } else {
+                result.push(mapped);
+            }
+        }
+        Ok(Value::Array(Arc::new(Mutex::new(result))))
+    } else {
+        Err("Receiver must be an array".to_string())
+    }
+}
+
+/// array.toSorted(fn?) - Return new sorted array (non-mutating)
+fn array_to_sorted(
+    recv: &Value,
+    args: &[Value],
+    caller: &mut dyn ValueCaller,
+) -> Result<Value, String> {
+    if args.len() > 1 {
+        return Err(format!("Expected 0-1 arguments but got {}", args.len()));
+    }
+    
+    if let Value::Array(arr) = recv {
+        let arr_ref = arr.lock().unwrap();
+        let mut result: Vec<Value> = arr_ref.clone();
+        
+        if args.is_empty() {
+            // Default sort: convert to string and compare
+            result.sort_by(|a, b| {
+                let a_str = format!("{}", a);
+                let b_str = format!("{}", b);
+                a_str.cmp(&b_str)
+            });
+        } else {
+            // Custom comparator with bubble sort
+            let comparator = &args[0];
+            let len = result.len();
+            for i in 0..len {
+                for j in 0..(len - 1 - i) {
+                    let cmp_result =
+                        caller.call(comparator, vec![result[j].clone(), result[j + 1].clone()])?;
+                    if let Value::Number(n) = cmp_result {
+                        if n > 0.0 {
+                            result.swap(j, j + 1);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(Value::Array(Arc::new(Mutex::new(result))))
     } else {
         Err("Receiver must be an array".to_string())
     }
