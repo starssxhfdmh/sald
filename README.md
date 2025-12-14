@@ -2,7 +2,7 @@
 
 Sald is a modern, dynamic, class-based programming language built with Rust. It is designed to be fast, expressive, and feature-rich, providing a powerful toolkit for building applications ranging from scripts to web servers.
 
-![Sald Logo](docs/logo.png) <!-- Conceptual logic for logo -->
+<img src="docs/logo.png" alt="Sald Logo" width="128"
 
 ## Key Features
 
