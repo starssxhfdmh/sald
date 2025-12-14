@@ -17,7 +17,7 @@ use sald::vm::VM;
 #[derive(Parser)]
 #[command(name = "sald")]
 #[command(author = "starssxhfdmh")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "A fast, class-based interpreted language", long_about = None)]
 struct Cli {
     /// Source file to run (.sald or .saldc)
@@ -319,15 +319,21 @@ async fn handle_exec(code: &str, debug: DebugFlags) -> Result<(), String> {
 
 async fn repl() -> Result<(), String> {
     use rustyline::error::ReadlineError;
-    use rustyline::DefaultEditor;
+    use rustyline::{Config, Editor};
+    use rustyline::history::DefaultHistory;
 
     println!();
-    println!("  {}  {}", "Sald".cyan().bold(), "v0.1.0".bright_black());
+    println!("  {}  {}", "Sald".cyan().bold(), format!("v{}", env!("CARGO_PKG_VERSION")).bright_black());
     println!("  {}", "Type .help for commands, .exit to quit".bright_black());
     println!();
 
-    // Create rustyline editor with history
-    let mut rl = DefaultEditor::new().map_err(|e| e.to_string())?;
+    // Configure rustyline for Windows compatibility
+    // Using stderr for output stream can help with cursor positioning on Windows
+    let config = Config::builder()
+        .auto_add_history(false)
+        .build();
+    
+    let mut rl: Editor<(), DefaultHistory> = Editor::with_config(config).map_err(|e| e.to_string())?;
 
     // Load history from file if exists
     let history_path = dirs_home().join(".sald_history");

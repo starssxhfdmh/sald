@@ -26,6 +26,7 @@ const CLI_CALLBACK_PORT: u16 = 9876;
 
 #[derive(Parser)]
 #[command(name = "salad")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Salad - Package Manager for Sald", long_about = None)]
 struct Cli {
     #[command(subcommand)]
