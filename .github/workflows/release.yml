@@ -77,7 +77,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: lsp
-        run: npm ci
+        run: npm install
 
       - name: Compile TypeScript
         working-directory: lsp
