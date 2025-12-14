@@ -17,7 +17,7 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 chrono = "0.4"
 rand = "0.9"
-rustyline = { version = "13.0", features = ["derive"] }
+reedline = "0.38"
 libloading = "0.8"
 libffi = "3.2"
 sysinfo = "0.32"

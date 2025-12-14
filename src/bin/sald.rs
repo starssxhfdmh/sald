@@ -318,47 +318,159 @@ async fn handle_exec(code: &str, debug: DebugFlags) -> Result<(), String> {
 }
 
 async fn repl() -> Result<(), String> {
-    use rustyline::error::ReadlineError;
-    use rustyline::{Config, Editor};
-    use rustyline::history::DefaultHistory;
+    use reedline::{Reedline, Signal, FileBackedHistory, Prompt, PromptHistorySearch, PromptHistorySearchStatus};
+    use std::borrow::Cow;
+    use std::io::Write;
+
+    // Check if code is incomplete (unbalanced delimiters)
+    fn is_incomplete(code: &str) -> bool {
+        let mut brace_count = 0i32;
+        let mut paren_count = 0i32;
+        let mut bracket_count = 0i32;
+        let mut in_string = false;
+        let mut in_raw_string = false;
+        let mut chars = code.chars().peekable();
+        
+        while let Some(c) = chars.next() {
+            // Handle string literals
+            if c == '"' && !in_raw_string {
+                // Check for raw string """
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        in_raw_string = !in_raw_string;
+                        continue;
+                    }
+                }
+                if !in_raw_string {
+                    in_string = !in_string;
+                }
+                continue;
+            }
+            
+            if in_string || in_raw_string {
+                continue;
+            }
+            
+            match c {
+                '{' => brace_count += 1,
+                '}' => brace_count -= 1,
+                '(' => paren_count += 1,
+                ')' => paren_count -= 1,
+                '[' => bracket_count += 1,
+                ']' => bracket_count -= 1,
+                _ => {}
+            }
+        }
+        
+        brace_count > 0 || paren_count > 0 || bracket_count > 0 || in_string || in_raw_string
+    }
+
+    // Custom prompts
+    struct MainPrompt;
+    struct ContinuePrompt;
+    
+    impl Prompt for MainPrompt {
+        fn render_prompt_left(&self) -> Cow<'_, str> {
+            Cow::Borrowed(">>> ")
+        }
+        fn render_prompt_right(&self) -> Cow<'_, str> {
+            Cow::Borrowed("")
+        }
+        fn render_prompt_indicator(&self, _: reedline::PromptEditMode) -> Cow<'_, str> {
+            Cow::Borrowed("")
+        }
+        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+            Cow::Borrowed("... ")
+        }
+        fn render_prompt_history_search_indicator(&self, history_search: PromptHistorySearch) -> Cow<'_, str> {
+            let prefix = match history_search.status {
+                PromptHistorySearchStatus::Passing => "",
+                PromptHistorySearchStatus::Failing => "failing ",
+            };
+            Cow::Owned(format!("({}reverse-search: {}) ", prefix, history_search.term))
+        }
+    }
+
+    impl Prompt for ContinuePrompt {
+        fn render_prompt_left(&self) -> Cow<'_, str> {
+            Cow::Borrowed("... ")
+        }
+        fn render_prompt_right(&self) -> Cow<'_, str> {
+            Cow::Borrowed("")
+        }
+        fn render_prompt_indicator(&self, _: reedline::PromptEditMode) -> Cow<'_, str> {
+            Cow::Borrowed("")
+        }
+        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+            Cow::Borrowed("... ")
+        }
+        fn render_prompt_history_search_indicator(&self, history_search: PromptHistorySearch) -> Cow<'_, str> {
+            let prefix = match history_search.status {
+                PromptHistorySearchStatus::Passing => "",
+                PromptHistorySearchStatus::Failing => "failing ",
+            };
+            Cow::Owned(format!("({}reverse-search: {}) ", prefix, history_search.term))
+        }
+    }
 
     println!();
     println!("  {}  {}", "Sald".cyan().bold(), format!("v{}", env!("CARGO_PKG_VERSION")).bright_black());
     println!("  {}", "Type .help for commands, .exit to quit".bright_black());
     println!();
 
-    // Configure rustyline for Windows compatibility
-    // Using stderr for output stream can help with cursor positioning on Windows
-    let config = Config::builder()
-        .auto_add_history(false)
-        .build();
-    
-    let mut rl: Editor<(), DefaultHistory> = Editor::with_config(config).map_err(|e| e.to_string())?;
-
-    // Load history from file if exists
+    // Setup history file
     let history_path = dirs_home().join(".sald_history");
-    let _ = rl.load_history(&history_path);
+    let history = Box::new(
+        FileBackedHistory::with_file(1000, history_path.clone())
+            .map_err(|e| e.to_string())?
+    );
+
+    // Create reedline editor with history
+    let mut line_editor = Reedline::create().with_history(history);
+    let main_prompt = MainPrompt;
+    let continue_prompt = ContinuePrompt;
 
     // Create persistent VM to maintain state across lines
     let mut vm = VM::new();
     let mut line_count = 0u32;
+    let mut accumulated_input = String::new();
 
     loop {
-        let prompt = format!("{} ", ">>>".green().bold());
-        
-        match rl.readline(&prompt) {
-            Ok(line) => {
+        let prompt: &dyn Prompt = if accumulated_input.is_empty() {
+            &main_prompt
+        } else {
+            &continue_prompt
+        };
+
+        match line_editor.read_line(prompt) {
+            Ok(Signal::Success(line)) => {
+                // Handle empty line in multiline mode - execute what we have
+                if line.trim().is_empty() && !accumulated_input.is_empty() {
+                    let input = accumulated_input.trim().to_string();
+                    accumulated_input.clear();
+                    
+                    line_count += 1;
+                    match run_repl_line(&mut vm, &input).await {
+                        Ok(value) => {
+                            print_repl_result(&value, line_count);
+                        }
+                        Err(e) => {
+                            eprintln!("{}", e);
+                        }
+                    }
+                    continue;
+                }
+
                 let input = line.trim();
                 
                 if input.is_empty() {
                     continue;
                 }
 
-                // Add to history
-                let _ = rl.add_history_entry(&line);
-
-                // Handle REPL commands
-                if input.starts_with('.') {
+                // Handle REPL commands (only on first line)
+                if accumulated_input.is_empty() && input.starts_with('.') {
                     match input {
                         ".exit" | ".quit" => break,
                         ".help" => {
@@ -366,7 +478,8 @@ async fn repl() -> Result<(), String> {
                             continue;
                         }
                         ".clear" => {
-                            print!("\x1B[2J\x1B[1;1H"); // Clear screen
+                            print!("\x1B[2J\x1B[1;1H");
+                            let _ = std::io::stdout().flush();
                             continue;
                         }
                         ".reset" => {
@@ -382,12 +495,26 @@ async fn repl() -> Result<(), String> {
                     }
                 }
 
+                // Accumulate input
+                if !accumulated_input.is_empty() {
+                    accumulated_input.push('\n');
+                }
+                accumulated_input.push_str(&line);
+
+                // Check if code is complete
+                if is_incomplete(&accumulated_input) {
+                    // Need more lines
+                    continue;
+                }
+
+                // Execute complete code
+                let full_input = accumulated_input.trim().to_string();
+                accumulated_input.clear();
+
                 line_count += 1;
 
-                // Run the code and show result
-                match run_repl_line(&mut vm, input).await {
+                match run_repl_line(&mut vm, &full_input).await {
                     Ok(value) => {
-                        // Show return value with visual feedback (like Node.js)
                         print_repl_result(&value, line_count);
                     }
                     Err(e) => {
@@ -395,11 +522,17 @@ async fn repl() -> Result<(), String> {
                     }
                 }
             }
-            Err(ReadlineError::Interrupted) => {
-                println!("{}", "^C".bright_black());
+            Ok(Signal::CtrlC) => {
+                // Cancel multiline input
+                if !accumulated_input.is_empty() {
+                    accumulated_input.clear();
+                    println!("{}", "^C (input cleared)".bright_black());
+                } else {
+                    println!("{}", "^C".bright_black());
+                }
                 continue;
             }
-            Err(ReadlineError::Eof) => {
+            Ok(Signal::CtrlD) => {
                 println!("{}", "^D".bright_black());
                 break;
             }
@@ -409,9 +542,6 @@ async fn repl() -> Result<(), String> {
             }
         }
     }
-
-    // Save history
-    let _ = rl.save_history(&history_path);
 
     println!("\n{}", "Goodbye! 👋".bright_black());
     Ok(())
