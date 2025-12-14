@@ -30,7 +30,7 @@ zip = "2.2"
 
 [[bin]]
 name = "sald"
-path = "src/main.rs"
+path = "src/bin/sald.rs"
 
 [[bin]]
 name = "sald-lsp"

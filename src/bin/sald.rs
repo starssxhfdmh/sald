@@ -16,7 +16,7 @@ use sald::vm::VM;
 /// Sald - A fast, class-based interpreted language
 #[derive(Parser)]
 #[command(name = "sald")]
-#[command(author = "Sald Team")]
+#[command(author = "starssxhfdmh")]
 #[command(version = "0.1.0")]
 #[command(about = "A fast, class-based interpreted language", long_about = None)]
 struct Cli {

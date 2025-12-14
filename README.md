@@ -2,7 +2,7 @@
 
 Sald is a modern, dynamic, class-based programming language built with Rust. It is designed to be fast, expressive, and feature-rich, providing a powerful toolkit for building applications ranging from scripts to web servers.
 
-![Sald Logo](docs/logo.webp) <!-- Conceptual logic for logo -->
+![Sald Logo](docs/logo.png) <!-- Conceptual logic for logo -->
 
 ## Key Features
 
@@ -20,7 +20,7 @@ To build Sald from source, you need a Rust environment (latest stable).
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/sald.git
+git clone https://github.com/starssxhfdmh/sald.git
 cd sald
 
 # Build release version
@@ -67,7 +67,7 @@ Comprehensive documentation is available in the `docs/sald-lang/index.html` file
 
 ## Example
 
-```typescript
+```sald
 // main.sald
 
 class Greeter {
