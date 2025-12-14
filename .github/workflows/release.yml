@@ -18,12 +18,12 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: sald
-            asset_name: sald-linux-x86_64
+            suffix: linux-x86_64
+            ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: sald.exe
-            asset_name: sald-windows-x86_64.exe
+            suffix: windows-x86_64
+            ext: ".exe"
 
     runs-on: ${{ matrix.os }}
     
@@ -42,14 +42,26 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config libdbus-1-dev
 
-      - name: Build release binary
+      - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Upload artifact
+      - name: Upload sald
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          name: sald-${{ matrix.suffix }}
+          path: target/${{ matrix.target }}/release/sald${{ matrix.ext }}
+
+      - name: Upload sald-lsp
+        uses: actions/upload-artifact@v4
+        with:
+          name: sald-lsp-${{ matrix.suffix }}
+          path: target/${{ matrix.target }}/release/sald-lsp${{ matrix.ext }}
+
+      - name: Upload salad
+        uses: actions/upload-artifact@v4
+        with:
+          name: salad-${{ matrix.suffix }}
+          path: target/${{ matrix.target }}/release/salad${{ matrix.ext }}
 
   release:
     needs: build
@@ -94,10 +106,11 @@ jobs:
           echo "" >> CHANGELOG.md
           echo "### Downloads" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
-          echo "| Platform | Binary |" >> CHANGELOG.md
-          echo "|----------|--------|" >> CHANGELOG.md
-          echo "| Linux | \`sald-linux-x86_64\` |" >> CHANGELOG.md
-          echo "| Windows | \`sald-windows-x86_64.exe\` |" >> CHANGELOG.md
+          echo "| Binary | Linux | Windows |" >> CHANGELOG.md
+          echo "|--------|-------|---------|" >> CHANGELOG.md
+          echo "| sald (interpreter) | \`sald-linux-x86_64\` | \`sald-windows-x86_64.exe\` |" >> CHANGELOG.md
+          echo "| sald-lsp (language server) | \`sald-lsp-linux-x86_64\` | \`sald-lsp-windows-x86_64.exe\` |" >> CHANGELOG.md
+          echo "| salad (package manager) | \`salad-linux-x86_64\` | \`salad-windows-x86_64.exe\` |" >> CHANGELOG.md
           
           cat CHANGELOG.md
 
@@ -110,12 +123,16 @@ jobs:
         run: |
           mkdir -p release
           
-          # Linux
+          # Linux binaries
           cp artifacts/sald-linux-x86_64/sald release/sald-linux-x86_64
-          chmod +x release/sald-linux-x86_64
+          cp artifacts/sald-lsp-linux-x86_64/sald-lsp release/sald-lsp-linux-x86_64
+          cp artifacts/salad-linux-x86_64/salad release/salad-linux-x86_64
+          chmod +x release/*-linux-*
           
-          # Windows
-          cp artifacts/sald-windows-x86_64.exe/sald.exe release/sald-windows-x86_64.exe
+          # Windows binaries
+          cp artifacts/sald-windows-x86_64/sald.exe release/sald-windows-x86_64.exe
+          cp artifacts/sald-lsp-windows-x86_64/sald-lsp.exe release/sald-lsp-windows-x86_64.exe
+          cp artifacts/salad-windows-x86_64/salad.exe release/salad-windows-x86_64.exe
           
           ls -la release/
 
@@ -128,6 +145,10 @@ jobs:
           prerelease: ${{ contains(steps.get_version.outputs.VERSION, '-alpha') || contains(steps.get_version.outputs.VERSION, '-beta') || contains(steps.get_version.outputs.VERSION, '-rc') }}
           files: |
             release/sald-linux-x86_64
+            release/sald-lsp-linux-x86_64
+            release/salad-linux-x86_64
             release/sald-windows-x86_64.exe
+            release/sald-lsp-windows-x86_64.exe
+            release/salad-windows-x86_64.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
