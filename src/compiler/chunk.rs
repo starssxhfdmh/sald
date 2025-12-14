@@ -204,8 +204,11 @@ impl Chunk {
             Some(Constant::String(s)) => {
                 // Strip ANSI escape codes to prevent color bleeding in output
                 let clean = Self::strip_ansi_codes(s);
-                if clean.len() > 32 {
-                    format!("\"{}...\"", &clean[..29])
+                // Use char_indices to safely truncate Unicode strings
+                let char_count = clean.chars().count();
+                if char_count > 32 {
+                    let truncated: String = clean.chars().take(29).collect();
+                    format!("\"{}...\"", truncated)
                 } else {
                     format!("\"{}\"", clean)
                 }

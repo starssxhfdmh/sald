@@ -1744,18 +1744,35 @@ impl VM {
         arg_count: usize,
         instance: Value,
     ) -> SaldResult<()> {
-        if arg_count != function.arity {
+        // Support default parameters: required = arity - default_count
+        let required_arity = function.arity.saturating_sub(function.default_count);
+        
+        if arg_count < required_arity {
             return Err(self.create_error(ErrorKind::ArgumentError, &format!(
-                "Expected {} arguments but got {}",
+                "Expected at least {} arguments but got {}",
+                required_arity, arg_count
+            )));
+        }
+        
+        if arg_count > function.arity {
+            return Err(self.create_error(ErrorKind::ArgumentError, &format!(
+                "Expected at most {} arguments but got {}",
                 function.arity, arg_count
             )));
+        }
+        
+        // Push Null values for missing optional arguments
+        // The function's bytecode will apply defaults via JumpIfNotNull
+        let missing_args = function.arity - arg_count;
+        for _ in 0..missing_args {
+            self.push(Value::Null)?;
         }
 
         if self.frames.len() >= FRAMES_MAX {
             return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
         }
 
-        let slots_start = self.stack.len() - arg_count - 1;
+        let slots_start = self.stack.len() - function.arity - 1;
         
         // Push the function's file directory for path resolution
         if !function.file.is_empty() {
