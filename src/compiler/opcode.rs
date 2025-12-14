@@ -9,6 +9,7 @@ pub enum OpCode {
     Pop,      // Pop top of stack
     Dup,      // Duplicate top of stack
     DupTwo,   // Duplicate top two elements: [a, b] -> [a, b, a, b]
+    Swap,     // Swap top two elements: [a, b] -> [b, a]
 
     // Literals
     Null,  // Push null

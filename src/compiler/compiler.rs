@@ -1503,8 +1503,16 @@ impl Compiler {
             // All body jumps arrive with 'true' on stack, pop it
             self.emit_op(OpCode::Pop, span);
 
+            // Create a new scope for the arm body so each arm has its own locals
+            self.begin_scope();
+            
             // Compile arm body
             self.compile_expr(&arm.body)?;
+            
+            // End scope - but we need to keep the result value on the stack
+            // For switch expression, we must NOT pop the result value
+            // So we manually pop only the locals that were declared in this arm
+            self.end_scope_keep_result();
 
             // Jump to end
             end_jumps.push(self.emit_jump(OpCode::Jump, span));
@@ -1513,9 +1521,11 @@ impl Compiler {
             self.patch_jump(next_arm_jump);
         }
 
-        // Compile default arm or push null
+        // Compile default arm or push null (also in its own scope)
         if let Some(default_expr) = default {
+            self.begin_scope();
             self.compile_expr(default_expr)?;
+            self.end_scope_keep_result();
         } else {
             self.emit_op(OpCode::Null, span);
         }
@@ -1527,6 +1537,7 @@ impl Compiler {
 
         Ok(())
     }
+
 
     fn compile_literal(&mut self, value: &Literal, span: Span) -> SaldResult<()> {
         // Use span directly
@@ -1863,6 +1874,43 @@ impl Compiler {
             self.current_scope_mut().locals.pop();
         }
     }
+
+    /// End a scope while keeping the result value on the stack.
+    /// Used for expression scopes like switch arms where we need to preserve the result.
+    /// We swap the result with each local before popping it.
+    fn end_scope_keep_result(&mut self) {
+        self.current_scope_mut().scope_depth -= 1;
+
+        // Count how many locals need to be popped
+        let mut locals_to_pop = Vec::new();
+        {
+            let scope = self.current_scope();
+            for local in scope.locals.iter().rev() {
+                if local.depth > scope.scope_depth {
+                    locals_to_pop.push(local.is_captured);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // For each local, we need to:
+        // 1. Swap the result (at TOS) with the local below it
+        // 2. Pop or CloseUpvalue the local (now at TOS)
+        // This preserves the result after all locals are cleaned up
+        for is_captured in locals_to_pop {
+            // Swap result with local below
+            self.emit_op(OpCode::Swap, Span::default());
+            
+            if is_captured {
+                self.emit_op(OpCode::CloseUpvalue, Span::default());
+            } else {
+                self.emit_op(OpCode::Pop, Span::default());
+            }
+            self.current_scope_mut().locals.pop();
+        }
+    }
+
 
     fn declare_local(&mut self, name: &str, span: Span) -> SaldResult<()> {
         let scope = self.current_scope();

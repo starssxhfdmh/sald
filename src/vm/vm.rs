@@ -429,10 +429,21 @@ impl VM {
                 Ok(None) => continue, // Keep executing
                 Ok(Some(result)) => return result, // Suspend or complete
                 Err(e) => {
-                    // Convert error to completed with error
-                    // The caller will handle this
-                    eprintln!("{}", e);
-                    return ExecutionResult::Completed(Value::Null);
+                    // Check if there's an exception handler to catch this error
+                    if !self.exception_handlers.is_empty() {
+                        // Route through exception handler
+                        if let Err(handler_err) = self.handle_native_error(e.message.clone()) {
+                            // Handler itself failed, print and exit
+                            eprintln!("{}", handler_err);
+                            return ExecutionResult::Completed(Value::Null);
+                        }
+                        // Handler set up the catch block, continue execution
+                        continue;
+                    } else {
+                        // No handler, print error and exit as before
+                        eprintln!("{}", e);
+                        return ExecutionResult::Completed(Value::Null);
+                    }
                 }
             }
         }
@@ -477,6 +488,14 @@ impl VM {
                 let a = self.peek(1)?.clone();
                 self.push(a)?;
                 self.push(b)?;
+            }
+
+            OpCode::Swap => {
+                // Swap top two elements: [a, b] -> [b, a]
+                let len = self.stack.len();
+                if len >= 2 {
+                    self.stack.swap(len - 1, len - 2);
+                }
             }
 
             OpCode::DefineGlobal => {
