@@ -71,11 +71,11 @@ Comprehensive documentation is available in the `docs/sald-lang/index.html` file
 // main.sald
 
 class Greeter {
-    fun init(name) {
+    fun init(self, name) {
         self.name = name
     }
 
-    fun greet() {
+    fun greet(self) {
         Console.println($"Hello, {self.name}!")
     }
 }
