@@ -1,0 +1,8 @@
+{
+  "name": "sald-lua",
+  "version": "1.0.0",
+  "description": "Sald Lua Example",
+  "author": "starssxproject",
+  "license": "MIT",
+  "main": "interpreter.sald"
+}

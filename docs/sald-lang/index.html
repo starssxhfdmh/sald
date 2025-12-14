@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sald Language Reference</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="layout">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="logo">
+                <span>sald</span>docs
+            </div>
+            
+            <div class="nav-group">
+                <div class="nav-group-title">Language Basics</div>
+                <ul class="nav-links">
+                    <li><a href="#value-types">Value Types</a></li>
+                    <li><a href="#literals">Literals</a></li>
+                    <li><a href="#operators">Operators</a></li>
+                    <li><a href="#expressions">Expressions</a></li>
+                    <li><a href="#statements">Statements</a></li>
+                    <li><a href="#keywords">Keywords</a></li>
+                </ul>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">Core Types</div>
+                <ul class="nav-links">
+                    <li><a href="#string">String</a></li>
+                    <li><a href="#number">Number</a></li>
+                    <li><a href="#boolean">Boolean</a></li>
+                    <li><a href="#array">Array</a></li>
+                    <li><a href="#dict">Dictionary</a></li>
+                </ul>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">Utilities</div>
+                <ul class="nav-links">
+                    <li><a href="#console">Console</a></li>
+                    <li><a href="#math">Math</a></li>
+                    <li><a href="#json">Json</a></li>
+                    <li><a href="#date">Date</a></li>
+                    <li><a href="#timer">Timer</a></li>
+                    <li><a href="#type">Type</a></li>
+                </ul>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">System & I/O</div>
+                <ul class="nav-links">
+                    <li><a href="#file">File & Path</a></li>
+                    <li><a href="#process">Process</a></li>
+                    <li><a href="#system">System Info</a></li>
+                </ul>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">Network & FFI</div>
+                <ul class="nav-links">
+                    <li><a href="#http">Http & Server</a></li>
+                    <li><a href="#ffi">FFI</a></li>
+                </ul>
+            </div>
+
+            <div class="nav-group">
+                <div class="nav-group-title">Advanced</div>
+                <ul class="nav-links">
+                    <li><a href="#module-system">Module System</a></li>
+                    <li><a href="#async-await">Async/Await</a></li>
+                    <li><a href="#cli">CLI Commands</a></li>
+                    <li><a href="#repl">REPL Features</a></li>
+                    <li><a href="#internals">Language Internals</a></li>
+                </ul>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header>
+                <h1>Sald Language Reference</h1>
+                <p>Comprehensive documentation for the Sald programming language.</p>
+            </header>
+
+            <!-- 0. Value Types & Truthiness -->
+            <section id="value-types">
+                <h2>Value Types & Truthiness</h2>
+                
+                <h3>Internal Value Types</h3>
+                <pre>Null, Boolean, Number, String, Array, Dictionary, 
+Function, NativeFunction, InstanceMethod, BoundMethod,
+Class, Instance, Future, Namespace, Enum, SpreadMarker</pre>
+
+                <h3>Truthy & Falsy Rules</h3>
+                <pre><code>// FALSY values:
+null                    // false
+false                   // false
+0                       // false (but 0.1 is truthy!)
+""                      // false (empty string)
+[]                      // false (empty array)
+{}                      // false (empty dict)
+
+// TRUTHY values:
+true                    // true
+1, -1, 3.14            // true (non-zero numbers)
+"hello"                 // true (non-empty string)
+[1, 2, 3]              // true (non-empty array)
+{"a": 1}               // true (non-empty dict)
+any function, class, instance // true</code></pre>
+            </section>
+
+            <!-- 2. Literals -->
+            <section id="literals">
+                <h2>Literals</h2>
+                
+                <h3>Boolean</h3>
+                <p><code>true</code>, <code>false</code></p>
+
+                <h3>Null</h3>
+                <p><code>null</code></p>
+
+                <h3>Number</h3>
+                <p>Floating point: <code>42</code>, <code>3.14</code>, <code>-100</code></p>
+
+                <h3>String</h3>
+                <pre><code>// Normal strings (double or single quotes)
+"hello world"
+'hello world'
+
+// Escape sequences (in normal strings only)
+"\n"        // newline
+"\t"        // tab
+"\r"        // carriage return
+"\\"        // backslash
+"\""        // double quote
+"\'"        // single quote
+"\0"        // null character
+"\b"        // backspace
+"\f"        // form feed
+"\v"        // vertical tab
+"\xHH"      // hex escape (e.g., "\x41" = "A")
+"\uHHHH"    // unicode escape (e.g., "\u0041" = "A")
+"\u{HHHH}"  // unicode escape (e.g., "\u{1F600}" = 😀)
+
+// Format string (interpolation)
+$"Hello, {name}!"
+$'Value: {x + y}'
+$"Result: {calculate(a, b)}"
+
+// Escaping braces in format strings
+$"Use {{braces}} like this"   // outputs: Use {braces} like this
+
+// Raw strings (no escape processing, multiline)
+"""
+This is a raw string.
+No \n escape processing.
+Can span multiple lines.
+"""
+
+'''single quote raw string'''
+
+// Raw format strings (interpolation + raw)
+$"""Hello, {name}! No \n escapes."""</code></pre>
+            </section>
+
+            <!-- 3. Operators -->
+            <section id="operators">
+                <h2>Operators</h2>
+                
+                <h3>Arithmetic</h3>
+                <ul>
+                    <li><code>+</code> (add), <code>-</code> (subtract), <code>*</code> (multiply), <code>/</code> (divide), <code>%</code> (modulo)</li>
+                    <li><code>-</code> (unary negate)</li>
+                </ul>
+
+                <h3>Comparison</h3>
+                <ul>
+                    <li><code>==</code> (equal), <code>!=</code> (not equal)</li>
+                    <li><code>&lt;</code> (less), <code>&lt;=</code> (less or equal), <code>&gt;</code> (greater), <code>&gt;=</code> (greater or equal)</li>
+                </ul>
+
+                <h3>Logical</h3>
+                <ul>
+                    <li><code>&amp;&amp;</code> (and), <code>||</code> (or), <code>!</code> (not)</li>
+                </ul>
+
+                <h3>Null Coalescing</h3>
+                <ul>
+                    <li><code>??</code> - returns left if not null, otherwise right. Example: <code>value ?? "default"</code></li>
+                </ul>
+
+                <h3>Assignment</h3>
+                <ul>
+                    <li><code>=</code> (assign)</li>
+                    <li><code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>%=</code> (compound assignment)</li>
+                </ul>
+
+                <h3>Special</h3>
+                <ul>
+                    <li><code>-></code> (thin arrow, for switch arms)</li>
+                    <li><code>=></code> (fat arrow, for lambdas)</li>
+                    <li><code>...</code> (spread/variadic)</li>
+                    <li><code>?</code> (ternary condition)</li>
+                    <li><code>:</code> (ternary separator, dict literal)</li>
+                </ul>
+            </section>
+
+            <!-- 4. Expressions -->
+            <section id="expressions">
+                <h2>Expressions</h2>
+                
+                <h3>Literals</h3>
+                <pre><code>42          // Number
+"hello"     // String  
+true        // Boolean
+null        // Null
+[1, 2, 3]   // Array
+{"a": 1}    // Dictionary</code></pre>
+
+                <h3>Function Calls</h3>
+                <pre><code>foo()
+bar(1, 2, 3)
+
+// Named arguments (order doesn't matter)
+baz(name: "John", age: 25)
+greet(greeting: "Hi", name: "Alice")  // Can reorder params
+
+// Spread argument
+let args = [1, 2, 3]
+func(...args)          // Expands to func(1, 2, 3)</code></pre>
+
+                <h3>Lambda (Anonymous Function)</h3>
+                <pre><code>|x| x * 2                    // Expression body
+|a, b| { return a + b }      // Block body
+async |x| await fetch(x)     // Async lambda</code></pre>
+
+                <h3>Switch Expression</h3>
+                <pre><code>switch value {
+    1 -> "one"
+    2, 3 -> "two or three"
+    default -> "other"
+}</code></pre>
+
+                <h3>Block Expression</h3>
+                <pre><code>{
+    let x = 5
+    x * 2    // Block returns last expression
+}</code></pre>
+            </section>
+
+            <!-- 5. Statements -->
+            <section id="statements">
+                <h2>Statements</h2>
+                
+                <h3>Variable Declaration</h3>
+                <pre><code>let x = 5
+let y                    // Null by default
+const NAME = "Sald"</code></pre>
+
+                <h3>Control Flow</h3>
+                <pre><code>// If Statement
+if condition {
+    body
+} else if other {
+    ...
+} else {
+    ...
+}
+
+// While Loop
+while condition {
+    body
+}
+
+// Do-While Loop
+do {
+    body
+} while condition
+
+// For-In Loop
+for item in array {
+    Console.println(item)
+}</code></pre>
+
+                <h3>Function Declaration</h3>
+                <pre><code>fun greet(name) {
+    Console.println($"Hello, {name}!")
+}
+
+// Default parameters
+fun connect(host, port = 8080, secure = false) { ... }
+
+// Variadic parameters (must be last)
+fun sum(...numbers) { ... }
+
+// Async functions
+async fun fetchData(url) {
+    let response = await Http.get(url)
+    return response
+}</code></pre>
+
+                <h3>Class Declaration</h3>
+                <pre><code>class Animal {
+    // Constructor - always receives self implicitly
+    fun init(name) {
+        self.name = name
+    }
+    
+    // Instance method - uses self
+    fun speak() {
+        Console.println($"{self.name} makes a sound")
+    }
+    
+    // Static method - NO self parameter
+    // Called as: Animal.create("Rex")
+    fun create(name) {
+        return Animal(name)
+    }
+}
+
+// Inheritance
+class Dog extends Animal {
+    fun speak() {
+        Console.println($"{self.name} barks!")
+    }
+    
+    // Call parent method
+    fun speakTwice() {
+        super.speak()
+        self.speak()
+    }
+}</code></pre>
+                <blockquote><strong>Note:</strong> There is NO <code>static</code> keyword in Sald. Methods that don't use <code>self</code> are automatically static.</blockquote>
+
+                <h3>Namespace & Enum</h3>
+                <pre><code>namespace Utils {
+    const VERSION = "1.0"
+    fun helper() { ... }
+}
+
+enum Status {
+    Pending,
+    Active,
+    Completed
+}</code></pre>
+            </section>
+
+            <!-- 6. Core Types -->
+            <section id="builtins">
+                <h2>Standard Library</h2>
+
+                <div id="string">
+                    <h3>String</h3>
+                    <p>Immutable sequence of Unicode characters.</p>
+                    <pre><code>// Properties
+length: Number          // Length of the string
+
+// Methods
+contains(substr): Boolean
+split(separator): Array
+trim(): String          // Remove whitespace from both ends
+upper(): String         // Convert to uppercase
+lower(): String         // Convert to lowercase
+startsWith(prefix): Boolean
+endsWith(suffix): Boolean
+replace(from, to): String
+substring(start, end?): String
+slice(start, end?): String  // Supports negative indices
+indexOf(substr, from?): Number
+padLeft(len, char?): String
+padRight(len, char?): String
+repeat(count): String</code></pre>
+                </div>
+
+                <div id="number">
+                    <h3>Number</h3>
+                    <p>64-bit floating point number (f64).</p>
+                    <pre><code>// Methods
+abs(): Number
+floor(): Number
+ceil(): Number
+round(): Number
+toFixed(digits): String
+toString(): String</code></pre>
+                </div>
+
+                <div id="boolean">
+                    <h3>Boolean</h3>
+                    <p><code>true</code> or <code>false</code>.</p>
+                    <pre><code>// Methods
+toString(): String</code></pre>
+                </div>
+
+                <div id="array">
+                    <h3>Array</h3>
+                    <p>Dynamic list of values.</p>
+                    <pre><code>// Static Methods
+Array.range(end): Array
+Array.range(start, end, step?): Array
+
+// Properties
+length: Number
+
+// Methods
+push(value): void       // Add to end
+pop(): Value            // Remove from end
+shift(): Value          // Remove from start
+unshift(value): void    // Add to start
+insert(index, value): void
+removeAt(index): Value
+slice(start, end?): Array
+splice(start, deleteCount, ...items): Array
+join(separator?): String
+concat(otherArray): Array
+reverse(): Array
+sort(comparator?): Array
+map(fn): Array          // fn(item, index)
+filter(fn): Array
+reduce(fn, initial?): Value
+forEach(fn): void
+find(fn): Value
+findIndex(fn): Number
+includes(value): Boolean
+flat(depth?): Array
+flatMap(fn): Array</code></pre>
+                </div>
+
+                <div id="dict">
+                    <h3>Dict (Dictionary)</h3>
+                    <p>Key-value pairs (String keys).</p>
+                    <pre><code>// Constructor
+Dict()
+Dict(sourceDict)
+
+// Properties
+length: Number
+
+// Methods
+keys(): Array           // ["key1", "key2"]
+values(): Array         // [val1, val2]
+entries(): Array        // [["key1", val1], ...]
+has(key): Boolean
+get(key, default?): Value
+set(key, value): void
+remove(key): Value
+clear(): void
+toString(): String</code></pre>
+                </div>
+            </section>
+
+            <!-- 7. Utilities -->
+            <section id="utilities">
+                <h2>Utilities</h2>
+
+                <div id="console">
+                    <h3>Console</h3>
+                    <pre><code>Console.print(val...)   // Print without newline
+Console.println(val...) // Print with newline
+Console.input(prompt?)  // Read string from stdin
+Console.clear()         // Clear terminal screen
+Console.error(val...)   // Print to stderr
+Console.time(label)     // Start timer
+Console.timeEnd(label)  // End timer and print duration</code></pre>
+                </div>
+
+                <div id="math">
+                    <h3>Math</h3>
+                    <pre><code>// Constants
+Math.PI                 // 3.14159...
+Math.E                  // 2.71828...
+Math.INFINITY
+Math.NEG_INFINITY
+Math.NAN
+
+// Methods
+Math.abs(n)
+Math.floor(n)
+Math.ceil(n)
+Math.round(n)
+Math.sqrt(n)
+Math.pow(base, exp)
+Math.sin(n)
+Math.cos(n)
+Math.tan(n)
+Math.asin(n)
+Math.acos(n)
+Math.atan(n)
+Math.log(n)             // Natural log
+Math.log10(n)
+Math.exp(n)
+Math.random()           // 0.0 to 1.0
+Math.min(a, b, ...)
+Math.max(a, b, ...)</code></pre>
+                </div>
+
+                <div id="json">
+                    <h3>Json</h3>
+                    <pre><code>Json.parse(string): Value
+Json.stringify(value, indent?): String</code></pre>
+                </div>
+
+                <div id="date">
+                    <h3>Date</h3>
+                    <pre><code>Date.now(): String      // "YYYY-MM-DD HH:mm:ss"
+Date.timestamp(): Number // Unix timestamp (seconds)
+Date.year(): Number
+Date.month(): Number
+Date.day(): Number
+Date.hour(): Number
+Date.minute(): Number
+Date.second(): Number
+Date.format(fmt): String // e.g. "YYYY/MM/DD"</code></pre>
+                </div>
+
+                <div id="timer">
+                    <h3>Timer</h3>
+                    <pre><code>// Async sleep
+await Timer.sleep(ms)
+
+// High-precision time
+Timer.now(): Number     // Milliseconds
+Timer.millis(): Number  // Alias</code></pre>
+                </div>
+
+                <div id="type">
+                    <h3>Type</h3>
+                    <pre><code>Type.of(value): String  // "String", "Number", etc.
+Type.isString(val): Boolean
+Type.isNumber(val): Boolean
+Type.isBoolean(val): Boolean
+Type.isNull(val): Boolean
+Type.isArray(val): Boolean
+Type.isDict(val): Boolean
+Type.isFunction(val): Boolean
+Type.isClass(val): Boolean
+Type.isInstance(val): Boolean</code></pre>
+                </div>
+            </section>
+
+            <!-- 8. System & I/O -->
+            <section id="system-io">
+                <h2>System & I/O</h2>
+
+                <div id="file">
+                    <h3>File (Async) & Path</h3>
+                    <pre><code>// Async File Operations
+await File.read(path): String
+await File.write(path, content): Boolean
+await File.append(path, content): Boolean
+await File.readDir(path): Array
+await File.delete(path): Boolean
+await File.copy(src, dst): Number
+await File.rename(old, new): Boolean
+await File.mkdir(path): Boolean
+await File.exists(path): Boolean
+await File.isFile(path): Boolean
+await File.isDir(path): Boolean
+await File.size(path): Number
+
+// File Path Utilities (Sync)
+File.join(...parts): String
+File.dirname(path): String
+File.basename(path): String
+File.ext(path): String
+
+// Path Class
+Path.join(...parts): String
+Path.dirname(path): String
+Path.basename(path): String
+Path.extname(path): String
+Path.isAbsolute(path): Boolean
+Path.exists(path): Boolean
+Path.normalize(path): String</code></pre>
+                </div>
+
+                <div id="process">
+                    <h3>Process</h3>
+                    <pre><code>Process.args(): Array       // Command line arguments
+Process.env(name): String   // Get env var
+Process.exit(code): void
+Process.cwd(): String
+Process.chdir(path): Boolean
+Process.exec(cmd): String   // Run shell command</code></pre>
+                </div>
+
+                <div id="system">
+                    <h3>System</h3>
+                    <pre><code>System.os(): String             // "linux", "windows", "macos"
+System.arch(): String           // "x86_64", "aarch64"
+System.family(): String         // "unix", "windows"
+System.cpus(): Number           // Core count
+System.hostname(): String
+System.osVersion(): String
+System.kernelVersion(): String
+System.totalMemory(): Number    // Bytes
+System.usedMemory(): Number
+System.freeMemory(): Number
+System.cpuUsage(): Number       // 0-100%
+System.uptime(): Number         // Seconds
+System.info(): Dict             // All stats
+System.getenv(name): String
+System.setenv(name, value): Boolean
+System.envs(): Dict             // All env vars</code></pre>
+                </div>
+            </section>
+
+            <!-- 9. Network & Interop -->
+            <section id="network-ffi">
+                <h2>Network & Interop</h2>
+
+                <div id="http">
+                    <h3>Http</h3>
+                    <pre><code>// Client (Async)
+await Http.get(url): String
+await Http.post(url, body?): String
+await Http.put(url, body?): String
+await Http.delete(url): String
+
+// Server (Async)
+let server = Http.Server()
+
+// Register routes
+server.get(path, handler)
+server.post(path, handler)
+server.put(path, handler)
+server.delete(path, handler)
+server.all(path, handler)
+
+// Middleware example (via ALL)
+server.all("/api/*", |req| {
+    Console.println($"Request: {req.method} {req.path}")
+})
+
+// Start server
+server.listen(port)
+
+// Helper: server.routes() -> Array of registered routes</code></pre>
+                </div>
+
+                <div id="ffi">
+                    <h3>FFI (Foreign Function Interface)</h3>
+                    <p>Load and call dynamic libraries (.dll, .so, .dylib).</p>
+                    <pre><code>// Load Library
+let lib = Ffi.load("path/to/lib")
+
+// Sync Call
+// Supported types: Number (i64/f64), String (char*), Boolean, Null
+let res = lib.call("add", 10, 20)
+
+// Callbacks (C -> Sald)
+// Registers a Sald function to be called from C
+let cbInfo = Ffi.callback(|a, b| {
+    return a + b
+})
+// Pass callback ID and invoker to native code
+lib.call("register_handler", cbInfo.id, cbInfo.invoker)
+
+// Utils
+Ffi.readString(ptr): String
+Ffi.removeCallback(id)
+lib.close()
+lib.path()</code></pre>
+                </div>
+            </section>
+
+            <!-- 7. Module System -->
+            <section id="module-system">
+                <h2>Module System</h2>
+                <h3>Project Structure</h3>
+                <pre>my-project/
+├── salad.json          # Project manifest
+├── main.sald           # Entry point
+└── sald_modules/       # Dependencies</pre>
+                
+                <h3>Import Examples</h3>
+                <pre><code>import "utils.sald"              // Global import
+import "utils.sald" as Utils     // Aliased import
+import "spark"                   // Module import</code></pre>
+            </section>
+
+            <!-- 8. Async/Await -->
+            <section id="async-await">
+                <h2>Async/Await</h2>
+                <pre><code>async fun fetchUser(id) {
+    let response = await Http.get($"/api/users/{id}")
+    return Json.parse(response)
+}
+
+try {
+    let data = await fetchUser(123)
+} catch (e) {
+    Console.println($"Error: {e}")
+}</code></pre>
+            </section>
+
+            <!-- 9. CLI Commands -->
+            <section id="cli">
+                <h2>CLI Commands</h2>
+                <h3>Runtime</h3>
+                <pre><code>sald file.sald                      # Run a script
+sald -c file.sald                   # Compile
+sald                                # Start REPL</code></pre>
+                
+                <h3>Package Manager (salad)</h3>
+                <pre><code>salad new project-name
+salad add spark
+salad install
+salad publish</code></pre>
+            </section>
+
+            <!-- 10. REPL Features -->
+            <section id="repl">
+                <h2>REPL Features</h2>
+                <pre><code>>>> let x = 5
+>>> x + 10
+15
+
+>>> .help     # Show help
+>>> .clear    # Clear screen</code></pre>
+            </section>
+
+             <!-- 11. Internals -->
+             <section id="internals">
+                <h2>Language Internals</h2>
+                
+                <h3>Compiler Pipeline</h3>
+                <p>Flow: <code>Source → Tokens → AST → Bytecode → VM</code></p>
+                <p><strong>.sald</strong> files are compiled to <strong>.saldc</strong> bytecode.</p>
+
+                <h3>AST Nodes (Abstract Syntax Tree)</h3>
+                <pre><code>// Expressions
+Literal, Identifier, Binary, Unary, Grouping, Assignment,
+Call, Get, Set, SelfExpr, Array, Index, IndexSet,
+Ternary, Lambda, Super, Switch, Block, Dictionary,
+Await, Return, Throw, Break, Continue, Spread
+
+// Statements
+// ... (Declarations and Control Flow)</code></pre>
+                
+                <h3>Token Types</h3>
+                <pre><code>// Keywords
+let, if, else, while, do, fun, return, class, for,
+in, self, break, continue, extends, super, import,
+as, try, catch, throw, switch, default, async,
+await, namespace, const, enum
+
+// Operators
++, -, *, /, %, ==, !=, <, <=, >, >=, &&, ||,
+!, =, +=, -=, *=, /=, %=, ??, ?, :, ->, =>
+
+// Delimiters
+(, ), {, }, [, ], ,, ., ..., ;</code></pre>
+            </section>
+
+             <!-- Keywords -->
+             <section id="keywords">
+                <h2>Keywords</h2>
+                <p><code>let, const, if, else, while, do, fun, return, class, for, in, self, break, continue, extends, super, import, as, try, catch, throw, switch, default, async, await, namespace, enum, true, false, null</code></p>
+            </section>
+
+             <!-- Project Config -->
+             <section id="config">
+                <h2>Project Configuration (salad.json)</h2>
+                <pre><code>{
+    "name": "my-package",
+    "version": "1.0.0",
+    "main": "main.sald",
+    "dependencies": {
+        "spark": "^1.0.0"
+    }
+}</code></pre>
+            </section>
+
+        </main>
+    </div>
+    
+    <script>
+        // Simple script to highlight active section in sidebar
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.getAttribute('id');
+                    document.querySelectorAll('.nav-links a').forEach(link => {
+                        link.classList.remove('active');
+                        if (link.getAttribute('href') === '#' + id) {
+                            link.classList.add('active');
+                        }
+                    });
+                }
+            });
+        }, { threshold: 0.2 });
+
+        document.querySelectorAll('section').forEach(section => {
+            observer.observe(section);
+        });
+    </script>
+</body>
+</html>

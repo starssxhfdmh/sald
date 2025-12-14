@@ -1,0 +1,8 @@
+{
+  "name": "todo-web",
+  "version": "1.0.0",
+  "main": "main.sald",
+  "modules": {
+    "spark": "1.0.0"
+  }
+}

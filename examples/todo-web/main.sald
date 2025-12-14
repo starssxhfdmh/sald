@@ -1,0 +1,102 @@
+// ============================================================
+// Todo App - Full Stack Example with Spark
+// ============================================================
+
+import "spark"
+import "routes/web.sald"
+import "routes/api.sald"
+
+let app = Spark.createApp()
+
+// ==================== Global Middleware ====================
+
+app.use(Spark.Middleware.logger(null))
+app.use(Spark.Middleware.cors({ "origin": "*" }))
+app.use(Spark.Middleware.jsonParser())
+app.use(Spark.Middleware.helmet(null))
+
+// ==================== Session Configuration ====================
+
+// Configure file-based sessions (persists across server restarts)
+// Options: "memory" (default) or "file"
+await Spark.Session.configure({
+    "driver": "file",
+    "filePath": "./data/sessions.json",
+    "maxAge": 86400 * 7  // 7 days
+})
+
+// ==================== Static Files ====================
+
+app.static("/public", "./public", { "maxAge": 86400 })
+
+// ==================== Error Handling ====================
+
+app.onError(|err, req| {
+    Console.println($"\x1b[31m[Error]\x1b[0m {err}")
+    
+    // Check if request accepts JSON
+    if Spark.Request.acceptsJson(req) {
+        return Spark.Response.json({
+            "success": false,
+            "error": String(err)
+        }, 500)
+    }
+    
+    // Return HTML error page
+    let html = Spark.Html.page("Error - Todo App", $"""
+        <div class="error-page">
+            <h1>😵 Oops! Something went wrong</h1>
+            <p>{Spark.Html.escape(String(err))}</p>
+            <a href="/" class="btn">← Back to Home</a>
+        </div>
+    """, {
+        "css": "body { font-family: sans-serif; text-align: center; padding: 50px; }"
+    })
+    
+    return Spark.Response.html(html, 500)
+})
+
+// ==================== Mount Routes ====================
+
+// Web routes (HTML pages)
+app.mount("", WebRoutes.create(app))
+
+// API routes (JSON endpoints)  
+app.mount("/api", ApiRoutes.create(app))
+
+// ==================== 404 Handler ====================
+
+app.get("/*path", |req| {
+    let path = req["params"]["path"]
+    
+    if Spark.Request.acceptsJson(req) {
+        return Spark.Response.notFound($"Endpoint not found: /{path}")
+    }
+    
+    let html = Spark.Html.page("404 - Not Found", $"""
+        <div class="error-page">
+            <h1>🔍 Page Not Found</h1>
+            <p>The page <code>/{Spark.Html.escape(path)}</code> doesn't exist.</p>
+            <a href="/" class="btn">← Back to Home</a>
+        </div>
+    """, {
+        "css": "body { font-family: sans-serif; text-align: center; padding: 50px; } code { background: #f0f0f0; padding: 2px 8px; border-radius: 4px; }"
+    })
+    
+    return Spark.Response.html(html, 404)
+})
+
+// ==================== Start Server ====================
+
+let PORT = 3000
+
+app.listen(PORT, || {
+    Console.println("")
+    Console.println("  \x1b[1m\x1b[35m📝 Todo App\x1b[0m")
+    Console.println("")
+    Console.println($"  \x1b[32m➜\x1b[0m  Local:   \x1b[36mhttp://localhost:{PORT}\x1b[0m")
+    Console.println($"  \x1b[32m➜\x1b[0m  API:     \x1b[36mhttp://localhost:{PORT}/api\x1b[0m")
+    Console.println("")
+    Console.println("  \x1b[90mPress Ctrl+C to stop\x1b[0m")
+    Console.println("")
+})

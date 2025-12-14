@@ -1,0 +1,676 @@
+// ============================================================
+// Sald-Lua: Parser (AST Builder)
+// A simple Lua parser written in Sald
+// ============================================================
+
+import "lexer.sald"
+
+// AST Node types
+namespace NodeType {
+    // Expressions
+    const LITERAL = "LITERAL"
+    const IDENTIFIER = "IDENTIFIER"
+    const BINARY = "BINARY"
+    const UNARY = "UNARY"
+    const CALL = "CALL"
+    const TABLE = "TABLE"
+    const INDEX = "INDEX"
+    const GROUPING = "GROUPING"
+    
+    // Statements
+    const BLOCK = "BLOCK"
+    const LOCAL = "LOCAL"
+    const ASSIGN = "ASSIGN"
+    const IF = "IF"
+    const WHILE = "WHILE"
+    const FOR_NUMERIC = "FOR_NUMERIC"
+    const FOR_IN = "FOR_IN"
+    const FUNCTION = "FUNCTION"
+    const RETURN = "RETURN"
+    const BREAK = "BREAK"
+    const EXPR_STMT = "EXPR_STMT"
+}
+
+// AST Node classes - no inheritance, set type directly
+
+// Literal: number, string, boolean, nil
+class LiteralNode {
+    fun init(self, value) {
+        self.type = NodeType.LITERAL
+        self.value = value
+    }
+}
+
+// Identifier: variable name
+class IdentifierNode {
+    fun init(self, name) {
+        self.type = NodeType.IDENTIFIER
+        self.name = name
+    }
+}
+
+// Binary expression: left op right
+class BinaryNode {
+    fun init(self, left, operator, right) {
+        self.type = NodeType.BINARY
+        self.left = left
+        self.operator = operator
+        self.right = right
+    }
+}
+
+// Unary expression: op operand
+class UnaryNode {
+    fun init(self, operator, operand) {
+        self.type = NodeType.UNARY
+        self.operator = operator
+        self.operand = operand
+    }
+}
+
+// Function call: callee(args)
+class CallNode {
+    fun init(self, callee, args) {
+        self.type = NodeType.CALL
+        self.callee = callee
+        self.args = args
+    }
+}
+
+// Table constructor: { entries }
+class TableNode {
+    fun init(self, entries) {
+        self.type = NodeType.TABLE
+        self.entries = entries  // Array of {key, value} or just values
+    }
+}
+
+// Index access: object[index] or object.field
+class IndexNode {
+    fun init(self, object, index) {
+        self.type = NodeType.INDEX
+        self.object = object
+        self.index = index
+    }
+}
+
+// Grouping: (expr)
+class GroupingNode {
+    fun init(self, expr) {
+        self.type = NodeType.GROUPING
+        self.expr = expr
+    }
+}
+
+// Block: list of statements
+class BlockNode {
+    fun init(self, statements) {
+        self.type = NodeType.BLOCK
+        self.statements = statements
+    }
+}
+
+// Local declaration: local name = value
+class LocalNode {
+    fun init(self, name, value) {
+        self.type = NodeType.LOCAL
+        self.name = name
+        self.value = value  // Can be null
+    }
+}
+
+// Assignment: name = value
+class AssignNode {
+    fun init(self, target, value) {
+        self.type = NodeType.ASSIGN
+        self.target = target  // IdentifierNode or IndexNode
+        self.value = value
+    }
+}
+
+// If statement: if cond then block [elseif cond then block]* [else block] end
+class IfNode {
+    fun init(self, condition, thenBranch, elseBranch) {
+        self.type = NodeType.IF
+        self.condition = condition
+        self.thenBranch = thenBranch
+        self.elseBranch = elseBranch  // Can be null or another IfNode or BlockNode
+    }
+}
+
+// While loop: while cond do block end
+class WhileNode {
+    fun init(self, condition, body) {
+        self.type = NodeType.WHILE
+        self.condition = condition
+        self.body = body
+    }
+}
+
+// Numeric for: for i = start, stop, step do block end
+class ForNumericNode {
+    fun init(self, variable, start, stop, step, body) {
+        self.type = NodeType.FOR_NUMERIC
+        self.variable = variable
+        self.start = start
+        self.stop = stop
+        self.step = step  // Can be null (defaults to 1)
+        self.body = body
+    }
+}
+
+// Function definition: function name(params) block end
+class FunctionNode {
+    fun init(self, name, params, body, isLocal) {
+        self.type = NodeType.FUNCTION
+        self.name = name    // Can be null for anonymous
+        self.params = params
+        self.body = body
+        self.isLocal = isLocal
+    }
+}
+
+// Return statement: return [values]
+class ReturnNode {
+    fun init(self, values) {
+        self.type = NodeType.RETURN
+        self.values = values  // Array of expressions
+    }
+}
+
+// Break statement
+class BreakNode {
+    fun init(self) {
+        self.type = NodeType.BREAK
+    }
+}
+
+// Expression statement
+class ExprStmtNode {
+    fun init(self, expr) {
+        self.type = NodeType.EXPR_STMT
+        self.expr = expr
+    }
+}
+
+// ============================================================
+// Parser Class
+// ============================================================
+
+class Parser {
+    fun init(self, tokens) {
+        self.tokens = tokens
+        self.current = 0
+    }
+    
+    // Parse the entire program
+    fun parse(self) {
+        let statements = []
+        
+        while !self.isAtEnd() {
+            let stmt = self.declaration()
+            if stmt != null {
+                statements.push(stmt)
+            }
+        }
+        
+        return BlockNode(statements)
+    }
+    
+    // ==================== Declarations ====================
+    
+    fun declaration(self) {
+        if self.check(TokenType.LOCAL) {
+            return self.localDeclaration()
+        }
+        if self.check(TokenType.FUNCTION) {
+            return self.functionDeclaration(false)
+        }
+        return self.statement()
+    }
+    
+    fun localDeclaration(self) {
+        self.advance()  // consume 'local'
+        
+        // local function name(...)
+        if self.check(TokenType.FUNCTION) {
+            return self.functionDeclaration(true)
+        }
+        
+        // local name = value
+        let name = self.consume(TokenType.IDENTIFIER, "Expected variable name").lexeme
+        
+        let value = null
+        if self.match(TokenType.EQUAL) {
+            value = self.expression()
+        }
+        
+        return LocalNode(name, value)
+    }
+    
+    fun functionDeclaration(self, isLocal) {
+        self.advance()  // consume 'function'
+        
+        let name = null
+        if self.check(TokenType.IDENTIFIER) {
+            name = self.advance().lexeme
+        }
+        
+        self.consume(TokenType.LEFT_PAREN, "Expected '(' after function name")
+        
+        let params = []
+        if !self.check(TokenType.RIGHT_PAREN) {
+            params.push(self.consume(TokenType.IDENTIFIER, "Expected parameter name").lexeme)
+            while self.match(TokenType.COMMA) {
+                params.push(self.consume(TokenType.IDENTIFIER, "Expected parameter name").lexeme)
+            }
+        }
+        
+        self.consume(TokenType.RIGHT_PAREN, "Expected ')' after parameters")
+        
+        let body = self.block()
+        
+        self.consume(TokenType.END, "Expected 'end' after function body")
+        
+        return FunctionNode(name, params, body, isLocal)
+    }
+    
+    // ==================== Statements ====================
+    
+    fun statement(self) {
+        if self.check(TokenType.IF) {
+            return self.ifStatement()
+        }
+        if self.check(TokenType.WHILE) {
+            return self.whileStatement()
+        }
+        if self.check(TokenType.FOR) {
+            return self.forStatement()
+        }
+        if self.check(TokenType.RETURN) {
+            return self.returnStatement()
+        }
+        if self.check(TokenType.BREAK) {
+            self.advance()
+            return BreakNode()
+        }
+        
+        return self.expressionStatement()
+    }
+    
+    fun ifStatement(self) {
+        self.advance()  // consume 'if'
+        
+        let condition = self.expression()
+        self.consume(TokenType.THEN, "Expected 'then' after if condition")
+        
+        let thenBranch = self.block()
+        
+        let elseBranch = null
+        if self.match(TokenType.ELSEIF) {
+            // Put token back and parse as if
+            self.current -= 1
+            self.tokens[self.current] = Token(TokenType.IF, "if", null, self.peek().line)
+            elseBranch = self.ifStatement()
+        } else if self.match(TokenType.ELSE) {
+            elseBranch = self.block()
+        }
+        
+        if elseBranch == null || elseBranch.type != NodeType.IF {
+            self.consume(TokenType.END, "Expected 'end' after if statement")
+        }
+        
+        return IfNode(condition, thenBranch, elseBranch)
+    }
+    
+    fun whileStatement(self) {
+        self.advance()  // consume 'while'
+        
+        let condition = self.expression()
+        self.consume(TokenType.DO, "Expected 'do' after while condition")
+        
+        let body = self.block()
+        
+        self.consume(TokenType.END, "Expected 'end' after while body")
+        
+        return WhileNode(condition, body)
+    }
+    
+    fun forStatement(self) {
+        self.advance()  // consume 'for'
+        
+        let varName = self.consume(TokenType.IDENTIFIER, "Expected variable name").lexeme
+        
+        // Numeric for: for i = start, stop, step do
+        if self.match(TokenType.EQUAL) {
+            let start = self.expression()
+            self.consume(TokenType.COMMA, "Expected ',' after start value")
+            let stop = self.expression()
+            
+            let step = null
+            if self.match(TokenType.COMMA) {
+                step = self.expression()
+            }
+            
+            self.consume(TokenType.DO, "Expected 'do' after for")
+            let body = self.block()
+            self.consume(TokenType.END, "Expected 'end' after for body")
+            
+            return ForNumericNode(varName, start, stop, step, body)
+        }
+        
+        // TODO: for-in loops
+        throw "For-in loops not yet supported"
+    }
+    
+    fun returnStatement(self) {
+        self.advance()  // consume 'return'
+        
+        let values = []
+        if !self.check(TokenType.END) && !self.check(TokenType.ELSE) && 
+           !self.check(TokenType.ELSEIF) && !self.isAtEnd() {
+            values.push(self.expression())
+            while self.match(TokenType.COMMA) {
+                values.push(self.expression())
+            }
+        }
+        
+        return ReturnNode(values)
+    }
+    
+    fun expressionStatement(self) {
+        let expr = self.expression()
+        
+        // Check for assignment
+        if self.match(TokenType.EQUAL) {
+            let value = self.expression()
+            return AssignNode(expr, value)
+        }
+        
+        return ExprStmtNode(expr)
+    }
+    
+    fun block(self) {
+        let statements = []
+        
+        while !self.check(TokenType.END) && !self.check(TokenType.ELSE) &&
+              !self.check(TokenType.ELSEIF) && !self.isAtEnd() {
+            let stmt = self.declaration()
+            if stmt != null {
+                statements.push(stmt)
+            }
+        }
+        
+        return BlockNode(statements)
+    }
+    
+    // ==================== Expressions ====================
+    
+    fun expression(self) {
+        return self.orExpr()
+    }
+    
+    fun orExpr(self) {
+        let expr = self.andExpr()
+        
+        while self.match(TokenType.OR) {
+            let right = self.andExpr()
+            expr = BinaryNode(expr, "or", right)
+        }
+        
+        return expr
+    }
+    
+    fun andExpr(self) {
+        let expr = self.comparison()
+        
+        while self.match(TokenType.AND) {
+            let right = self.comparison()
+            expr = BinaryNode(expr, "and", right)
+        }
+        
+        return expr
+    }
+    
+    fun comparison(self) {
+        let expr = self.concat()
+        
+        while true {
+            if self.match(TokenType.EQUAL_EQUAL) {
+                expr = BinaryNode(expr, "==", self.concat())
+            } else if self.match(TokenType.NOT_EQUAL) {
+                expr = BinaryNode(expr, "~=", self.concat())
+            } else if self.match(TokenType.LESS) {
+                expr = BinaryNode(expr, "<", self.concat())
+            } else if self.match(TokenType.LESS_EQUAL) {
+                expr = BinaryNode(expr, "<=", self.concat())
+            } else if self.match(TokenType.GREATER) {
+                expr = BinaryNode(expr, ">", self.concat())
+            } else if self.match(TokenType.GREATER_EQUAL) {
+                expr = BinaryNode(expr, ">=", self.concat())
+            } else {
+                break
+            }
+        }
+        
+        return expr
+    }
+    
+    fun concat(self) {
+        let expr = self.term()
+        
+        // Right-associative
+        if self.match(TokenType.DOT_DOT) {
+            let right = self.concat()
+            expr = BinaryNode(expr, "..", right)
+        }
+        
+        return expr
+    }
+    
+    fun term(self) {
+        let expr = self.factor()
+        
+        while true {
+            if self.match(TokenType.PLUS) {
+                expr = BinaryNode(expr, "+", self.factor())
+            } else if self.match(TokenType.MINUS) {
+                expr = BinaryNode(expr, "-", self.factor())
+            } else {
+                break
+            }
+        }
+        
+        return expr
+    }
+    
+    fun factor(self) {
+        let expr = self.unary()
+        
+        while true {
+            if self.match(TokenType.STAR) {
+                expr = BinaryNode(expr, "*", self.unary())
+            } else if self.match(TokenType.SLASH) {
+                expr = BinaryNode(expr, "/", self.unary())
+            } else if self.match(TokenType.PERCENT) {
+                expr = BinaryNode(expr, "%", self.unary())
+            } else {
+                break
+            }
+        }
+        
+        return expr
+    }
+    
+    fun unary(self) {
+        if self.match(TokenType.NOT) {
+            return UnaryNode("not", self.unary())
+        }
+        if self.match(TokenType.MINUS) {
+            return UnaryNode("-", self.unary())
+        }
+        if self.match(TokenType.HASH) {
+            return UnaryNode("#", self.unary())
+        }
+        
+        return self.power()
+    }
+    
+    fun power(self) {
+        let expr = self.call()
+        
+        // Right-associative
+        if self.match(TokenType.CARET) {
+            let right = self.unary()
+            expr = BinaryNode(expr, "^", right)
+        }
+        
+        return expr
+    }
+    
+    fun call(self) {
+        let expr = self.primary()
+        
+        while true {
+            if self.match(TokenType.LEFT_PAREN) {
+                let args = []
+                if !self.check(TokenType.RIGHT_PAREN) {
+                    args.push(self.expression())
+                    while self.match(TokenType.COMMA) {
+                        args.push(self.expression())
+                    }
+                }
+                self.consume(TokenType.RIGHT_PAREN, "Expected ')' after arguments")
+                expr = CallNode(expr, args)
+            } else if self.match(TokenType.DOT) {
+                let name = self.consume(TokenType.IDENTIFIER, "Expected property name").lexeme
+                expr = IndexNode(expr, LiteralNode(name))
+            } else if self.match(TokenType.LEFT_BRACKET) {
+                let index = self.expression()
+                self.consume(TokenType.RIGHT_BRACKET, "Expected ']' after index")
+                expr = IndexNode(expr, index)
+            } else {
+                break
+            }
+        }
+        
+        return expr
+    }
+    
+    fun primary(self) {
+        // Literals
+        if self.match(TokenType.NUMBER) || self.match(TokenType.STRING) ||
+           self.match(TokenType.TRUE) || self.match(TokenType.FALSE) ||
+           self.match(TokenType.NIL) {
+            return LiteralNode(self.previous().literal)
+        }
+        
+        // Identifier
+        if self.match(TokenType.IDENTIFIER) {
+            return IdentifierNode(self.previous().lexeme)
+        }
+        
+        // Grouping
+        if self.match(TokenType.LEFT_PAREN) {
+            let expr = self.expression()
+            self.consume(TokenType.RIGHT_PAREN, "Expected ')' after expression")
+            return GroupingNode(expr)
+        }
+        
+        // Table constructor
+        if self.match(TokenType.LEFT_BRACE) {
+            return self.tableConstructor()
+        }
+        
+        // Anonymous function
+        if self.check(TokenType.FUNCTION) {
+            return self.functionDeclaration(false)
+        }
+        
+        throw $"[Parser Error] Unexpected token: {self.peek().lexeme}"
+    }
+    
+    fun tableConstructor(self) {
+        let entries = []
+        
+        while !self.check(TokenType.RIGHT_BRACE) && !self.isAtEnd() {
+            let entry = {}
+            
+            // [key] = value
+            if self.match(TokenType.LEFT_BRACKET) {
+                entry["key"] = self.expression()
+                self.consume(TokenType.RIGHT_BRACKET, "Expected ']' after key")
+                self.consume(TokenType.EQUAL, "Expected '=' after key")
+                entry["value"] = self.expression()
+            }
+            // key = value
+            else if self.check(TokenType.IDENTIFIER) && self.peekNext().type == TokenType.EQUAL {
+                entry["key"] = LiteralNode(self.advance().lexeme)
+                self.advance()  // consume '='
+                entry["value"] = self.expression()
+            }
+            // Just value (array-like)
+            else {
+                entry["value"] = self.expression()
+            }
+            
+            entries.push(entry)
+            
+            // Optional separator
+            if !self.match(TokenType.COMMA) && !self.match(TokenType.SEMICOLON) {
+                break
+            }
+        }
+        
+        self.consume(TokenType.RIGHT_BRACE, "Expected '}' after table")
+        return TableNode(entries)
+    }
+    
+    // ==================== Helper Methods ====================
+    
+    fun isAtEnd(self) {
+        return self.peek().type == TokenType.EOF
+    }
+    
+    fun peek(self) {
+        return self.tokens[self.current]
+    }
+    
+    fun peekNext(self) {
+        if self.current + 1 >= self.tokens.length() {
+            return self.tokens[self.tokens.length() - 1]
+        }
+        return self.tokens[self.current + 1]
+    }
+    
+    fun previous(self) {
+        return self.tokens[self.current - 1]
+    }
+    
+    fun advance(self) {
+        if !self.isAtEnd() {
+            self.current += 1
+        }
+        return self.previous()
+    }
+    
+    fun check(self, type) {
+        if self.isAtEnd() { return false }
+        return self.peek().type == type
+    }
+    
+    fun match(self, type) {
+        if self.check(type) {
+            self.advance()
+            return true
+        }
+        return false
+    }
+    
+    fun consume(self, type, message) {
+        if self.check(type) {
+            return self.advance()
+        }
+        throw $"[Parser Error] Line {self.peek().line}: {message}, got '{self.peek().lexeme}'"
+    }
+}

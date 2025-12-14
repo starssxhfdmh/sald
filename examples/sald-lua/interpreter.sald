@@ -1,0 +1,593 @@
+// ============================================================
+// Sald-Lua: Interpreter (Evaluator)
+// A simple Lua interpreter written in Sald
+// ============================================================
+
+import "lexer.sald"
+import "parser.sald"
+
+// ============================================================
+// Environment (Scope)
+// ============================================================
+
+class Environment {
+    fun init(self, parent) {
+        self.values = {}
+        self.parent = parent
+    }
+    
+    fun define(self, name, value) {
+        self.values[name] = value
+    }
+    
+    fun get(self, name) {
+        if self.values.has(name) {
+            return self.values[name]
+        }
+        if self.parent != null {
+            return self.parent.get(name)
+        }
+        return null  // Lua returns nil for undefined variables
+    }
+    
+    fun set(self, name, value) {
+        if self.values.has(name) {
+            self.values[name] = value
+            return true
+        }
+        if self.parent != null {
+            return self.parent.set(name, value)
+        }
+        // Global assignment
+        self.values[name] = value
+        return true
+    }
+    
+    fun has(self, name) {
+        if self.values.has(name) {
+            return true
+        }
+        if self.parent != null {
+            return self.parent.has(name)
+        }
+        return false
+    }
+}
+
+// ============================================================
+// Lua Function
+// ============================================================
+
+class LuaFunction {
+    fun init(self, name, params, body, closure) {
+        self.name = name
+        self.params = params
+        self.body = body
+        self.closure = closure
+    }
+    
+    fun call(self, interpreter, args) {
+        let env = Environment(self.closure)
+        
+        // Bind parameters
+        for i in Array.range(self.params.length()) {
+            let value = null
+            if i < args.length() {
+                value = args[i]
+            }
+            env.define(self.params[i], value)
+        }
+        
+        // Execute body
+        try {
+            interpreter.executeBlock(self.body, env)
+            return null
+        } catch e {
+            if Type.isDict(e) {
+                if e.has("type") && e["type"] == "return" {
+                    return e["value"]
+                }
+            }
+            throw e
+        }
+    }
+}
+
+// ============================================================
+// Native Functions
+// ============================================================
+
+class NativeFunction {
+    fun init(self, name, arity, func) {
+        self.name = name
+        self.arity = arity
+        self.func = func
+    }
+    
+    fun call(self, interpreter, args) {
+        return self.func(args)
+    }
+}
+
+// ============================================================
+// Interpreter
+// ============================================================
+
+class Interpreter {
+    fun init(self) {
+        self.globals = Environment(null)
+        self.environment = self.globals
+        
+        // Register native functions
+        self.registerNatives()
+    }
+    
+    fun registerNatives(self) {
+        // print(...)
+        self.globals.define("print", NativeFunction("print", -1, |args| {
+            let output = args.map(|v| self.stringify(v)).join("\t")
+            Console.println(output)
+            return null
+        }))
+        
+        // type(v)
+        self.globals.define("type", NativeFunction("type", 1, |args| {
+            return self.luaType(args[0])
+        }))
+        
+        // tonumber(v)
+        self.globals.define("tonumber", NativeFunction("tonumber", 1, |args| {
+            let v = args[0]
+            if v == null { return null }
+            if Type.isNumber(v) { return v }
+            if Type.isString(v) {
+                try {
+                    return Number(v)
+                } catch _ {
+                    return null
+                }
+            }
+            return null
+        }))
+        
+        // tostring(v)
+        self.globals.define("tostring", NativeFunction("tostring", 1, |args| {
+            return self.stringify(args[0])
+        }))
+
+        // #(len operator support)
+        self.globals.define("string", {
+            "len": NativeFunction("string.len", 1, |args| args[0].length()),
+            "sub": NativeFunction("string.sub", 3, |args| {
+                let s = args[0]
+                let i = args[1] - 1  // Lua is 1-indexed
+                let j = args.length() > 2 ? args[2] : s.length()
+                return s.substring(i, j)
+            }),
+            "upper": NativeFunction("string.upper", 1, |args| args[0].toUpperCase()),
+            "lower": NativeFunction("string.lower", 1, |args| args[0].toLowerCase()),
+            "rep": NativeFunction("string.rep", 2, |args| args[0].repeat(args[1]))
+        })
+        
+        // math library
+        self.globals.define("math", {
+            "pi": Math.PI,
+            "huge": Math.INFINITY,
+            "abs": NativeFunction("math.abs", 1, |args| Math.abs(args[0])),
+            "floor": NativeFunction("math.floor", 1, |args| Math.floor(args[0])),
+            "ceil": NativeFunction("math.ceil", 1, |args| Math.ceil(args[0])),
+            "sqrt": NativeFunction("math.sqrt", 1, |args| Math.sqrt(args[0])),
+            "sin": NativeFunction("math.sin", 1, |args| Math.sin(args[0])),
+            "cos": NativeFunction("math.cos", 1, |args| Math.cos(args[0])),
+            "tan": NativeFunction("math.tan", 1, |args| Math.tan(args[0])),
+            "max": NativeFunction("math.max", -1, |args| Math.max(args[0], args[1])),
+            "min": NativeFunction("math.min", -1, |args| Math.min(args[0], args[1])),
+            "random": NativeFunction("math.random", -1, |args| {
+                if args.length() == 0 {
+                    return Math.random() 
+                } else if args.length() == 1 {
+                    return Math.floor(Math.random() * args[0]) + 1
+                } else {
+                    return Math.floor(Math.random() * (args[1] - args[0] + 1)) + args[0]
+                }
+            }),
+            "pow": NativeFunction("math.pow", 2, |args| Math.pow(args[0], args[1]))
+        })
+        
+        // table library
+        self.globals.define("table", {
+            "insert": NativeFunction("table.insert", -1, |args| {
+                let t = args[0]
+                if args.length() == 2 {
+                    t.push(args[1])
+                } else {
+                    // table.insert(t, pos, value)
+                    let pos = args[1] - 1  // Lua 1-indexed
+                    let value = args[2]
+                    t.splice(pos, 0, value)
+                }
+                return null
+            }),
+            "remove": NativeFunction("table.remove", -1, |args| {
+                let t = args[0]
+                if args.length() == 1 {
+                    return t.pop()
+                } else {
+                    let pos = args[1] - 1
+                    let removed = t[pos]
+                    t.splice(pos, 1)
+                    return removed
+                }
+            }),
+            "concat": NativeFunction("table.concat", -1, |args| {
+                let t = args[0]
+                let sep = args.length() > 1 ? args[1] : ""
+                return t.join(sep)
+            })
+        })
+        
+        // os library (minimal)
+        self.globals.define("os", {
+            "time": NativeFunction("os.time", 0, |args| Math.floor(Timer.now() / 1000)),
+            "clock": NativeFunction("os.clock", 0, |args| Timer.now() / 1000)
+        })
+    }
+    
+    // ==================== Execution ====================
+    
+    fun run(self, source) {
+        // Tokenize
+        let lexer = Lexer(source)
+        let tokens = lexer.scanTokens()
+        
+        // Parse
+        let parser = Parser(tokens)
+        let ast = parser.parse()
+        
+        // Execute
+        return self.execute(ast)
+    }
+    
+    fun execute(self, node) {
+        switch node.type {
+            NodeType.BLOCK, -> return self.executeBlock(node, self.environment)
+            NodeType.LOCAL, -> return self.executeLocal(node)
+            NodeType.ASSIGN, -> return self.executeAssign(node)
+            NodeType.IF, -> return self.executeIf(node)
+            NodeType.WHILE, -> return self.executeWhile(node)
+            NodeType.FOR_NUMERIC, -> return self.executeForNumeric(node)
+            NodeType.FUNCTION, -> return self.executeFunction(node)
+            NodeType.RETURN, -> return self.executeReturn(node)
+            NodeType.BREAK, -> throw {"type": "break"}
+            NodeType.EXPR_STMT, -> return self.evaluate(node.expr)
+            default -> return self.evaluate(node)
+        }
+    }
+    
+    fun executeBlock(self, block, env) {
+        let previous = self.environment
+        self.environment = env
+        
+        try {
+            for stmt in block.statements {
+                self.execute(stmt)
+            }
+        } catch e {
+            self.environment = previous
+            throw e
+        }
+        
+        self.environment = previous
+        return null
+    }
+    
+    fun executeLocal(self, node) {
+        let value = null
+        if node.value != null {
+            value = self.evaluate(node.value)
+        }
+        self.environment.define(node.name, value)
+        return value
+    }
+    
+    fun executeAssign(self, node) {
+        let value = self.evaluate(node.value)
+        
+        if node.target.type == NodeType.IDENTIFIER {
+            self.environment.set(node.target.name, value)
+        } else if node.target.type == NodeType.INDEX {
+            let object = self.evaluate(node.target.object)
+            let index = self.evaluate(node.target.index)
+            object[index] = value
+        }
+        
+        return value
+    }
+    
+    fun executeIf(self, node) {
+        if self.isTruthy(self.evaluate(node.condition)) {
+            self.executeBlock(node.thenBranch, Environment(self.environment))
+        } else if node.elseBranch != null {
+            if node.elseBranch.type == NodeType.IF {
+                self.executeIf(node.elseBranch)
+            } else {
+                self.executeBlock(node.elseBranch, Environment(self.environment))
+            }
+        }
+        return null
+    }
+    
+    fun executeWhile(self, node) {
+        while self.isTruthy(self.evaluate(node.condition)) {
+            try {
+                self.executeBlock(node.body, Environment(self.environment))
+            } catch e {
+                if e["type"] == "break" {
+                    break
+                }
+                throw e
+            }
+        }
+        return null
+    }
+    
+    fun executeForNumeric(self, node) {
+        let start = self.evaluate(node.start)
+        let stop = self.evaluate(node.stop)
+        let step = node.step != null ? self.evaluate(node.step) : 1
+        
+        let env = Environment(self.environment)
+        let i = start
+        
+        while (step > 0 && i <= stop) || (step < 0 && i >= stop) {
+            env.define(node.variable, i)
+            
+            try {
+                self.executeBlock(node.body, env)
+            } catch e {
+                if e["type"] == "break" {
+                    break
+                }
+                throw e
+            }
+            
+            i += step
+        }
+        
+        return null
+    }
+    
+    fun executeFunction(self, node) {
+        let func = LuaFunction(node.name, node.params, node.body, self.environment)
+        
+        if node.name != null {
+            if node.isLocal {
+                self.environment.define(node.name, func)
+            } else {
+                self.globals.define(node.name, func)
+            }
+        }
+        
+        return func
+    }
+    
+    fun executeReturn(self, node) {
+        let value = null
+        if node.values.length() > 0 {
+            value = self.evaluate(node.values[0])
+            // TODO: multiple return values
+        }
+        throw {"type": "return", "value": value}
+    }
+    
+    // ==================== Evaluation ====================
+    
+    fun evaluate(self, node) {
+        switch node.type {
+            NodeType.LITERAL, -> return node.value
+            NodeType.IDENTIFIER, -> return self.environment.get(node.name)
+            NodeType.BINARY, -> return self.evalBinary(node)
+            NodeType.UNARY, -> return self.evalUnary(node)
+            NodeType.CALL, -> return self.evalCall(node)
+            NodeType.TABLE, -> return self.evalTable(node)
+            NodeType.INDEX, -> return self.evalIndex(node)
+            NodeType.GROUPING, -> return self.evaluate(node.expr)
+            NodeType.FUNCTION, -> return self.executeFunction(node)
+            default -> throw $"Unknown node type: {node.type}"
+        }
+    }
+    
+    fun evalBinary(self, node) {
+        // Short-circuit for 'and' and 'or'
+        if node.operator == "and" {
+            let left = self.evaluate(node.left)
+            if !self.isTruthy(left) { return left }
+            return self.evaluate(node.right)
+        }
+        
+        if node.operator == "or" {
+            let left = self.evaluate(node.left)
+            if self.isTruthy(left) { return left }
+            return self.evaluate(node.right)
+        }
+        
+        let left = self.evaluate(node.left)
+        let right = self.evaluate(node.right)
+        
+        switch node.operator {
+            "+", -> return left + right
+            "-", -> return left - right
+            "*", -> return left * right
+            "/", -> return left / right
+            "%", -> return left % right
+            "^", -> return Math.pow(left, right)
+            "..", -> return self.stringify(left) + self.stringify(right)
+            "==", -> return left == right
+            "~=", -> return left != right
+            "<", -> return left < right
+            "<=", -> return left <= right
+            ">", -> return left > right
+            ">=", -> return left >= right
+            default -> throw $"Unknown operator: {node.operator}"
+        }
+    }
+    
+    fun evalUnary(self, node) {
+        let operand = self.evaluate(node.operand)
+        
+        switch node.operator {
+            "-", -> return -operand
+            "not", -> return !self.isTruthy(operand)
+            "#", -> {
+                if Type.isString(operand) {
+                    return operand.length()
+                } else if Type.isArray(operand) {
+                    return operand.length()
+                }
+                return 0
+            }
+            default -> throw $"Unknown unary operator: {node.operator}"
+        }
+    }
+    
+    fun evalCall(self, node) {
+        let callee = self.evaluate(node.callee)
+        let args = node.args.map(|arg| self.evaluate(arg))
+        
+        // Handle method calls on tables (e.g., string.len)
+        if callee == null {
+            // Try to find in index chain
+            if node.callee.type == NodeType.INDEX {
+                let obj = self.evaluate(node.callee.object)
+                let key = self.evaluate(node.callee.index)
+                callee = obj[key]
+            }
+        }
+        
+        if callee == null {
+            throw $"Attempt to call a nil value"
+        }
+        
+        // Check if it's a callable instance (LuaFunction or NativeFunction)
+        if Type.isInstance(callee) {
+            return callee.call(self, args)
+        }
+        
+        throw $"Attempt to call a {self.luaType(callee)} value"
+    }
+    
+    fun evalTable(self, node) {
+        let table = []
+        let dict = {}
+        let arrayIndex = 1
+        
+        for entry in node.entries {
+            if entry["key"] != null {
+                let key = self.evaluate(entry["key"])
+                let value = self.evaluate(entry["value"])
+                dict[key] = value
+            } else {
+                let value = self.evaluate(entry["value"])
+                table.push(value)
+            }
+        }
+        
+        // If there are dict entries, merge them
+        if Dict.keys(dict).length() > 0 {
+            // Return as dictionary
+            for i in Array.range(table.length()) {
+                dict[i + 1] = table[i]  // Lua is 1-indexed
+            }
+            return dict
+        }
+        
+        return table
+    }
+    
+    fun evalIndex(self, node) {
+        let object = self.evaluate(node.object)
+        let index = self.evaluate(node.index)
+        
+        if object == null {
+            throw $"Attempt to index a nil value"
+        }
+        
+        // Handle Lua 1-indexed arrays
+        if Type.isArray(object) && Type.isNumber(index) {
+            return object[index - 1]  // Convert to 0-indexed
+        }
+        
+        return object[index]
+    }
+    
+    // ==================== Helpers ====================
+    
+    fun isTruthy(self, value) {
+        // In Lua, only false and nil are falsy
+        if value == null { return false }
+        if value == false { return false }
+        return true
+    }
+    
+    fun stringify(self, value) {
+        if value == null { return "nil" }
+        if value == true { return "true" }
+        if value == false { return "false" }
+        if Type.isNumber(value) {
+            let s = value.toString()
+            if s.endsWith(".0") {
+                return s.substring(0, s.length() - 2)
+            }
+            return s
+        }
+        if Type.isString(value) { return value }
+        if Type.isArray(value) { return "table" }
+        if Type.isInstance(value) { return $"function: {value.name}" }
+        return "table"
+    }
+    
+    fun luaType(self, value) {
+        if value == null { return "nil" }
+        if value == true || value == false { return "boolean" }
+        if Type.isNumber(value) { return "number" }
+        if Type.isString(value) { return "string" }
+        if Type.isArray(value) { return "table" }
+        if Type.isInstance(value) { return "function" }
+        return "table"
+    }
+}
+
+// ============================================================
+// REPL / Main Entry Point
+// ============================================================
+
+fun main() {
+    Console.println("Type Lua code to execute, or 'exit' to quit.")
+    Console.println("")
+    
+    let interpreter = Interpreter()
+
+    // Simple REPL
+    let running = true
+    while running {
+        Console.print("lua> ")
+        let input = Console.input()
+        
+        if input == null || input == "exit" || input == "quit" {
+            running = false
+            Console.println("Goodbye!")
+        } else if input.trim() != "" {
+            try {
+                let result = interpreter.run(input)
+                if result != null {
+                    Console.println(interpreter.stringify(result))
+                }
+            } catch e {
+                Console.println($"Error: {e}")
+            }
+        }
+    }
+}
+
+// Run main
+main()

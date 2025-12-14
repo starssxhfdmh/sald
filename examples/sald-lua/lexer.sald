@@ -1,0 +1,369 @@
+// ============================================================
+// Sald-Lua: Lexer (Tokenizer)
+// A simple Lua lexer written in Sald
+// ============================================================
+
+// Token types
+namespace TokenType {
+    // Literals
+    const NUMBER = "NUMBER"
+    const STRING = "STRING"
+    const TRUE = "TRUE"
+    const FALSE = "FALSE"
+    const NIL = "NIL"
+    const IDENTIFIER = "IDENTIFIER"
+    
+    // Keywords
+    const LOCAL = "LOCAL"
+    const FUNCTION = "FUNCTION"
+    const IF = "IF"
+    const THEN = "THEN"
+    const ELSE = "ELSE"
+    const ELSEIF = "ELSEIF"
+    const END = "END"
+    const WHILE = "WHILE"
+    const DO = "DO"
+    const FOR = "FOR"
+    const IN = "IN"
+    const RETURN = "RETURN"
+    const AND = "AND"
+    const OR = "OR"
+    const NOT = "NOT"
+    const BREAK = "BREAK"
+    
+    // Operators
+    const PLUS = "PLUS"
+    const MINUS = "MINUS"
+    const STAR = "STAR"
+    const SLASH = "SLASH"
+    const PERCENT = "PERCENT"
+    const CARET = "CARET"
+    const HASH = "HASH"
+    const EQUAL = "EQUAL"
+    const EQUAL_EQUAL = "EQUAL_EQUAL"
+    const NOT_EQUAL = "NOT_EQUAL"
+    const LESS = "LESS"
+    const LESS_EQUAL = "LESS_EQUAL"
+    const GREATER = "GREATER"
+    const GREATER_EQUAL = "GREATER_EQUAL"
+    const DOT_DOT = "DOT_DOT"
+    
+    // Delimiters
+    const LEFT_PAREN = "LEFT_PAREN"
+    const RIGHT_PAREN = "RIGHT_PAREN"
+    const LEFT_BRACE = "LEFT_BRACE"
+    const RIGHT_BRACE = "RIGHT_BRACE"
+    const LEFT_BRACKET = "LEFT_BRACKET"
+    const RIGHT_BRACKET = "RIGHT_BRACKET"
+    const COMMA = "COMMA"
+    const DOT = "DOT"
+    const SEMICOLON = "SEMICOLON"
+    const COLON = "COLON"
+    
+    // Special
+    const EOF = "EOF"
+    const NEWLINE = "NEWLINE"
+}
+
+// Token class
+class Token {
+    fun init(self, type, lexeme, literal, line) {
+        self.type = type
+        self.lexeme = lexeme
+        self.literal = literal
+        self.line = line
+    }
+    
+    fun toString(self) {
+        return $"[{self.type}] '{self.lexeme}' @ line {self.line}"
+    }
+}
+
+// Keywords lookup
+let KEYWORDS = {
+    "local": TokenType.LOCAL,
+    "function": TokenType.FUNCTION,
+    "if": TokenType.IF,
+    "then": TokenType.THEN,
+    "else": TokenType.ELSE,
+    "elseif": TokenType.ELSEIF,
+    "end": TokenType.END,
+    "while": TokenType.WHILE,
+    "do": TokenType.DO,
+    "for": TokenType.FOR,
+    "in": TokenType.IN,
+    "return": TokenType.RETURN,
+    "and": TokenType.AND,
+    "or": TokenType.OR,
+    "not": TokenType.NOT,
+    "break": TokenType.BREAK,
+    "true": TokenType.TRUE,
+    "false": TokenType.FALSE,
+    "nil": TokenType.NIL
+}
+
+// Lexer class
+class Lexer {
+    fun init(self, source) {
+        self.source = source
+        self.tokens = []
+        self.start = 0
+        self.current = 0
+        self.line = 1
+    }
+    
+    // Main scan method
+    fun scanTokens(self) {
+        while !self.isAtEnd() {
+            self.start = self.current
+            self.scanToken()
+        }
+        
+        self.tokens.push(Token(TokenType.EOF, "", null, self.line))
+        return self.tokens
+    }
+    
+    fun scanToken(self) {
+        let c = self.advance()
+        
+        switch c {
+            // Single character tokens
+            "(", -> self.addToken(TokenType.LEFT_PAREN)
+            ")", -> self.addToken(TokenType.RIGHT_PAREN)
+            "{", -> self.addToken(TokenType.LEFT_BRACE)
+            "}", -> self.addToken(TokenType.RIGHT_BRACE)
+            "[", -> self.addToken(TokenType.LEFT_BRACKET)
+            "]", -> self.addToken(TokenType.RIGHT_BRACKET)
+            ",", -> self.addToken(TokenType.COMMA)
+            ";", -> self.addToken(TokenType.SEMICOLON)
+            ":", -> self.addToken(TokenType.COLON)
+            "+", -> self.addToken(TokenType.PLUS)
+            "*", -> self.addToken(TokenType.STAR)
+            "/", -> self.addToken(TokenType.SLASH)
+            "%", -> self.addToken(TokenType.PERCENT)
+            "^", -> self.addToken(TokenType.CARET)
+            "#", -> self.addToken(TokenType.HASH)
+            
+            // Two character tokens
+            "-", -> {
+                if self.match("-") {
+                    // Comment - skip to end of line
+                    while self.peek() != "\n" && !self.isAtEnd() {
+                        self.advance()
+                    }
+                } else {
+                    self.addToken(TokenType.MINUS)
+                }
+            }
+            
+            ".", -> {
+                if self.match(".") {
+                    self.addToken(TokenType.DOT_DOT)
+                } else {
+                    self.addToken(TokenType.DOT)
+                }
+            }
+            
+            "=", -> {
+                if self.match("=") {
+                    self.addToken(TokenType.EQUAL_EQUAL)
+                } else {
+                    self.addToken(TokenType.EQUAL)
+                }
+            }
+            
+            "~", -> {
+                if self.match("=") {
+                    self.addToken(TokenType.NOT_EQUAL)
+                } else {
+                    self.error("Unexpected character '~'. Did you mean '~='?")
+                }
+            }
+            
+            "<", -> {
+                if self.match("=") {
+                    self.addToken(TokenType.LESS_EQUAL)
+                } else {
+                    self.addToken(TokenType.LESS)
+                }
+            }
+            
+            ">", -> {
+                if self.match("=") {
+                    self.addToken(TokenType.GREATER_EQUAL)
+                } else {
+                    self.addToken(TokenType.GREATER)
+                }
+            }
+            
+            // Whitespace
+            " ", "\r", "\t", -> { /* ignore */ }
+            
+            "\n", -> {
+                self.line += 1
+            }
+            
+            // String literals
+            "\"", "'", -> self.string(c)
+            
+            default -> {
+                if self.isDigit(c) {
+                    self.number()
+                } else if self.isAlpha(c) {
+                    self.identifier()
+                } else {
+                    self.error($"Unexpected character '{c}'")
+                }
+            }
+        }
+    }
+    
+    // String literal
+    fun string(self, quote) {
+        while self.peek() != quote && !self.isAtEnd() {
+            if self.peek() == "\n" {
+                self.line += 1
+            }
+            if self.peek() == "\\" {
+                self.advance() // skip backslash
+            }
+            self.advance()
+        }
+        
+        if self.isAtEnd() {
+            self.error("Unterminated string")
+            return
+        }
+        
+        // Consume closing quote
+        self.advance()
+        
+        // Get string value (without quotes)
+        let value = self.source.substring(self.start + 1, self.current - 1)
+        // Process escape sequences
+        value = self.processEscapes(value)
+        self.addTokenLiteral(TokenType.STRING, value)
+    }
+    
+    fun processEscapes(self, s) {
+        let result = ""
+        let i = 0
+        while i < s.length() {
+            let c = s.charAt(i)
+            if c == "\\" && i + 1 < s.length() {
+                let next = s.charAt(i + 1)
+                switch next {
+                    "n", -> { result += "\n" i += 2 }
+                    "t", -> { result += "\t" i += 2 }
+                    "r", -> { result += "\r" i += 2 }
+                    "\\", -> { result += "\\" i += 2 }
+                    "\"", -> { result += "\"" i += 2 }
+                    "'", -> { result += "'" i += 2 }
+                    default -> { result += c i += 1 }
+                }
+            } else {
+                result += c
+                i += 1
+            }
+        }
+        return result
+    }
+    
+    // Number literal
+    fun number(self) {
+        while self.isDigit(self.peek()) {
+            self.advance()
+        }
+        
+        // Look for decimal
+        if self.peek() == "." && self.isDigit(self.peekNext()) {
+            self.advance() // consume '.'
+            while self.isDigit(self.peek()) {
+                self.advance()
+            }
+        }
+        
+        let value = Number(self.source.substring(self.start, self.current))
+        self.addTokenLiteral(TokenType.NUMBER, value)
+    }
+    
+    // Identifier or keyword
+    fun identifier(self) {
+        while self.isAlphaNumeric(self.peek()) {
+            self.advance()
+        }
+        
+        let text = self.source.substring(self.start, self.current)
+        let tokenType = KEYWORDS[text]
+        
+        if tokenType == null {
+            tokenType = TokenType.IDENTIFIER
+        }
+        
+        // Handle boolean literals
+        if tokenType == TokenType.TRUE {
+            self.addTokenLiteral(TokenType.TRUE, true)
+        } else if tokenType == TokenType.FALSE {
+            self.addTokenLiteral(TokenType.FALSE, false)
+        } else if tokenType == TokenType.NIL {
+            self.addTokenLiteral(TokenType.NIL, null)
+        } else {
+            self.addToken(tokenType)
+        }
+    }
+    
+    // Helper methods
+    fun isAtEnd(self) {
+        return self.current >= self.source.length()
+    }
+    
+    fun advance(self) {
+        let c = self.source.charAt(self.current)
+        self.current += 1
+        return c
+    }
+    
+    fun peek(self) {
+        if self.isAtEnd() { return "\0" }
+        return self.source.charAt(self.current)
+    }
+    
+    fun peekNext(self) {
+        if self.current + 1 >= self.source.length() { return "\0" }
+        return self.source.charAt(self.current + 1)
+    }
+    
+    fun match(self, expected) {
+        if self.isAtEnd() { return false }
+        if self.source.charAt(self.current) != expected { return false }
+        self.current += 1
+        return true
+    }
+    
+    fun isDigit(self, c) {
+        return c >= "0" && c <= "9"
+    }
+    
+    fun isAlpha(self, c) {
+        return (c >= "a" && c <= "z") ||
+               (c >= "A" && c <= "Z") ||
+               c == "_"
+    }
+    
+    fun isAlphaNumeric(self, c) {
+        return self.isAlpha(c) || self.isDigit(c)
+    }
+    
+    fun addToken(self, type) {
+        self.addTokenLiteral(type, null)
+    }
+    
+    fun addTokenLiteral(self, type, literal) {
+        let text = self.source.substring(self.start, self.current)
+        self.tokens.push(Token(type, text, literal, self.line))
+    }
+    
+    fun error(self, message) {
+        throw $"[Lexer Error] Line {self.line}: {message}"
+    }
+}
