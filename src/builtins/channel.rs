@@ -20,7 +20,7 @@ pub fn create_channel_class() -> Class {
     let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
     let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
 
-    // Static constructor
+    // Static constructor (also available as Channel.new())
     static_methods.insert("new".to_string(), channel_new);
 
     // Instance methods
@@ -30,7 +30,8 @@ pub fn create_channel_class() -> Class {
     instance_methods.insert("close".to_string(), channel_close);
     instance_methods.insert("isClosed".to_string(), channel_is_closed);
 
-    let mut class = Class::new_with_instance("Channel", instance_methods, None);
+    // Use constructor so Channel() works directly
+    let mut class = Class::new_with_instance("Channel", instance_methods, Some(channel_new));
     class.native_static_methods = static_methods;
     class
 }
