@@ -49,17 +49,19 @@ impl CallFrame {
 
     #[inline(always)]
     fn read_byte(&mut self) -> u8 {
-        let byte = self.function.chunk.code[self.ip];
+        let byte = unsafe { *self.function.chunk.code.get_unchecked(self.ip) };
         self.ip += 1;
         byte
     }
 
     #[inline(always)]
     fn read_u16(&mut self) -> u16 {
-        let high = self.function.chunk.code[self.ip] as u16;
-        let low = self.function.chunk.code[self.ip + 1] as u16;
-        self.ip += 2;
-        (high << 8) | low
+        unsafe {
+            let high = *self.function.chunk.code.get_unchecked(self.ip) as u16;
+            let low = *self.function.chunk.code.get_unchecked(self.ip + 1) as u16;
+            self.ip += 2;
+            (high << 8) | low
+        }
     }
 
     fn current_span(&self) -> Span {
@@ -103,8 +105,8 @@ enum ControlFlow {
 /// Opcode handler function type
 type OpHandler = fn(&mut VM) -> ControlFlow;
 
-/// Static dispatch table - indexed by opcode byte
-static DISPATCH: [OpHandler; 48] = [
+/// Single unified dispatch table - 68 opcodes (0-67)
+static DISPATCH: [OpHandler; 68] = [
     op_constant,      // 0
     op_pop,           // 1
     op_dup,           // 2
@@ -153,10 +155,6 @@ static DISPATCH: [OpHandler; 48] = [
     op_build_namespace, // 45
     op_build_enum,    // 46
     op_inherit,       // 47
-];
-
-// Extended dispatch for opcodes 48+
-static DISPATCH_EXT: [OpHandler; 16] = [
     op_get_super,     // 48
     op_import,        // 49
     op_import_as,     // 50
@@ -173,14 +171,10 @@ static DISPATCH_EXT: [OpHandler; 16] = [
     op_bit_xor,       // 61
     op_bit_not,       // 62
     op_left_shift,    // 63
-];
-
-// More extended dispatch
-static DISPATCH_EXT2: [OpHandler; 4] = [
     op_right_shift,   // 64
     op_build_range_inclusive, // 65
     op_build_range_exclusive, // 66
-    op_nop,           // 67 (padding)
+    op_nop,           // 67
 ];
 
 // ==================== Opcode Handlers ====================
@@ -203,7 +197,9 @@ fn op_pop(vm: &mut VM) -> ControlFlow {
 
 #[inline(always)]
 fn op_dup(vm: &mut VM) -> ControlFlow {
-    if let Some(v) = vm.stack.last().cloned() {
+    let len = vm.stack.len();
+    if len > 0 {
+        let v = unsafe { vm.stack.get_unchecked(len - 1).clone() };
         vm.stack.push(v);
     }
     ControlFlow::Continue
@@ -213,8 +209,8 @@ fn op_dup(vm: &mut VM) -> ControlFlow {
 fn op_dup_two(vm: &mut VM) -> ControlFlow {
     let len = vm.stack.len();
     if len >= 2 {
-        let b = vm.stack[len - 1].clone();
-        let a = vm.stack[len - 2].clone();
+        let b = unsafe { vm.stack.get_unchecked(len - 1).clone() };
+        let a = unsafe { vm.stack.get_unchecked(len - 2).clone() };
         vm.stack.push(a);
         vm.stack.push(b);
     }
@@ -307,7 +303,7 @@ fn op_set_global(vm: &mut VM) -> ControlFlow {
 fn op_get_local(vm: &mut VM) -> ControlFlow {
     let slot = vm.read_u16() as usize;
     let slots_start = vm.current_frame().slots_start;
-    let value = vm.stack[slots_start + slot].clone();
+    let value = unsafe { vm.stack.get_unchecked(slots_start + slot).clone() };
     vm.stack.push(value);
     ControlFlow::Continue
 }
@@ -316,29 +312,47 @@ fn op_get_local(vm: &mut VM) -> ControlFlow {
 fn op_set_local(vm: &mut VM) -> ControlFlow {
     let slot = vm.read_u16() as usize;
     let slots_start = vm.current_frame().slots_start;
-    if let Some(value) = vm.stack.last().cloned() {
-        vm.stack[slots_start + slot] = value;
+    let len = vm.stack.len();
+    if len > 0 {
+        let value = unsafe { vm.stack.get_unchecked(len - 1).clone() };
+        unsafe { *vm.stack.get_unchecked_mut(slots_start + slot) = value; }
     }
     ControlFlow::Continue
 }
 
 #[inline(always)]
 fn op_add(vm: &mut VM) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    let result = match (&a, &b) {
-        (Value::Number(a), Value::Number(b)) => Value::Number(a + b),
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    let result = match (a, b) {
+        (Value::Number(av), Value::Number(bv)) => {
+            // Fast path: in-place for numbers
+            let r = av + bv;
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Number(r);
+                vm.stack.set_len(len - 1);
+            }
+            return ControlFlow::Continue;
+        }
         (Value::String(a), Value::String(b)) => Value::String(Arc::new(format!("{}{}", a, b))),
         (Value::String(a), b) => Value::String(Arc::new(format!("{}{}", a, b))),
         (a, Value::String(b)) => Value::String(Arc::new(format!("{}{}", a, b))),
         _ => {
+            let a_type = a.type_name();
+            let b_type = b.type_name();
             return ControlFlow::Error(vm.create_error(
                 ErrorKind::TypeError,
-                &format!("Cannot add '{}' and '{}'", a.type_name(), b.type_name()),
+                &format!("Cannot add '{}' and '{}'", a_type, b_type),
             ));
         }
     };
-    vm.stack.push(result);
+    // Slow path for strings: use in-place mutation too
+    unsafe { 
+        *vm.stack.get_unchecked_mut(len - 2) = result;
+        vm.stack.set_len(len - 1);
+    }
     ControlFlow::Continue
 }
 
@@ -354,70 +368,108 @@ fn op_mul(vm: &mut VM) -> ControlFlow {
 
 #[inline(always)]
 fn op_div(vm: &mut VM) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    match (&a, &b) {
-        (Value::Number(a), Value::Number(b)) => {
-            if *b == 0.0 {
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    match (a, b) {
+        (Value::Number(av), Value::Number(bv)) => {
+            if *bv == 0.0 {
                 return ControlFlow::Error(vm.create_error(ErrorKind::DivisionByZero, "Division by zero"));
             }
-            vm.stack.push(Value::Number(a / b));
+            let result = av / bv;
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Number(result);
+                vm.stack.set_len(len - 1);
+            }
             ControlFlow::Continue
         }
-        _ => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot divide '{}' by '{}'", a.type_name(), b.type_name()),
-        )),
+        _ => {
+            let a_type = a.type_name();
+            let b_type = b.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot divide '{}' by '{}'", a_type, b_type),
+            ))
+        }
     }
 }
 
 #[inline(always)]
 fn op_mod(vm: &mut VM) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    match (&a, &b) {
-        (Value::Number(a), Value::Number(b)) => {
-            if *b == 0.0 {
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    match (a, b) {
+        (Value::Number(av), Value::Number(bv)) => {
+            if *bv == 0.0 {
                 return ControlFlow::Error(vm.create_error(ErrorKind::DivisionByZero, "Modulo by zero"));
             }
-            vm.stack.push(Value::Number(a % b));
+            let result = av % bv;
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Number(result);
+                vm.stack.set_len(len - 1);
+            }
             ControlFlow::Continue
         }
-        _ => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot modulo '{}' by '{}'", a.type_name(), b.type_name()),
-        )),
+        _ => {
+            let a_type = a.type_name();
+            let b_type = b.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot modulo '{}' by '{}'", a_type, b_type),
+            ))
+        }
     }
 }
 
 #[inline(always)]
 fn op_negate(vm: &mut VM) -> ControlFlow {
-    match vm.stack.pop() {
-        Some(Value::Number(n)) => {
-            vm.stack.push(Value::Number(-n));
+    let len = vm.stack.len();
+    if len == 0 { return ControlFlow::Continue; }
+    let v = unsafe { vm.stack.get_unchecked(len - 1) };
+    match v {
+        Value::Number(n) => {
+            // In-place mutation
+            unsafe { *vm.stack.get_unchecked_mut(len - 1) = Value::Number(-n); }
             ControlFlow::Continue
         }
-        Some(v) => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot negate '{}'", v.type_name()),
-        )),
-        None => ControlFlow::Continue,
+        _ => {
+            let v_type = v.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot negate '{}'", v_type),
+            ))
+        }
     }
 }
 
 #[inline(always)]
 fn op_equal(vm: &mut VM) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    vm.stack.push(Value::Boolean(a == b));
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    let result = a == b;
+    unsafe { 
+        *vm.stack.get_unchecked_mut(len - 2) = Value::Boolean(result);
+        vm.stack.set_len(len - 1);
+    }
     ControlFlow::Continue
 }
 
 #[inline(always)]
 fn op_not_equal(vm: &mut VM) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    vm.stack.push(Value::Boolean(a != b));
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    let result = a != b;
+    unsafe { 
+        *vm.stack.get_unchecked_mut(len - 2) = Value::Boolean(result);
+        vm.stack.set_len(len - 1);
+    }
     ControlFlow::Continue
 }
 
@@ -443,8 +495,11 @@ fn op_greater_equal(vm: &mut VM) -> ControlFlow {
 
 #[inline(always)]
 fn op_not(vm: &mut VM) -> ControlFlow {
-    if let Some(v) = vm.stack.pop() {
-        vm.stack.push(Value::Boolean(!v.is_truthy()));
+    let len = vm.stack.len();
+    if len > 0 {
+        let is_truthy = unsafe { vm.stack.get_unchecked(len - 1).is_truthy() };
+        vm.stack.truncate(len - 1);
+        vm.stack.push(Value::Boolean(!is_truthy));
     }
     ControlFlow::Continue
 }
@@ -459,8 +514,10 @@ fn op_jump(vm: &mut VM) -> ControlFlow {
 #[inline(always)]
 fn op_jump_if_false(vm: &mut VM) -> ControlFlow {
     let offset = vm.read_u16() as usize;
-    if let Some(v) = vm.stack.last() {
-        if !v.is_truthy() {
+    let len = vm.stack.len();
+    if len > 0 {
+        let is_truthy = unsafe { vm.stack.get_unchecked(len - 1).is_truthy() };
+        if !is_truthy {
             vm.current_frame_mut().ip += offset;
         }
     }
@@ -470,8 +527,10 @@ fn op_jump_if_false(vm: &mut VM) -> ControlFlow {
 #[inline(always)]
 fn op_jump_if_true(vm: &mut VM) -> ControlFlow {
     let offset = vm.read_u16() as usize;
-    if let Some(v) = vm.stack.last() {
-        if v.is_truthy() {
+    let len = vm.stack.len();
+    if len > 0 {
+        let is_truthy = unsafe { vm.stack.get_unchecked(len - 1).is_truthy() };
+        if is_truthy {
             vm.current_frame_mut().ip += offset;
         }
     }
@@ -481,8 +540,10 @@ fn op_jump_if_true(vm: &mut VM) -> ControlFlow {
 #[inline(always)]
 fn op_jump_if_not_null(vm: &mut VM) -> ControlFlow {
     let offset = vm.read_u16() as usize;
-    if let Some(v) = vm.stack.last() {
-        if !v.is_null() {
+    let len = vm.stack.len();
+    if len > 0 {
+        let is_null = unsafe { vm.stack.get_unchecked(len - 1).is_null() };
+        if !is_null {
             vm.current_frame_mut().ip += offset;
         }
     }
@@ -510,9 +571,16 @@ fn op_call(vm: &mut VM) -> ControlFlow {
 
 #[inline(always)]
 fn op_return(vm: &mut VM) -> ControlFlow {
-    let result = vm.stack.pop().unwrap_or(Value::Null);
+    let len = vm.stack.len();
+    let result = if len > 0 {
+        let r = unsafe { vm.stack.get_unchecked(len - 1).clone() };
+        vm.stack.truncate(len - 1);
+        r
+    } else {
+        Value::Null
+    };
     let returning_frame_index = vm.frames.len() - 1;
-    let frame = vm.frames.pop().unwrap();
+    let frame = unsafe { vm.frames.pop().unwrap_unchecked() };
 
     if !frame.function.file.is_empty() {
         crate::pop_script_dir();
@@ -826,7 +894,10 @@ fn op_await(vm: &mut VM) -> ControlFlow {
 }
 
 fn op_spread_array(vm: &mut VM) -> ControlFlow {
-    if let Some(value) = vm.stack.pop() {
+    let len = vm.stack.len();
+    if len > 0 {
+        let value = unsafe { vm.stack.get_unchecked(len - 1).clone() };
+        vm.stack.truncate(len - 1);
         vm.stack.push(Value::SpreadMarker(Box::new(value)));
     }
     ControlFlow::Continue
@@ -845,16 +916,23 @@ fn op_bit_xor(vm: &mut VM) -> ControlFlow {
 }
 
 fn op_bit_not(vm: &mut VM) -> ControlFlow {
-    match vm.stack.pop() {
-        Some(Value::Number(n)) => {
-            vm.stack.push(Value::Number((!(n as i64)) as f64));
+    let len = vm.stack.len();
+    if len == 0 { return ControlFlow::Continue; }
+    let v = unsafe { vm.stack.get_unchecked(len - 1) };
+    match v {
+        Value::Number(n) => {
+            let result = Value::Number((!(*n as i64)) as f64);
+            vm.stack.truncate(len - 1);
+            vm.stack.push(result);
             ControlFlow::Continue
         }
-        Some(v) => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot perform bitwise NOT on '{}'", v.type_name()),
-        )),
-        None => ControlFlow::Continue,
+        _ => {
+            let v_type = v.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot perform bitwise NOT on '{}'", v_type),
+            ))
+        }
     }
 }
 
@@ -888,27 +966,45 @@ fn op_nop(_vm: &mut VM) -> ControlFlow {
 
 #[inline(always)]
 fn binary_num_op(vm: &mut VM, op: fn(f64, f64) -> f64) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    match (&a, &b) {
-        (Value::Number(a), Value::Number(b)) => {
-            vm.stack.push(Value::Number(op(*a, *b)));
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    match (a, b) {
+        (Value::Number(av), Value::Number(bv)) => {
+            let result = op(*av, *bv);
+            // In-place: write result to a's slot, then pop b
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Number(result);
+                vm.stack.set_len(len - 1);
+            }
             ControlFlow::Continue
         }
-        _ => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot perform operation on '{}' and '{}'", a.type_name(), b.type_name()),
-        )),
+        _ => {
+            let a_type = a.type_name();
+            let b_type = b.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot perform operation on '{}' and '{}'", a_type, b_type),
+            ))
+        }
     }
 }
 
 #[inline(always)]
 fn comparison_op(vm: &mut VM, op: fn(f64, f64) -> bool) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    match (&a, &b) {
-        (Value::Number(a), Value::Number(b)) => {
-            vm.stack.push(Value::Boolean(op(*a, *b)));
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    match (a, b) {
+        (Value::Number(av), Value::Number(bv)) => {
+            let result = op(*av, *bv);
+            // In-place: write result to a's slot, then pop b
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Boolean(result);
+                vm.stack.set_len(len - 1);
+            }
             ControlFlow::Continue
         }
         (Value::String(a), Value::String(b)) => {
@@ -918,45 +1014,72 @@ fn comparison_op(vm: &mut VM, op: fn(f64, f64) -> bool) -> ControlFlow {
                 Ordering::Equal => op(0.0, 0.0),
                 Ordering::Greater => op(1.0, 0.0),
             };
-            vm.stack.push(Value::Boolean(result));
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Boolean(result);
+                vm.stack.set_len(len - 1);
+            }
             ControlFlow::Continue
         }
-        _ => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot compare '{}' and '{}'", a.type_name(), b.type_name()),
-        )),
+        _ => {
+            let a_type = a.type_name();
+            let b_type = b.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot compare '{}' and '{}'", a_type, b_type),
+            ))
+        }
     }
 }
 
 #[inline(always)]
 fn bitwise_op(vm: &mut VM, op: fn(i64, i64) -> i64) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    match (&a, &b) {
-        (Value::Number(a), Value::Number(b)) => {
-            vm.stack.push(Value::Number(op(*a as i64, *b as i64) as f64));
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    match (a, b) {
+        (Value::Number(av), Value::Number(bv)) => {
+            let result = op(*av as i64, *bv as i64) as f64;
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Number(result);
+                vm.stack.set_len(len - 1);
+            }
             ControlFlow::Continue
         }
-        _ => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot perform bitwise operation on '{}' and '{}'", a.type_name(), b.type_name()),
-        )),
+        _ => {
+            let a_type = a.type_name();
+            let b_type = b.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot perform bitwise operation on '{}' and '{}'", a_type, b_type),
+            ))
+        }
     }
 }
 
 #[inline(always)]
 fn shift_op(vm: &mut VM, op: fn(i64, u32) -> i64) -> ControlFlow {
-    let b = vm.stack.pop().unwrap_or(Value::Null);
-    let a = vm.stack.pop().unwrap_or(Value::Null);
-    match (&a, &b) {
-        (Value::Number(a), Value::Number(b)) => {
-            vm.stack.push(Value::Number(op(*a as i64, *b as u32) as f64));
+    let len = vm.stack.len();
+    if len < 2 { return ControlFlow::Continue; }
+    let b = unsafe { vm.stack.get_unchecked(len - 1) };
+    let a = unsafe { vm.stack.get_unchecked(len - 2) };
+    match (a, b) {
+        (Value::Number(av), Value::Number(bv)) => {
+            let result = op(*av as i64, *bv as u32) as f64;
+            unsafe { 
+                *vm.stack.get_unchecked_mut(len - 2) = Value::Number(result);
+                vm.stack.set_len(len - 1);
+            }
             ControlFlow::Continue
         }
-        _ => ControlFlow::Error(vm.create_error(
-            ErrorKind::TypeError,
-            &format!("Cannot perform shift on '{}' and '{}'", a.type_name(), b.type_name()),
-        )),
+        _ => {
+            let a_type = a.type_name();
+            let b_type = b.type_name();
+            ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot perform shift on '{}' and '{}'", a_type, b_type),
+            ))
+        }
     }
 }
 
@@ -1046,9 +1169,10 @@ impl VM {
     pub fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> { self.globals.clone() }
     pub fn gc_stats(&self) -> super::gc::GcStats { self.gc.get_stats() }
 
+    #[inline(always)]
     fn maybe_collect_garbage(&mut self) {
         self.gc_counter += 1;
-        if self.gc_counter >= 100 {
+        if self.gc_counter >= 10000 {
             self.gc_counter = 0;
             if self.gc.should_collect() {
                 self.collect_garbage();
@@ -1152,13 +1276,9 @@ impl VM {
 
         let op = self.read_byte();
 
-        // Dispatch table lookup - O(1) instead of O(n) match
-        if op < 48 {
-            DISPATCH[op as usize](self)
-        } else if op < 64 {
-            DISPATCH_EXT[(op - 48) as usize](self)
-        } else if op < 68 {
-            DISPATCH_EXT2[(op - 64) as usize](self)
+        // Single dispatch table lookup - no branching
+        if op < 68 {
+            unsafe { DISPATCH.get_unchecked(op as usize)(self) }
         } else {
             ControlFlow::Error(self.create_error(ErrorKind::RuntimeError, &format!("Unknown opcode: {}", op)))
         }
@@ -1268,37 +1388,53 @@ impl VM {
     // ==================== Call Methods ====================
 
     fn call_value(&mut self, arg_count: usize) -> SaldResult<()> {
-        let callee = self.stack.get(self.stack.len() - arg_count - 1).cloned().unwrap_or(Value::Null);
+        let callee_idx = self.stack.len() - arg_count - 1;
+        let callee = unsafe { self.stack.get_unchecked(callee_idx) };
+        
+        // Fast path: if callee is a function, handle directly without cloning for type check
         match callee {
-            Value::Function(function) => self.call_function(function, arg_count),
-            Value::Class(class) => self.call_class(class, arg_count),
-            Value::NativeFunction { func, .. } => self.call_native(func, arg_count),
-            Value::InstanceMethod { receiver, method, .. } => self.call_instance_method(*receiver, method, arg_count),
-            Value::BoundMethod { receiver, method } => self.call_bound_method(*receiver, method, arg_count),
+            Value::Function(function) => {
+                // Check if this is a recursive call to the same function (common in fib)
+                // If so, we can reuse the Arc from current frame instead of cloning from stack
+                let func_to_call = if !self.frames.is_empty() {
+                    let current_func = &self.current_frame().function;
+                    if Arc::ptr_eq(current_func, function) {
+                        // Recursive call - reuse the Arc from current frame
+                        current_func.clone()
+                    } else {
+                        function.clone()
+                    }
+                } else {
+                    function.clone()
+                };
+                self.call_function(func_to_call, arg_count)
+            }
+            Value::Class(class) => {
+                let class = class.clone();
+                self.call_class(class, arg_count)
+            }
+            Value::NativeFunction { func, .. } => {
+                let func = *func;
+                self.call_native(func, arg_count)
+            }
+            Value::InstanceMethod { receiver, method, .. } => {
+                let receiver = (**receiver).clone();
+                let method = *method;
+                self.call_instance_method(receiver, method, arg_count)
+            }
+            Value::BoundMethod { receiver, method } => {
+                let receiver = (**receiver).clone();
+                let method = method.clone();
+                self.call_bound_method(receiver, method, arg_count)
+            }
             _ => Err(self.create_error(ErrorKind::TypeError, &format!("'{}' is not callable", callee.type_name()))),
         }
     }
 
+    #[inline(always)]
     fn call_function(&mut self, function: Arc<Function>, arg_count: usize) -> SaldResult<()> {
-        let min_arity = if function.is_variadic { function.arity.saturating_sub(1) } else { function.arity };
-
-        if function.is_variadic {
-            if arg_count < min_arity {
-                return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", min_arity, arg_count)));
-            }
-            let variadic_count = arg_count - min_arity;
-            let mut variadic_args = Vec::with_capacity(variadic_count);
-            for _ in 0..variadic_count { variadic_args.push(self.stack.pop().unwrap_or(Value::Null)); }
-            variadic_args.reverse();
-            self.stack.push(Value::Array(Arc::new(Mutex::new(variadic_args))));
-            let effective_arg_count = min_arity + 1;
-            if self.frames.len() >= FRAMES_MAX {
-                return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
-            }
-            let slots_start = self.stack.len() - effective_arg_count - 1;
-            if !function.file.is_empty() { crate::push_script_dir(&function.file); }
-            self.frames.push(CallFrame::new(function, slots_start));
-        } else {
+        // Fast path: non-variadic function with exact or under arity (most common case)
+        if !function.is_variadic {
             let required_arity = function.arity.saturating_sub(function.default_count);
             if arg_count < required_arity {
                 return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", required_arity, arg_count)));
@@ -1306,14 +1442,39 @@ impl VM {
             if arg_count > function.arity {
                 return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at most {} arguments but got {}", function.arity, arg_count)));
             }
-            for _ in 0..(function.arity - arg_count) { self.stack.push(Value::Null); }
+            
+            // Push null for missing default args
+            let missing = function.arity - arg_count;
+            for _ in 0..missing { self.stack.push(Value::Null); }
+            
+            // FRAMES_MAX check inlined for fast path
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
             }
+            
             let slots_start = self.stack.len() - function.arity - 1;
             if !function.file.is_empty() { crate::push_script_dir(&function.file); }
             self.frames.push(CallFrame::new(function, slots_start));
+            return Ok(());
         }
+        
+        // Slow path: variadic functions
+        let min_arity = function.arity.saturating_sub(1);
+        if arg_count < min_arity {
+            return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", min_arity, arg_count)));
+        }
+        let variadic_count = arg_count - min_arity;
+        let mut variadic_args = Vec::with_capacity(variadic_count);
+        for _ in 0..variadic_count { variadic_args.push(self.stack.pop().unwrap_or(Value::Null)); }
+        variadic_args.reverse();
+        self.stack.push(Value::Array(Arc::new(Mutex::new(variadic_args))));
+        let effective_arg_count = min_arity + 1;
+        if self.frames.len() >= FRAMES_MAX {
+            return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
+        }
+        let slots_start = self.stack.len() - effective_arg_count - 1;
+        if !function.file.is_empty() { crate::push_script_dir(&function.file); }
+        self.frames.push(CallFrame::new(function, slots_start));
         Ok(())
     }
 
