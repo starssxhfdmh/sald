@@ -337,7 +337,6 @@ fn add_files_to_zip<W: Write + std::io::Seek>(
         let name_str = name.to_string_lossy();
         
         if name_str.starts_with("sald_modules") 
-            || name_str.starts_with("node_modules")
             || name_str.starts_with(".")
             || name_str.starts_with("target") {
             continue;
