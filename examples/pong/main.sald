@@ -1,0 +1,3 @@
+// Run with: salad run
+
+Console.println("Hello from Sald!")
