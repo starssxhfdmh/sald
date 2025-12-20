@@ -1,0 +1,17 @@
+// Test interface error - missing method
+// This file should FAIL to compile
+
+interface Drawable {
+    fun draw(self, x, y)
+}
+
+// This class does NOT implement the required 'draw' method
+class Circle implements Drawable {
+    fun init(self, radius) {
+        self.radius = radius
+    }
+    
+    // Missing: fun draw(self, x, y)
+}
+
+let c = Circle(5)
