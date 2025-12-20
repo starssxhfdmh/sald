@@ -1,6 +1,6 @@
 [package]
 name = "sald"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Sald Programming Language - A fast, class-based interpreter"
 authors = ["starssxproject"]
