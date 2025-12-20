@@ -3,8 +3,7 @@
 
 use crate::vm::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
-use parking_lot::RwLock;
+use std::sync::{Arc, RwLock};
 
 /// Trait for calling Values (functions/closures) from native functions
 pub trait ValueCaller {

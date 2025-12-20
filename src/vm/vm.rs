@@ -4,8 +4,7 @@
 // Implements suspend/resume for true non-blocking async
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use parking_lot::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::builtins;
 use crate::compiler::chunk::{Chunk, Constant};
@@ -103,8 +102,6 @@ pub struct VM {
     frames: Vec<CallFrame>,
     /// Shared globals using Arc<RwLock> for thread-safe access across VMs
     globals: Arc<RwLock<HashMap<String, Value>>>,
-    /// Local cache for frequently accessed globals (no lock overhead)
-    global_cache: HashMap<String, Value>,
     file: String,
     source: String,
     /// Stack of exception handlers (for try-catch)
@@ -191,7 +188,7 @@ impl ValueCaller for VM {
     }
 
     fn get_globals(&self) -> HashMap<String, Value> {
-        self.globals.read().clone()
+        self.globals.read().unwrap().clone()
     }
     
     fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> {
@@ -208,7 +205,6 @@ impl VM {
             stack: Vec::with_capacity(STACK_MAX),
             frames: Vec::with_capacity(FRAMES_MAX),
             globals: Arc::new(RwLock::new(globals)),
-            global_cache: HashMap::new(),
             file: String::new(),
             source: String::new(),
             exception_handlers: Vec::new(),
@@ -228,7 +224,6 @@ impl VM {
             stack: Vec::with_capacity(STACK_MAX),
             frames: Vec::with_capacity(FRAMES_MAX),
             globals,
-            global_cache: HashMap::new(),
             file: String::new(),
             source: String::new(),
             exception_handlers: Vec::new(),
@@ -253,7 +248,7 @@ impl VM {
 
     /// Get a clone of the current globals (for read-only access)
     pub fn get_globals(&self) -> HashMap<String, Value> {
-        self.globals.read().clone()
+        self.globals.read().unwrap().clone()
     }
     
     /// Get the shared globals Arc for passing to child VMs
@@ -263,9 +258,9 @@ impl VM {
 
     /// Run garbage collection if threshold is reached
     fn maybe_collect_garbage(&mut self) {
-        // Check every 1000 instructions (10x less frequent for better performance)
+        // Check every 100 instructions
         self.gc_counter += 1;
-        if self.gc_counter >= 1000 {
+        if self.gc_counter >= 100 {
             self.gc_counter = 0;
             if self.gc.should_collect() {
                 self.collect_garbage();
@@ -284,7 +279,7 @@ impl VM {
         }
         
         // Global values are roots
-        let globals_guard = self.globals.read();
+        let globals_guard = self.globals.read().unwrap();
         for value in globals_guard.values() {
             roots.push(value);
         }
@@ -522,38 +517,27 @@ impl VM {
                 let idx = self.read_u16() as usize;
                 let name = self.read_string_constant(idx)?;
                 let value = self.pop()?;
-                self.globals.write().insert(name.clone(), value.clone());
-                // Cache the newly defined global
-                self.global_cache.insert(name, value);
+                self.globals.write().unwrap().insert(name, value);
             }
 
             OpCode::GetGlobal => {
                 let idx = self.read_u16() as usize;
                 let name = self.read_string_constant(idx)?;
-                
-                // Check cache first (no lock needed!)
-                if let Some(value) = self.global_cache.get(&name) {
-                    self.push(value.clone())?;
-                } else {
-                    // Cache miss - fetch from globals and cache it
-                    let value = self.globals.read().get(&name).cloned().ok_or_else(|| {
+                let value =
+                    self.globals.read().unwrap().get(&name).cloned().ok_or_else(|| {
                         self.create_error(ErrorKind::NameError, &format!("Undefined variable '{}'", name))
                     })?;
-                    self.global_cache.insert(name, value.clone());
-                    self.push(value)?;
-                }
+                self.push(value)?;
             }
 
             OpCode::SetGlobal => {
                 let idx = self.read_u16() as usize;
                 let name = self.read_string_constant(idx)?;
-                if !self.globals.read().contains_key(&name) {
+                if !self.globals.read().unwrap().contains_key(&name) {
                     return Err(self.create_error(ErrorKind::NameError, &format!("Undefined variable '{}'", name)));
                 }
                 let value = self.peek(0)?.clone();
-                self.globals.write().insert(name.clone(), value.clone());
-                // Update cache
-                self.global_cache.insert(name, value);
+                self.globals.write().unwrap().insert(name, value);
             }
 
             OpCode::GetLocal => {
@@ -989,8 +973,8 @@ impl VM {
                         let class_name = builtins::get_builtin_class_name(&obj);
                         // Look up method FIRST, release the borrow before pushing
                         let method_result = {
-                            let globals_guard = self.globals.read();
-                            if let Some(Value::Class(class)) = globals_guard.get(class_name).cloned() {
+                            let globals_guard = self.globals.read().unwrap();
+                            if let Some(Value::Class(class)) = globals_guard.get(class_name) {
                                 if let Some(method) = class.native_instance_methods.get(&name) {
                                     Ok((*method, name.clone()))
                                 } else {
@@ -1444,12 +1428,12 @@ impl VM {
                 // Merge all globals from imported file into current globals
                 for (name, value) in imported_globals {
                     // Skip built-in types that already exist
-                    let globals_guard = self.globals.read();
+                    let globals_guard = self.globals.read().unwrap();
                     let should_insert = !globals_guard.contains_key(&name)
                         || !matches!(globals_guard.get(&name), Some(Value::Class(_)));
                     drop(globals_guard);
                     if should_insert {
-                        self.globals.write().insert(name, value);
+                        self.globals.write().unwrap().insert(name, value);
                     }
                 }
             }
@@ -1501,7 +1485,7 @@ impl VM {
                 };
 
                 // Define module as global with alias name
-                self.globals.write()
+                self.globals.write().unwrap()
                     .insert(alias, Value::Instance(Arc::new(Mutex::new(module))));
             }
 
@@ -1670,7 +1654,6 @@ impl VM {
         self.current_frame_mut().read_u16()
     }
 
-    #[inline]
     fn read_constant(&self, idx: usize) -> Value {
         let constant = &self.current_frame().function.chunk.constants[idx];
         match constant {
@@ -1804,65 +1787,97 @@ impl VM {
     }
 
     fn call_value(&mut self, arg_count: usize) -> SaldResult<()> {
-        // Borrow instead of clone - CRITICAL OPTIMIZATION!
-        // Match on reference to avoid Arc::clone() in hot path
-        match self.peek(arg_count)? {
+        let callee = self.peek(arg_count)?.clone();
+
+        match callee {
             Value::Function(function) => {
-                // Only clone when we need ownership
-                let func = function.clone();
-                self.call_function(func, arg_count)?;
-            }
-            Value::NativeFunction { func, class_name } => {
-                let func = *func;
-                let class_name = class_name.clone();
-                
-                // Collect args
-                let mut args = Vec::with_capacity(arg_count);
-                for _ in 0..arg_count {
-                    args.push(self.pop()?);
-                }
-                args.reverse();
-                
-                // Pop the function itself
-                self.pop()?;
-                
-                // Call native function
-                let result = func(&args).map_err(|e| {
-                    self.create_error(ErrorKind::RuntimeError, &format!("Native function error in {}: {}", class_name, e))
-                })?;
-                
-                self.push(result)?;
+                self.call_function(function, arg_count)?;
             }
             Value::Class(class) => {
-                let class = class.clone();
-                
-                // Collect args
-                let mut args = Vec::with_capacity(arg_count);
-                for _ in 0..arg_count {
-                    args.push(self.pop()?);
-                }
-                args.reverse();
-                
-                // Pop the class
-                self.pop()?;
-                
-                // Call constructor
+                // Check if this is a built-in class with a constructor (type conversion)
                 if let Some(constructor) = class.constructor {
-                    let result = constructor(&args).map_err(|e| {
-                        self.create_error(ErrorKind::RuntimeError, &format!("Constructor error: {}", e))
-                    })?;
-                    self.push(result)?;
+                    let args: Vec<Value> =
+                        self.stack.drain(self.stack.len() - arg_count..).collect();
+                    self.pop()?; // Pop the class
+
+                    match constructor(&args) {
+                        Ok(result) => self.push(result)?,
+                        Err(e) => {
+                            self.handle_native_error(e)?;
+                            return Ok(()); // Execution continues from catch block
+                        }
+                    }
                 } else {
-                    // Default constructor - create empty instance
-                    let instance = crate::vm::value::Instance::new(class);
-                    self.push(Value::Instance(Arc::new(Mutex::new(instance))))?;
+                    // User-defined class - create instance
+                    let instance = Arc::new(Mutex::new(Instance::new(class.clone())));
+                    self.track_instance(&instance);
+                    let instance_value = Value::Instance(instance.clone());
+
+                    // Replace class with instance on stack
+                    let stack_idx = self.stack.len() - arg_count - 1;
+                    self.stack[stack_idx] = instance_value.clone();
+
+                    // Call init if it exists
+                    if let Some(init) = class.methods.get("init") {
+                        if let Value::Function(init_fn) = init {
+                            // Use special init call that will return instance
+                            self.call_function_init(init_fn.clone(), arg_count, instance_value)?;
+                        }
+                    } else if arg_count > 0 {
+                        return Err(self.create_error(ErrorKind::ArgumentError, &format!(
+                            "Expected 0 arguments but got {}",
+                            arg_count
+                        )));
+                    }
                 }
             }
-            other => {
-                return Err(self.create_error(
-                    ErrorKind::RuntimeError,
-                    &format!("Can only call functions and classes, got {}", other.type_name()),
-                ));
+            Value::NativeFunction { func, .. } => {
+                let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                self.pop()?; // Pop the native function
+
+                match func(&args) {
+                    Ok(result) => self.push(result)?,
+                    Err(e) => {
+                        self.handle_native_error(e)?;
+                        return Ok(()); // Execution continues from catch block
+                    }
+                }
+            }
+            Value::InstanceMethod {
+                receiver, method, ..
+            } => {
+                // Call native instance method on primitive
+                let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                self.pop()?; // Pop the instance method
+
+                match method(&receiver, &args) {
+                    Ok(result) => self.push(result)?,
+                    Err(e) => {
+                        self.handle_native_error(e)?;
+                        return Ok(()); // Execution continues from catch block
+                    }
+                }
+            }
+            Value::BoundMethod { receiver, method } => {
+                // User-defined method bound to a receiver (used for super calls)
+                // We need to set up the call frame so that 'self' (receiver) is at slot 0
+                let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                self.pop()?; // Pop the bound method
+
+                // Push receiver first (will be at slot 0)
+                self.push((*receiver).clone())?;
+                // Push arguments
+                for arg in args {
+                    self.push(arg)?;
+                }
+
+                // Call the function
+                self.call_function(method.clone(), arg_count)?;
+            }
+            _ => {
+                return Err(
+                    self.create_error(ErrorKind::TypeError, &format!("'{}' is not callable", callee.type_name()))
+                );
             }
         }
 
@@ -2109,7 +2124,7 @@ impl VM {
                 let class_name = builtins::get_builtin_class_name(&receiver);
 
                 // Get class reference first
-                let class = if let Some(Value::Class(c)) = self.globals.read().get(class_name).cloned() {
+                let class = if let Some(Value::Class(c)) = self.globals.read().unwrap().get(class_name).cloned() {
                     c
                 } else {
                     return Err(
@@ -2503,7 +2518,7 @@ impl VM {
         }
 
         // Capture imported globals - take from the RwLock, not the Arc
-        let imported_globals = std::mem::take(&mut *self.globals.write());
+        let imported_globals = std::mem::take(&mut *self.globals.write().unwrap());
 
         // Pop script directory for this import (back to caller's dir)
         crate::pop_script_dir();

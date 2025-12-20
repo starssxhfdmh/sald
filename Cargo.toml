@@ -54,9 +54,8 @@ name = "sald"
 path = "src/lib.rs"
 
 [profile.release]
-opt-level = 3        # Speed optimization (was "z" for size)
-lto = "fat"          # More aggressive LTO (was "thin")
+opt-level = "z"
+lto = "thin"
 codegen-units = 1
 panic = "abort"
 debug = false
-strip = true         # Strip symbols for smaller binary

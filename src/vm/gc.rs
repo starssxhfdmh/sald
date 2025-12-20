@@ -17,8 +17,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 
 /// GC configuration
-const INITIAL_THRESHOLD: usize = 100000; // Object count (10x higher for less frequent GC)
-const HEAP_GROW_FACTOR: f64 = 2.0;       // Grow faster (was 1.5)
+const INITIAL_THRESHOLD: usize = 10000; // Object count (lower = more frequent GC)
+const HEAP_GROW_FACTOR: f64 = 1.5;
 
 /// GC statistics for monitoring
 #[derive(Debug, Clone, Default)]

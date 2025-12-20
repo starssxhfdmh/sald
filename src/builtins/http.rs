@@ -13,8 +13,7 @@
 use crate::vm::caller::CallableNativeInstanceFn;
 use crate::vm::value::{Class, Instance, NativeInstanceFn, SaldFuture, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use parking_lot::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use tokio::sync::oneshot;
 
