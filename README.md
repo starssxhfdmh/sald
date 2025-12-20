@@ -1,73 +1,47 @@
-# Sald Programming Language
+<p align="center">
+  <img src="docs/logo.png" alt="Sald Logo" width="200">
+</p>
 
-Sald is a modern, dynamic, class-based programming language built with Rust. It is designed to be fast, expressive, and feature-rich, providing a powerful toolkit for building applications ranging from scripts to web servers.
+<h1 align="center">Sald</h1>
 
-## Key Features
+<p align="center">
+  A modern dynamic programming language built with Rust.
+</p>
 
-- **Class-Based OOP**: Familiar object-oriented class syntax with inheritance (`extends`), constructors (`init`), and `super` calls.
-- **Async/Await**: First-class support for asynchronous programming, powered by the Tokio runtime.
-- **Built-in Standard Library**: Extensive suite of built-in classes including `File`, `Http`, `System`, `Process`, `Json`, `Ffi`, and more.
-- **Package Management**: Includes `salad`, a built-in package manager to initialize projects and manage dependencies.
-- **Language Server**: Built-in LSP support (`sald-lsp`) for a great editor experience.
-- **REPL**: Interactive shell for quick experimentation.
-- **FFI**: Foreign Function Interface to load and call native C libraries dynamically.
+---
+
+## Features
+
+- Class-based OOP with inheritance
+- Async/await for asynchronous programming
+- Standard library: File, Http, Json, System, Process, etc.  
+- Package manager (`salad`)
+- Language server (`sald-lsp`)
+- REPL for quick experimentation
 
 ## Installation
 
-To build Sald from source, you need a Rust environment (latest stable).
-
 ```bash
-# Clone the repository
 git clone https://github.com/starssxhfdmh/sald.git
-cd sald
-
-# Build release version
-cargo build --release
+cd sald && cargo build --release
 ```
 
-The binaries will be available in `target/release/`:
-- `sald`: The interpreter and CLI.
-- `salad`: The package manager.
-- `sald-lsp`: The language server.
-
-## Usage
-
-### Running a Script
+## Quick Start
 
 ```bash
-./target/release/sald path/to/script.sald
+# Run a script
+sald script.sald
+
+# Start REPL
+sald
+
+# Create new project
+salad new my-project
 ```
-
-### REPL
-
-Start the interactive shell by running `sald` without arguments:
-
-```bash
-./target/release/sald
->>> let x = 10
->>> x * 2
-20
-```
-
-### Package Manager
-
-Initialize a new project:
-
-```bash
-./target/release/salad new my-project
-```
-
-## Documentation
-
-Comprehensive documentation is available in the `docs/sald-lang/index.html` file. You can open it directly in your browser to view the API reference and language guide.
-
-[Open Documentation](docs/sald-lang/index.html)
 
 ## Example
 
 ```sald
-// main.sald
-
 class Greeter {
     fun init(self, name) {
         self.name = name
@@ -78,21 +52,14 @@ class Greeter {
     }
 }
 
-async fun fetchInfo() {
-    try {
-        let res = await Http.get("https://api.github.com/zen")
-        Console.println($"Github Zen: {res}")
-    } catch (e) {
-        Console.error("Failed to fetch:", e)
-    }
-}
-
 let g = Greeter("World")
 g.greet()
-
-fetchInfo()
 ```
+
+## Documentation
+
+See [DOCS.md](DOCS.md) for the complete language reference.
 
 ## License
 
-This project is licensed under the MIT License.
+MIT License

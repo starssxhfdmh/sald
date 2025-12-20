@@ -208,6 +208,23 @@ arr?.first()          // 1
 null?.first()         // null
 ```
 
+### Range Operators
+```javascript
+// Inclusive range (start..end)
+1..5        // [1, 2, 3, 4, 5]
+
+// Exclusive range (start..<end)
+1..<5       // [1, 2, 3, 4]
+
+// Use in loops
+for i in 0..<10 {
+    Console.println(i)
+}
+
+// Negative ranges
+-3..3       // [-3, -2, -1, 0, 1, 2, 3]
+```
+
 ---
 
 ## Control Flow
@@ -247,7 +264,7 @@ for item in array {
     Console.println(item)
 }
 
-for i in Array.range(10) {
+for i in 0..<10 {
     Console.println(i)  // 0..9
 }
 ```
@@ -255,10 +272,42 @@ for i in Array.range(10) {
 ### Switch Expression
 
 ```javascript
+// Basic switch
 let result = switch value {
     1 -> "one"
     2, 3 -> "two or three"
     default -> "other"
+}
+
+// Range patterns
+let grade = switch score {
+    90..100 -> "A"      // inclusive range
+    80..<90 -> "B"      // exclusive range
+    70..<80 -> "C"
+    default -> "F"
+}
+
+// Guard expressions (if)
+let category = switch n {
+    x if x < 0 -> "negative"
+    x if x == 0 -> "zero"
+    x if x < 10 -> "small"
+    x -> "large"
+}
+
+// Array destructuring
+let desc = switch arr {
+    [] -> "empty"
+    [x] -> $"single: {x}"
+    [a, b] -> $"pair: {a}, {b}"
+    [head, ...tail] -> $"head: {head}, rest: {tail}"
+}
+
+// Dict destructuring
+let msg = switch event {
+    {"type": "click", "target": t} -> $"clicked on {t}"
+    {"type": "load"} -> "page loaded"
+    _ -> "unknown event"
 }
 ```
 
@@ -478,14 +527,6 @@ false.toString()  // "false"
 ---
 
 ### Array
-
-Static methods:
-
-```javascript
-Array.range(5)          // [0, 1, 2, 3, 4]
-Array.range(2, 5)       // [2, 3, 4]
-Array.range(0, 10, 2)   // [0, 2, 4, 6, 8]
-```
 
 Instance methods:
 
