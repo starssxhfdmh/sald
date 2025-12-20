@@ -520,6 +520,105 @@ class Circle implements Drawable {
 }
 ```
 
+### Decorators
+
+Decorators are annotations that modify functions or classes:
+
+```javascript
+// Simple decorator
+@test
+fun test_addition() {
+    Test.assert_eq(1 + 1, 2)
+}
+
+// Decorator with arguments  
+@test("Addition should work correctly")
+fun test_math() {
+    Test.assert(2 + 2 == 4)
+}
+
+// Multiple decorators
+@deprecated
+@test
+fun test_old_api() {
+    // ...
+}
+```
+
+### Testing Framework
+
+Built-in testing with the `@test` decorator and `Test` class:
+
+```javascript
+// tests/math_test.sald
+
+@test
+fun test_addition() {
+    Test.assert_eq(1 + 1, 2)
+    Test.assert_eq(10 + 5, 15)
+}
+
+@test
+fun test_strings() {
+    let s = "Hello"
+    Test.assert_eq(s.length(), 5)
+    Test.assert_ne(s, "World")
+}
+
+@test
+fun test_boolean() {
+    Test.assert(true)
+    Test.assert(5 > 3)
+}
+
+@test
+fun test_failure_example() {
+    Test.fail("This test always fails")
+}
+```
+
+**Test Assertions:**
+
+| Method | Description |
+|--------|-------------|
+| `Test.assert(condition, ?message)` | Fails if condition is falsy |
+| `Test.assert_eq(actual, expected, ?message)` | Fails if actual != expected |
+| `Test.assert_ne(actual, expected, ?message)` | Fails if actual == expected |
+| `Test.fail(?message)` | Always fails |
+
+**Running Tests:**
+
+```bash
+# Run all tests in a file
+sald --test tests/math_test.sald
+
+# Filter tests by name
+sald --test tests/math_test.sald --filter addition
+
+# Short form
+sald -t tests/math_test.sald -f add
+```
+
+**Output Format (Rust-style):**
+
+```
+running 4 tests
+test test_addition ... ok
+test test_strings ... ok (0.12ms)
+test test_boolean ... ok
+test test_failure_example ... FAILED
+
+failures:
+
+---- test_failure_example ----
+AssertionError: This test always fails
+
+failures:
+    test_failure_example
+
+test result: FAILED. 3 passed; 1 failed; finished in 0.01s
+```
+
 ---
 
 ## Standard Library

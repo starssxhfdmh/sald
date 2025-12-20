@@ -2187,6 +2187,38 @@ impl VM {
             Err(self.create_error(ErrorKind::RuntimeError, &format!("Uncaught exception: {}", error_msg)))
         }
     }
+
+    /// Call a global function by name (for test runner)
+    pub async fn call_global(&mut self, name: &str, args: Vec<Value>) -> SaldResult<Value> {
+        // Look up the function in globals
+        let func = {
+            let globals = self.globals.read().unwrap();
+            globals.get(name).cloned()
+        };
+        
+        match func {
+            Some(Value::Function(f)) => {
+                // Push null as receiver placeholder
+                self.stack.push(Value::Null);
+                // Push function
+                self.stack.push(Value::Function(f.clone()));
+                // Push args
+                for arg in &args {
+                    self.stack.push(arg.clone());
+                }
+                // Call it
+                self.call_value(args.len())?;
+                // Run event loop
+                self.run_event_loop().await
+            }
+            Some(other) => {
+                Err(self.create_error(ErrorKind::TypeError, &format!("'{}' is not a function, got {}", name, other.type_name())))
+            }
+            None => {
+                Err(self.create_error(ErrorKind::NameError, &format!("Function '{}' not found", name)))
+            }
+        }
+    }
 }
 
 impl Default for VM {

@@ -170,6 +170,12 @@ fn serialize_constant(out: &mut Vec<u8>, constant: &Constant) {
                 write_string(out, name);
             }
             write_u32(out, f.default_count as u32);
+            // Write is_test and decorators
+            out.push(if f.is_test { 1 } else { 0 });
+            write_u32(out, f.decorators.len() as u32);
+            for decorator in &f.decorators {
+                write_string(out, decorator);
+            }
             let chunk_bytes = serialize(&f.chunk);
             write_u32(out, chunk_bytes.len() as u32);
             out.extend_from_slice(&chunk_bytes);
@@ -246,10 +252,6 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize) -> Result<Constant, Str
                 *cursor += 2;
                 upvalues.push(UpvalueInfo { index, is_local });
             }
-            let chunk_len = read_u32(data, cursor)? as usize;
-            if *cursor + chunk_len > data.len() {
-                return Err("Unexpected end of file".to_string());
-            }
             // Read param_names and default_count
             let param_count = read_u32(data, cursor)? as usize;
             let mut param_names = Vec::with_capacity(param_count);
@@ -257,6 +259,21 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize) -> Result<Constant, Str
                 param_names.push(read_string(data, cursor)?);
             }
             let default_count = read_u32(data, cursor)? as usize;
+            // Read is_test and decorators
+            if *cursor >= data.len() {
+                return Err("Unexpected end of file".to_string());
+            }
+            let is_test = data[*cursor] != 0;
+            *cursor += 1;
+            let decorator_count = read_u32(data, cursor)? as usize;
+            let mut decorators = Vec::with_capacity(decorator_count);
+            for _ in 0..decorator_count {
+                decorators.push(read_string(data, cursor)?);
+            }
+            let chunk_len = read_u32(data, cursor)? as usize;
+            if *cursor + chunk_len > data.len() {
+                return Err("Unexpected end of file".to_string());
+            }
             let chunk = deserialize(&data[*cursor..*cursor + chunk_len])?;
             *cursor += chunk_len;
             Ok(Constant::Function(FunctionConstant {
@@ -270,6 +287,8 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize) -> Result<Constant, Str
                 file: String::new(),
                 param_names,
                 default_count,
+                is_test,
+                decorators,
             }))
         }
         3 => {

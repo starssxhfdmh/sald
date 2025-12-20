@@ -1,0 +1,57 @@
+// Test user-defined decorators with @ syntax
+
+// Simple logging decorator
+fun log_calls(fn) {
+    return |...args| {
+        Console.println($"[LOG] Calling with args: {args}")
+        let result = fn(...args)
+        Console.println($"[LOG] Result: {result}")
+        return result
+    }
+}
+
+// Decorator with arguments (factory pattern)
+fun prefix(msg) {
+    return |fn| {
+        return |...args| {
+            Console.println($"[{msg}] Before call")
+            let result = fn(...args)
+            Console.println($"[{msg}] After call")
+            return result
+        }
+    }
+}
+
+// Test simple decorator
+@log_calls
+fun add(a, b) {
+    return a + b
+}
+
+// Test decorator with arguments
+@prefix("MATH")
+fun multiply(a, b) {
+    return a * b
+}
+
+// Test multiple decorators
+@log_calls
+@prefix("DOUBLE")
+fun double_value(x) {
+    return x * 2
+}
+
+// Run tests
+Console.println("=== Testing @log_calls ===")
+let sum = add(5, 3)
+Test.assert_eq(sum, 8)
+
+Console.println("\n=== Testing @prefix('MATH') ===")
+let product = multiply(4, 5)
+Test.assert_eq(product, 20)
+
+Console.println("\n=== Testing multiple decorators ===")
+let doubled = double_value(10)
+Test.assert_eq(doubled, 20)
+
+Console.println("\n=== All @ decorator tests passed! ===")

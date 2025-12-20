@@ -24,6 +24,7 @@ mod crypto;
 mod regex;
 mod channel;
 mod promise;
+mod test;
 
 use crate::vm::value::Value;
 use std::collections::HashMap;
@@ -51,6 +52,7 @@ pub use crypto::create_crypto_class;
 pub use regex::create_regex_class;
 pub use channel::create_channel_class;
 pub use promise::create_promise_class;
+pub use test::create_test_class;
 
 /// Native function signature for static methods (no receiver)
 pub type NativeStaticFn = fn(&[Value]) -> Result<Value, String>;
@@ -152,6 +154,10 @@ pub fn create_builtin_classes() -> HashMap<String, Value> {
     classes.insert(
         "Promise".to_string(),
         Value::Class(Arc::new(create_promise_class())),
+    );
+    classes.insert(
+        "Test".to_string(),
+        Value::Class(Arc::new(create_test_class())),
     );
 
     classes

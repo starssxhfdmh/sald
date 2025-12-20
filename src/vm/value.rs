@@ -325,6 +325,8 @@ impl Function {
             upvalues: Vec::with_capacity(upvalue_count),
             param_names: Vec::new(),
             default_count: 0,
+            is_test: false,
+            decorators: Vec::new(),
         }
     }
 
@@ -340,6 +342,8 @@ impl Function {
             upvalues: Vec::with_capacity(fc.upvalue_count),
             param_names: fc.param_names.clone(),
             default_count: fc.default_count,
+            is_test: fc.is_test,
+            decorators: fc.decorators.clone(),
         }
     }
 }

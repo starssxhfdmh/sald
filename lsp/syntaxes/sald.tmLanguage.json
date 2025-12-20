@@ -11,6 +11,7 @@
 		{ "include": "#storage" },
 		{ "include": "#constants" },
 		{ "include": "#builtins" },
+		{ "include": "#decorators" },
 		{ "include": "#functions" },
 		{ "include": "#classes" },
 		{ "include": "#operators" },
@@ -204,6 +205,19 @@
 				{ "name": "punctuation.bracket.round.sald", "match": "[()]" },
 				{ "name": "punctuation.bracket.square.sald", "match": "[\\[\\]]" },
 				{ "name": "punctuation.bracket.curly.sald", "match": "[{}]" }
+			]
+		},
+		"decorators": {
+			"patterns": [
+				{
+					"comment": "Decorator with optional arguments: @test, @deprecated('message')",
+					"name": "meta.decorator.sald",
+					"match": "(@)([a-zA-Z_][a-zA-Z0-9_]*)",
+					"captures": {
+						"1": { "name": "punctuation.decorator.sald" },
+						"2": { "name": "entity.name.function.decorator.sald" }
+					}
+				}
 			]
 		},
 		"identifiers": {

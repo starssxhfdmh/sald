@@ -755,12 +755,14 @@ impl Compiler {
             file: self.file.clone(),
             param_names: def.params.iter().map(|p| p.name.clone()).collect(),
             default_count: def.params.iter().filter(|p| p.default_value.is_some()).count(),
+            is_test: def.decorators.iter().any(|d| d.name == "test"),
+            decorators: def.decorators.iter().map(|d| d.name.clone()).collect(),
         });
 
         let const_idx = self.current_chunk().add_constant(func_const);
 
         if as_method {
-            // Emit method/static method instruction
+            // Emit method/static method instruction (no decorator support for methods yet)
             if def.is_static {
                 self.emit_op(OpCode::StaticMethod, func_span);
             } else {
@@ -768,9 +770,44 @@ impl Compiler {
             }
             self.emit_u16(const_idx as u16, func_span);
         } else {
-            // Emit closure instruction and define global
+            // Collect user-defined decorators (skip builtin 'test')
+            let user_decorators: Vec<_> = def.decorators.iter()
+                .filter(|d| d.name != "test")
+                .collect();
+            
+            // Step 1: Emit all decorator lookups FIRST (in order)
+            // This puts decorators on stack in order: d1, d2, d3, ...
+            for decorator in &user_decorators {
+                // Look up decorator by name
+                let decorator_name_const = self
+                    .current_chunk()
+                    .add_constant(Constant::String(decorator.name.clone()));
+                self.emit_op(OpCode::GetGlobal, func_span);
+                self.emit_u16(decorator_name_const as u16, func_span);
+                
+                // If decorator has arguments like @decorator(arg), call factory first
+                if !decorator.args.is_empty() {
+                    for arg in &decorator.args {
+                        self.compile_expr(arg)?;
+                    }
+                    self.emit_op(OpCode::Call, func_span);
+                    self.emit_u16(decorator.args.len() as u16, func_span);
+                }
+            }
+            
+            // Step 2: Emit closure (function goes on top of stack)
+            // Stack is now: d1, d2, d3, ..., fn
             self.emit_op(OpCode::Closure, func_span);
             self.emit_u16(const_idx as u16, func_span);
+            
+            // Step 3: Apply decorators in REVERSE order (innermost first)
+            // With stack: d1 d2 fn
+            // Call 1: callee=d2 (at -2), arg=fn (at -1) -> d2(fn) -> stack: d1 result
+            // Call 1: callee=d1 (at -2), arg=result (at -1) -> d1(result)
+            for _ in &user_decorators {
+                self.emit_op(OpCode::Call, func_span);
+                self.emit_u16(1, func_span);
+            }
 
             if self.current_scope().scope_depth == 0 {
                 let name_const = self
@@ -1140,6 +1177,8 @@ impl Compiler {
             file: self.file.clone(),
             param_names: Vec::new(),
             default_count: 0,
+            is_test: false,
+            decorators: Vec::new(),
         });
         
         // Emit closure and immediately call it (IIFE pattern)
@@ -1278,6 +1317,8 @@ impl Compiler {
             file: self.file.clone(),
             param_names: Vec::new(),
             default_count: 0,
+            is_test: false,
+            decorators: Vec::new(),
         });
         
         // Emit closure and immediately call it (IIFE pattern)
@@ -1374,6 +1415,8 @@ impl Compiler {
             file: self.file.clone(),
             param_names: def.params.iter().map(|p| p.name.clone()).collect(),
             default_count: def.params.iter().filter(|p| p.default_value.is_some()).count(),
+            is_test: def.decorators.iter().any(|d| d.name == "test"),
+            decorators: def.decorators.iter().map(|d| d.name.clone()).collect(),
         });
 
         let const_idx = self.current_chunk().add_constant(func_const);
@@ -2800,6 +2843,8 @@ impl Compiler {
             file: self.file.clone(),
             param_names: params.iter().map(|p| p.name.clone()).collect(),
             default_count: params.iter().filter(|p| p.default_value.is_some()).count(),
+            is_test: false,
+            decorators: Vec::new(),
         });
 
         let const_idx = self.current_chunk().add_constant(func_const);

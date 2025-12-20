@@ -33,6 +33,8 @@ pub struct FunctionConstant {
     pub file: String,               // Source file path
     pub param_names: Vec<String>,   // Parameter names for named arguments
     pub default_count: usize,       // Number of parameters with defaults (from end)
+    pub is_test: bool,              // Whether marked with @test decorator
+    pub decorators: Vec<String>,    // Decorator names applied to this function
 }
 
 /// Class constant for the constant pool

@@ -39,6 +39,14 @@ struct Cli {
     #[arg(long = "check")]
     check: bool,
 
+    /// Run tests (functions with @test decorator)
+    #[arg(short = 't', long = "test")]
+    test: bool,
+
+    /// Filter tests by name (requires --test)
+    #[arg(short = 'f', long = "filter")]
+    filter: Option<String>,
+
     /// Output path for compiled file (requires -c)
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
@@ -61,6 +69,9 @@ async fn main() {
         } else if cli.compile {
             // Compile mode
             handle_compile(&path, debug, cli.output)
+        } else if cli.test {
+            // Test mode - run @test functions
+            handle_test(&path, debug, cli.filter.as_deref()).await
         } else {
             // Run mode
             handle_run(&path, debug).await
@@ -270,6 +281,144 @@ async fn handle_run(path: &PathBuf, debug: DebugFlags) -> Result<(), String> {
     vm.run(chunk, &file_name, &source).await
         .map_err(|e| e.format_with_options(true))?;
 
+    Ok(())
+}
+
+/// Run tests - collect and execute @test functions
+async fn handle_test(path: &PathBuf, debug: DebugFlags, filter: Option<&str>) -> Result<(), String> {
+    use std::time::Instant;
+    
+    // Auto-detect project root
+    if let Some(project_root) = find_project_root() {
+        sald::set_project_root(&project_root);
+    }
+    
+    let source = fs::read_to_string(path)
+        .map_err(|e| format!("Error reading file '{}': {}", path.display(), e))?;
+    
+    let file_name = path.to_string_lossy().to_string();
+    let mut scanner = Scanner::new(&source, &file_name);
+    let tokens = scanner.scan_tokens().map_err(|e| e.to_string())?;
+    
+    let mut parser = parser::Parser::new(tokens, &file_name, &source);
+    let program = parser.parse().map_err(|e| e.to_string())?;
+    
+    // Collect @test functions
+    let mut test_names: Vec<String> = Vec::new();
+    for stmt in &program.statements {
+        if let sald::ast::Stmt::Function { def } = stmt {
+            if def.decorators.iter().any(|d| d.name == "test") {
+                // Apply filter if provided
+                if let Some(f) = filter {
+                    if !def.name.contains(f) {
+                        continue;
+                    }
+                }
+                test_names.push(def.name.clone());
+            }
+        }
+    }
+    
+    if test_names.is_empty() {
+        if filter.is_some() {
+            println!("\n{}", "running 0 tests (filtered)".yellow());
+        } else {
+            println!("\n{}", "running 0 tests".yellow());
+        }
+        println!("\n{}", "test result: ok. 0 passed; 0 failed".green());
+        return Ok(());
+    }
+    
+    // Compile the full program
+    let mut compiler = Compiler::new(&file_name, &source);
+    let chunk = compiler.compile(&program).map_err(|e| e.to_string())?;
+    
+    if debug.asm {
+        chunk.disassemble(&file_name);
+    }
+    
+    // Run program first to define all functions
+    let mut vm = VM::new();
+    vm.run(chunk, &file_name, &source).await
+        .map_err(|e| e.format_with_options(true))?;
+    
+    // Print test header
+    println!();
+    println!("running {} test{}", test_names.len(), if test_names.len() == 1 { "" } else { "s" });
+    
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut failed_tests: Vec<(String, String)> = Vec::new();
+    let start = Instant::now();
+    
+    // Run each test function
+    for name in &test_names {
+        let test_start = Instant::now();
+        
+        // Call the test function using vm.call_global
+        let result = vm.call_global(name, vec![]).await;
+        
+        let duration = test_start.elapsed();
+        let duration_str = if duration.as_millis() > 0 {
+            format!(" ({:.2}ms)", duration.as_secs_f64() * 1000.0)
+        } else {
+            String::new()
+        };
+        
+        match result {
+            Ok(_) => {
+                println!("test {} ... {}{}", name, "ok".green(), duration_str);
+                passed += 1;
+            }
+            Err(e) => {
+                println!("test {} ... {}{}", name, "FAILED".red(), duration_str);
+                failed_tests.push((name.clone(), e.format_with_options(false)));
+                failed += 1;
+            }
+        }
+    }
+    
+    let total_duration = start.elapsed();
+    
+    // Print failures detail
+    if !failed_tests.is_empty() {
+        println!();
+        println!("failures:");
+        println!();
+        for (name, error) in &failed_tests {
+            println!("---- {} ----", name);
+            // Print just the error message, not the full stack trace
+            let first_line = error.lines().next().unwrap_or(error);
+            println!("{}", first_line.red());
+            println!();
+        }
+        println!("failures:");
+        for (name, _) in &failed_tests {
+            println!("    {}", name);
+        }
+    }
+    
+    // Print summary
+    println!();
+    if failed > 0 {
+        println!(
+            "test result: {}. {} passed; {} failed; finished in {:.2}s",
+            "FAILED".red().bold(),
+            passed,
+            failed,
+            total_duration.as_secs_f64()
+        );
+        return Err(format!("{} test(s) failed", failed));
+    } else {
+        println!(
+            "test result: {}. {} passed; {} failed; finished in {:.2}s",
+            "ok".green().bold(),
+            passed,
+            failed,
+            total_duration.as_secs_f64()
+        );
+    }
+    
     Ok(())
 }
 

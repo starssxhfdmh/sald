@@ -456,4 +456,15 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
         ],
         properties: &[],
     },
+    BuiltinClass {
+        name: "Test",
+        doc: "Built-in Test framework",
+        methods: &[
+            ("assert", "assert(condition, ?message)", "Fails if condition is falsy"),
+            ("assert_eq", "assert_eq(actual, expected, ?message)", "Fails if actual != expected"),
+            ("assert_ne", "assert_ne(actual, expected, ?message)", "Fails if actual == expected"),
+            ("fail", "fail(?message)", "Unconditionally fails the test"),
+        ],
+        properties: &[]
+    }
 ];

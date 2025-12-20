@@ -1,0 +1,122 @@
+// Decorator test file - demonstrates @test decorator usage
+// Run with: sald --test tests/decorator_test.sald
+
+// Basic math tests
+@test
+fun test_addition() {
+    Test.assert(1 + 1 == 2, "1 + 1 should equal 2")
+    Test.assert_eq(2 + 2, 4)
+    Test.assert_eq(10 + 5, 15)
+}
+
+@test
+fun test_subtraction() {
+    Test.assert_eq(5 - 3, 2)
+    Test.assert_eq(10 - 10, 0)
+    Test.assert_eq(100 - 50, 50)
+}
+
+@test
+fun test_multiplication() {
+    Test.assert_eq(3 * 3, 9)
+    Test.assert_eq(7 * 8, 56)
+    Test.assert_eq(0 * 100, 0)
+}
+
+@test
+fun test_division() {
+    Test.assert_eq(10 / 2, 5)
+    Test.assert_eq(9 / 3, 3)
+    Test.assert_eq(100 / 10, 10)
+}
+
+// String tests
+@test
+fun test_string_concat() {
+    let a = "Hello"
+    let b = "World"
+    Test.assert_eq(a + ", " + b + "!", "Hello, World!")
+}
+
+@test
+fun test_string_length() {
+    let s = "Hello"
+    Test.assert_eq(s.length(), 5)
+    Test.assert_eq("".length(), 0)
+    Test.assert_eq("test".length(), 4)
+}
+
+// Array tests
+@test
+fun test_array_push() {
+    let arr = [1, 2, 3]
+    arr.push(4)
+    Test.assert_eq(arr.length(), 4)
+    Test.assert_eq(arr[3], 4)
+}
+
+@test
+fun test_array_map() {
+    let arr = [1, 2, 3]
+    let doubled = arr.map(|x| x * 2)
+    Test.assert_eq(doubled[0], 2)
+    Test.assert_eq(doubled[1], 4)
+    Test.assert_eq(doubled[2], 6)
+}
+
+// Boolean tests
+@test
+fun test_boolean() {
+    Test.assert(true)
+    Test.assert(!false)
+    Test.assert(5 > 3)
+    Test.assert(3 < 5)
+    Test.assert(5 >= 5)
+    Test.assert(5 <= 5)
+}
+
+// Inequality tests
+@test
+fun test_not_equal() {
+    Test.assert_ne(1, 2)
+    Test.assert_ne("a", "b")
+    Test.assert_ne([1], [2])
+}
+
+// Class tests
+class Counter {
+    fun init(self) {
+        self.count = 0
+    }
+    
+    fun increment(self) {
+        self.count += 1
+    }
+    
+    fun get(self) {
+        return self.count
+    }
+}
+
+@test
+fun test_class_instance() {
+    let c = Counter()
+    Test.assert_eq(c.get(), 0)
+    c.increment()
+    Test.assert_eq(c.get(), 1)
+    c.increment()
+    c.increment()
+    Test.assert_eq(c.get(), 3)
+}
+
+// Test with description
+@test("This tests the null coalescing operator")
+fun test_null_coalesce() {
+    let a = null
+    let b = a ?? "default"
+    Test.assert_eq(b, "default")
+    
+    let c = "value"
+    let d = c ?? "default"
+    Test.assert_eq(d, "value")
+}
