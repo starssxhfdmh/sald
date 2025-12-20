@@ -147,7 +147,7 @@ jobs:
           echo "| \`sald-lsp-windows-x86_64.exe\` | Language server for Windows |" >> CHANGELOG.md
           echo "| \`salad-linux-x86_64\` | Package manager for Linux |" >> CHANGELOG.md
           echo "| \`salad-windows-x86_64.exe\` | Package manager for Windows |" >> CHANGELOG.md
-          echo "| \`sald-vscode-extension.vsix\` | VSCode extension (install via Extensions > Install from VSIX) |" >> CHANGELOG.md
+          echo "| \`sald-language-support.vsix\` | VSCode extension (install via Extensions > Install from VSIX) |" >> CHANGELOG.md
           
           cat CHANGELOG.md
 
@@ -172,7 +172,7 @@ jobs:
           cp artifacts/salad-windows-x86_64/salad.exe release/salad-windows-x86_64.exe
           
           # VSCode extension
-          cp artifacts/sald-vscode-extension/sald-vscode-extension.vsix release/sald-vscode-extension.vsix
+          cp artifacts/sald-language-support/sald-language-support.vsix release/sald-language-support.vsix
           
           ls -la release/
 
@@ -190,6 +190,6 @@ jobs:
             release/sald-windows-x86_64.exe
             release/sald-lsp-windows-x86_64.exe
             release/salad-windows-x86_64.exe
-            release/sald-vscode-extension.vsix
+            release/sald-language-support.vsix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
