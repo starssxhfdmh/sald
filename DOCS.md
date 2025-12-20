@@ -117,19 +117,34 @@ Future, Namespace, Enum, BoundMethod
 "\u0041"    // unicode (A)
 "\u{1F600}" // unicode emoji (😀)
 
-// Format strings (interpolation)
+// Multiline strings (escape sequences work)
+"""
+Hello World!
+This is a multiline string.
+Supports \n escape sequences.
+"""
+
+// Format strings (interpolation + escapes)
 $"Hello, {name}!"
 $"Result: {x + y}"
 $"Escaped {{braces}}"
 
-// Raw strings (multiline, no escapes)
-"""
-Raw string content.
-No \n processing.
+// Format multiline strings (interpolation + escapes)
+$"""
+Hello {name}!
+Supports \n escapes too.
 """
 
-// Raw format strings
-$"""Hello {name}, no \n escapes."""
+// Raw strings (NO escape processing)
+r"C:\path\to\file"      // single-line raw
+r'Also works with single quotes'
+
+// Raw multiline strings (NO escape processing)
+r"""
+This is raw.
+No \n processing here.
+{curly braces are literal}
+"""
 ```
 
 ### Arrays and Dictionaries
