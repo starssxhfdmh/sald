@@ -133,7 +133,7 @@ namespace WebRoutes {
     
     // ==================== Route Factory ====================
     
-    fun create(app) {
+    fun create(_) {
         let router = Spark.createRouter()
         
         // -------------------- Home --------------------
@@ -370,7 +370,7 @@ namespace WebRoutes {
         
         // -------------------- Logout --------------------
         
-        router.get("/logout", |req| {
+        router.get("/logout", |_| {
             let response = Spark.Response.redirect("/", null)
             return Spark.Session.clear(response)
         })

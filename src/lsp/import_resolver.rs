@@ -293,7 +293,7 @@ impl ImportResolver {
                         type_hint: None, source_uri: None });
                 }
                 // Let statements at top-level are also exports
-                Stmt::Let { name, initializer, span } => {
+                Stmt::Let { name, name_span: _, initializer, span } => {
                     let type_hint = initializer.as_ref().and_then(|e| self.infer_type(e));
                     symbols.push(Symbol {
                         name: name.clone(),
@@ -391,7 +391,7 @@ impl ImportResolver {
                     source_uri: None,
                 });
             }
-            Stmt::Let { name, initializer, span } => {
+            Stmt::Let { name, name_span: _, initializer, span } => {
                 let type_hint = initializer.as_ref().and_then(|e| self.infer_type(e));
                 symbols.push(Symbol {
                     name: name.clone(),

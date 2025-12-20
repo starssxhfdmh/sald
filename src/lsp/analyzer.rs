@@ -41,6 +41,7 @@ impl SemanticAnalyzer {
             "Console", "Math", "File", "Timer", "Date", "Json", "Path",
             "Process", "Http", "Type", "System", "Array", "Dict", "String", "Ffi",
             "Number", "Boolean", // Type conversion classes
+            "Regex", "Channel", "Promise", "Crypto", // Additional builtins
         ] {
             defined_classes.insert(cls.to_string());
         }
@@ -202,19 +203,9 @@ impl SemanticAnalyzer {
     }
 
     fn resolve_var(&mut self, name: &str) -> Option<bool> {
-        // Check built-in classes first
-        if self.defined_classes.contains(name) {
-            return Some(false);
-        }
-        // Check defined functions
-        if self.defined_functions.contains(name) {
-            return Some(false);
-        }
-        // Check built-in constants and special variables
-        if matches!(name, "true" | "false" | "null" | "self" | "super") {
-            return Some(false);
-        }
-
+        // IMPORTANT: Check local scopes FIRST for proper lexical scoping!
+        // Local variables should shadow global classes/functions.
+        
         // Search scopes from innermost to outermost
         for scope in self.scopes.iter_mut().rev() {
             if let Some(info) = scope.variables.get_mut(name) {
@@ -222,17 +213,33 @@ impl SemanticAnalyzer {
                 return Some(info.is_const);
             }
         }
+        
+        // Check built-in constants and special variables
+        if matches!(name, "true" | "false" | "null" | "self" | "super") {
+            return Some(false);
+        }
+        
+        // Check global classes/namespaces (from imports or definitions)
+        if self.defined_classes.contains(name) {
+            return Some(false);
+        }
+        
+        // Check defined functions (from imports or definitions)
+        if self.defined_functions.contains(name) {
+            return Some(false);
+        }
+        
         None
     }
 
     fn analyze_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Let { name, initializer, span } => {
+            Stmt::Let { name, name_span, initializer, span: _ } => {
                 // Analyze value first
                 if let Some(val) = initializer {
                     self.analyze_expr(val);
                 }
-                self.define_var(name, span, false);
+                self.define_var(name, name_span, false);
             }
             Stmt::LetDestructure { pattern, initializer, span: _ } => {
                 // Analyze initializer first

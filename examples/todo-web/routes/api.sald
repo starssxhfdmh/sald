@@ -19,7 +19,7 @@ namespace ApiRoutes {
             }
             let content = await File.read("./data/todos.json")
             return Json.parse(content)
-        } catch e {
+        } catch _ {
             return []
         }
     }
@@ -49,7 +49,7 @@ namespace ApiRoutes {
     
     // ==================== Route Factory ====================
     
-    fun create(app) {
+    fun create() {
         let router = Spark.createRouter()
         
         // Rate limiting for API
@@ -60,7 +60,7 @@ namespace ApiRoutes {
         
         // -------------------- Health Check --------------------
         
-        router.get("/health", |req| {
+        router.get("/health", |_| {
             return Spark.Response.json({
                 "status": "ok",
                 "timestamp": Date.now(),

@@ -86,6 +86,7 @@ impl Parser {
 
             let property_token = self.consume_identifier("Expected property name after 'self.'")?;
             let property_name = format!("self.{}", property_token.lexeme);
+            let property_span = property_token.span;  // Copy span before mutable borrow
 
             self.consume(&TokenKind::Equal, "Expected '=' after property name")?;
             let initializer = self.expression()?;
@@ -94,6 +95,7 @@ impl Parser {
 
             return Ok(Stmt::Let {
                 name: property_name,
+                name_span: property_span,
                 initializer: Some(initializer),
                 span: Span::from_positions(
                     start_span.start.line,
@@ -106,6 +108,7 @@ impl Parser {
 
         let name_token = self.consume_identifier("Expected variable name")?;
         let name = name_token.lexeme.clone();
+        let name_span = name_token.span;  // Copy span before mutable borrow
 
         let initializer = if self.match_token(&TokenKind::Equal) {
             Some(self.expression()?)
@@ -117,6 +120,7 @@ impl Parser {
 
         Ok(Stmt::Let {
             name,
+            name_span,
             initializer,
             span: Span::from_positions(
                 start_span.start.line,

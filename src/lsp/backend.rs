@@ -135,14 +135,14 @@ impl SaldLanguageServer {
         match stmt {
             Stmt::Function { def } => symbols.push(self.function_to_symbol(def)),
             Stmt::Class { def } => symbols.push(self.class_to_symbol(def)),
-            Stmt::Let { name, initializer, span } => {
+            Stmt::Let { name, name_span, initializer, span } => {
                 // Try to infer type from initializer
                 let type_hint = initializer.as_ref().and_then(|e| self.infer_type(e));
                 symbols.push(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Variable,
                     range: span_to_range(span),
-                    selection_range: span_to_range(span),
+                    selection_range: span_to_range(name_span),
                     detail: Some(format!("let {}", name)),
                     documentation: None,
                     children: Vec::new(),
@@ -907,11 +907,11 @@ impl SaldLanguageServer {
             };
             
             // Check if this looks like an import path
-            if string_content.ends_with(".sald") || !string_content.contains(' ') {
+            if string_content.ends_with(".sald") {
                 return Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
                         kind: MarkupKind::Markdown,
-                        value: format!("**\"{}\"** (string literal)", string_content),
+                        value: format!("```\n\"{}\"\n```\n---\n*import path*", string_content),
                     }),
                     range: Some(word_range),
                 });
@@ -920,7 +920,7 @@ impl SaldLanguageServer {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: format!("**String literal**\n\n`\"{}\"`", string_content),
+                    value: format!("```\n\"{}\"\n```\n---\n*string literal*", string_content),
                 }),
                 range: Some(word_range),
             });
@@ -928,7 +928,7 @@ impl SaldLanguageServer {
 
         // Check if cursor is inside a comment
         if self.is_in_comment(line, char_pos) {
-            return None; // Don't show hover for comments
+            return None;
         }
 
         let start = line[..char_pos]
@@ -950,138 +950,156 @@ impl SaldLanguageServer {
             end: Position { line: position.line, character: end as u32 },
         };
 
-        // Check keywords first (including self, super, true, false, null)
-        let keywords = [
-            ("let", "Variable declaration"),
-            ("const", "Constant declaration"),
-            ("fun", "Function declaration"),
-            ("class", "Class declaration"),
-            ("if", "Conditional statement"),
-            ("else", "Else branch"),
-            ("while", "While loop"),
-            ("for", "For-in loop"),
-            ("in", "In keyword for loops"),
-            ("do", "Do-while loop"),
-            ("return", "Return from function"),
-            ("break", "Break from loop"),
-            ("continue", "Continue to next iteration"),
-            ("import", "Import module"),
-            ("as", "Import alias"),
-            ("namespace", "Namespace declaration"),
-            ("enum", "Enum declaration"),
-            ("try", "Try block"),
-            ("catch", "Catch block"),
-            ("throw", "Throw exception"),
-            ("switch", "Switch expression"),
-            ("default", "Default case"),
-            ("async", "Async function modifier"),
-            ("await", "Await async expression"),
-            ("self", "Reference to current instance"),
-            ("super", "Reference to parent class"),
-            ("extends", "Class inheritance"),
-            ("static", "Static method/property"),
-            ("true", "Boolean true"),
-            ("false", "Boolean false"),
-            ("null", "Null value"),
-        ];
-        
-        for (kw, doc) in keywords {
-            if word == kw {
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: format!("**{}** (keyword)\n\n{}", kw, doc),
-                    }),
-                    range: Some(word_range),
-                });
-            }
+        // Check keywords first
+        if let Some(hover) = self.get_keyword_hover(word, &word_range) {
+            return Some(hover);
         }
 
         // Check builtin symbols
         let builtin_symbols = get_builtin_symbols();
         if let Some(sym) = self.find_symbol_deep(&builtin_symbols, word) {
-            let kind_str = format!("{:?}", sym.kind).to_lowercase();
-            let content = format!(
-                "**{}** ({})",
-                sym.name,
-                kind_str,
-            );
-            let doc_content = sym.documentation.as_ref()
-                .or(sym.detail.as_ref())
-                .map(|d| format!("\n\n{}", d))
-                .unwrap_or_default();
-            return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("{}{}", content, doc_content),
-                }),
-                range: Some(word_range),
-            });
+            return Some(self.format_symbol_hover(sym, &word_range, true));
         }
 
         // Check document symbols (including nested methods)
         if let Some(sym) = self.find_symbol_deep(&doc.symbols, word) {
-            let kind_str = format!("{:?}", sym.kind).to_lowercase();
-            
-            // Build type info string
-            let type_info = sym.type_hint.as_ref()
-                .map(|t| format!(": {}", t))
-                .unwrap_or_default();
-            
-            // Build hover content based on symbol kind
-            let content = match sym.kind {
-                SymbolKind::Variable | SymbolKind::Constant => {
-                    let decl_keyword = if sym.kind == SymbolKind::Constant { "const" } else { "let" };
-                    format!(
-                        "```sald\n{} {}{}\n```\n\n_{}_",
-                        decl_keyword,
-                        sym.name,
-                        type_info,
-                        kind_str
-                    )
-                }
-                SymbolKind::Function | SymbolKind::Method => {
-                    format!(
-                        "```sald\n{}\n```\n\n_{}_",
-                        sym.detail.as_deref().unwrap_or(&sym.name),
-                        kind_str
-                    )
-                }
-                SymbolKind::Class => {
-                    format!(
-                        "```sald\nclass {}\n```\n\n_{}_",
-                        sym.name,
-                        kind_str
-                    )
-                }
-                SymbolKind::Namespace => {
-                    format!(
-                        "```sald\nnamespace {}\n```\n\n_{}_",
-                        sym.name,
-                        kind_str
-                    )
-                }
-                _ => {
-                    format!(
-                        "**{}**{}\n\n_{}_",
-                        sym.name,
-                        type_info,
-                        kind_str
-                    )
-                }
-            };
-            
-            return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: content,
-                }),
-                range: Some(word_range),
-            });
+            return Some(self.format_symbol_hover(&sym, &word_range, false));
         }
 
-        // No symbol found - don't show unhelpful fallback
+        // No symbol found
         None
+    }
+    
+    /// Get hover for keywords
+    fn get_keyword_hover(&self, word: &str, range: &Range) -> Option<Hover> {
+        let (keyword, description, example) = match word {
+            "let" => ("let", "Declares a mutable variable.", "let x = 5"),
+            "const" => ("const", "Declares an immutable constant.", "const PI = 3.14159"),
+            "fun" => ("fun", "Declares a function.", "fun greet(name) { ... }"),
+            "async" => ("async", "Declares an async function that returns a Future.", "async fun fetch(url) { ... }"),
+            "await" => ("await", "Waits for an async expression to complete.", "let data = await fetch(url)"),
+            "class" => ("class", "Declares a class with methods and properties.", "class Person { ... }"),
+            "extends" => ("extends", "Inherits from a parent class.", "class Dog extends Animal { ... }"),
+            "if" => ("if", "Conditional execution.", "if condition { ... }"),
+            "else" => ("else", "Alternative branch for if statement.", "if x { ... } else { ... }"),
+            "while" => ("while", "Repeats while condition is true.", "while running { ... }"),
+            "for" => ("for", "Iterates over a collection or range.", "for item in items { ... }"),
+            "in" => ("in", "Iterator keyword used in for loops.", "for x in array { ... }"),
+            "do" => ("do", "Do-while loop, executes at least once.", "do { ... } while condition"),
+            "return" => ("return", "Returns a value from a function.", "return result"),
+            "break" => ("break", "Exits the current loop.", "break"),
+            "continue" => ("continue", "Skips to the next loop iteration.", "continue"),
+            "try" => ("try", "Starts a try-catch block for error handling.", "try { ... } catch (e) { ... }"),
+            "catch" => ("catch", "Catches and handles errors.", "catch (e) { Console.println(e) }"),
+            "throw" => ("throw", "Throws an error.", "throw \"error message\""),
+            "switch" => ("switch", "Pattern matching expression.", "switch value { 1 -> \"one\" }"),
+            "default" => ("default", "Default case in switch.", "default -> \"other\""),
+            "import" => ("import", "Imports a module.", "import \"utils.sald\""),
+            "as" => ("as", "Creates an alias for an import.", "import \"utils.sald\" as Utils"),
+            "namespace" => ("namespace", "Groups related declarations.", "namespace Utils { ... }"),
+            "enum" => ("enum", "Declares an enumeration.", "enum Status { Active, Inactive }"),
+            "self" => ("self", "Reference to the current instance.", "self.name = name"),
+            "super" => ("super", "Reference to the parent class.", "super.init(args)"),
+            "true" => ("true", "Boolean true value.", "let active = true"),
+            "false" => ("false", "Boolean false value.", "let done = false"),
+            "null" => ("null", "Represents absence of a value.", "let x = null"),
+            _ => return None,
+        };
+        
+        Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!(
+                    "```sald\n{}\n```\n---\n{}\n\n*Example:* `{}`",
+                    keyword, description, example
+                ),
+            }),
+            range: Some(*range),
+        })
+    }
+    
+    /// Format symbol hover in standard LSP format
+    fn format_symbol_hover(&self, sym: &Symbol, range: &Range, is_builtin: bool) -> Hover {
+        let mut parts = Vec::new();
+        
+        // Code block with signature
+        let code_block = match sym.kind {
+            SymbolKind::Variable => {
+                if let Some(ref type_hint) = sym.type_hint {
+                    format!("let {}: {}", sym.name, type_hint)
+                } else {
+                    format!("let {}", sym.name)
+                }
+            }
+            SymbolKind::Constant => {
+                if let Some(ref type_hint) = sym.type_hint {
+                    format!("const {}: {}", sym.name, type_hint)
+                } else {
+                    format!("const {}", sym.name)
+                }
+            }
+            SymbolKind::Function => {
+                sym.detail.clone().unwrap_or_else(|| format!("fun {}()", sym.name))
+            }
+            SymbolKind::Method => {
+                sym.detail.clone().unwrap_or_else(|| format!("fun {}()", sym.name))
+            }
+            SymbolKind::Class => {
+                format!("class {}", sym.name)
+            }
+            SymbolKind::Namespace => {
+                format!("namespace {}", sym.name)
+            }
+            SymbolKind::Enum => {
+                format!("enum {}", sym.name)
+            }
+            SymbolKind::Parameter => {
+                if let Some(ref type_hint) = sym.type_hint {
+                    format!("(parameter) {}: {}", sym.name, type_hint)
+                } else {
+                    format!("(parameter) {}", sym.name)
+                }
+            }
+        };
+        
+        parts.push(format!("```sald\n{}\n```", code_block));
+        
+        // Add separator
+        parts.push("---".to_string());
+        
+        // Add documentation
+        if let Some(ref doc) = sym.documentation {
+            parts.push(doc.clone());
+        } else if let Some(ref detail) = sym.detail {
+            // For builtins, detail contains the signature, so only use if no doc
+            if !is_builtin || sym.kind != SymbolKind::Method {
+                parts.push(format!("_{}_", detail));
+            }
+        }
+        
+        // Add kind indicator
+        let kind_str = match sym.kind {
+            SymbolKind::Variable => "variable",
+            SymbolKind::Constant => "constant",
+            SymbolKind::Function => "function",
+            SymbolKind::Method => if is_builtin { "built-in method" } else { "method" },
+            SymbolKind::Class => if is_builtin { "built-in class" } else { "class" },
+            SymbolKind::Namespace => "namespace",
+            SymbolKind::Enum => "enum",
+            SymbolKind::Parameter => "parameter",
+        };
+        
+        if sym.documentation.is_none() {
+            parts.push(format!("*{}*", kind_str));
+        }
+        
+        Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: parts.join("\n"),
+            }),
+            range: Some(*range),
+        }
     }
     
     /// Index the entire workspace for cross-file symbol tracking

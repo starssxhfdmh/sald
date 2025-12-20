@@ -56,6 +56,7 @@ pub enum Stmt {
     /// Variable declaration: let x = 5
     Let {
         name: String,
+        name_span: Span,  // Span covering just the identifier
         initializer: Option<Expr>,
         span: Span,
     },

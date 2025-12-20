@@ -63,20 +63,22 @@ use tower_lsp::lsp_types::Range;
 /// Convert all builtin classes to Symbol format for unified handling  
 pub fn get_builtin_symbols() -> Vec<Symbol> {
     BUILTIN_CLASSES.iter().map(|cls| {
-        // Create method children
-        let mut children: Vec<Symbol> = cls.methods.iter().map(|(name, sig, _doc)| {
+        // Create method children with documentation
+        let mut children: Vec<Symbol> = cls.methods.iter().map(|(name, sig, doc)| {
             Symbol {
                 name: name.to_string(),
                 kind: SymbolKind::Method,
                 range: Range::default(),
                 selection_range: Range::default(),
                 detail: Some(sig.to_string()),
-                documentation: None,
+                documentation: Some(doc.to_string()),
                 children: Vec::new(),
-                type_hint: None, source_uri: None }
+                type_hint: None,
+                source_uri: None,
+            }
         }).collect();
         
-        // Add properties as constants
+        // Add properties as constants with documentation
         children.extend(cls.properties.iter().map(|(name, doc)| {
             Symbol {
                 name: name.to_string(),
@@ -84,9 +86,11 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
                 range: Range::default(),
                 selection_range: Range::default(),
                 detail: Some(doc.to_string()),
-                documentation: None,
+                documentation: Some(doc.to_string()),
                 children: Vec::new(),
-                type_hint: None, source_uri: None }
+                type_hint: None,
+                source_uri: None,
+            }
         }));
         
         Symbol {
@@ -97,7 +101,9 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
             detail: Some(format!("{} (built-in)", cls.doc)),
             documentation: Some(cls.doc.to_string()),
             children,
-            type_hint: None, source_uri: None }
+            type_hint: None,
+            source_uri: None,
+        }
     }).collect()
 }
 
@@ -390,11 +396,64 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
             ("load", "load(path)", "Load dynamic library"),
             ("callback", "callback(fn)", "Register callback function"),
             ("removeCallback", "removeCallback(id)", "Unregister callback"),
+            ("readString", "readString(ptr)", "Read C string from pointer"),
         ],
         properties: &[
             ("NULL", "Null pointer (0)"),
             ("INVOKER", "Callback invoker pointer"),
         ],
     },
+    BuiltinClass {
+        name: "Regex",
+        doc: "Regular expression operations",
+        methods: &[
+            ("new", "new(pattern, flags?)", "Create a new regex"),
+            ("test", "test(string)", "Test if pattern matches"),
+            ("match", "match(string)", "Find first match with groups"),
+            ("matchAll", "matchAll(string)", "Find all matches"),
+            ("replace", "replace(string, replacement)", "Replace first match"),
+            ("replaceAll", "replaceAll(string, replacement)", "Replace all matches"),
+            ("split", "split(string)", "Split string by pattern"),
+            ("pattern", "pattern()", "Get the pattern string"),
+            ("flags", "flags()", "Get the flags string"),
+        ],
+        properties: &[],
+    },
+    BuiltinClass {
+        name: "Channel",
+        doc: "Go-style channels for async communication",
+        methods: &[
+            ("send", "await send(value)", "Send a value to the channel"),
+            ("receive", "await receive()", "Receive a value from the channel"),
+            ("tryReceive", "tryReceive()", "Non-blocking receive, returns null if empty"),
+            ("close", "close()", "Close the channel"),
+            ("isClosed", "isClosed()", "Check if channel is closed"),
+        ],
+        properties: &[],
+    },
+    BuiltinClass {
+        name: "Promise",
+        doc: "Async promise utilities",
+        methods: &[
+            ("all", "await all(futures)", "Wait for all futures to complete"),
+            ("race", "await race(futures)", "Wait for first future to complete"),
+            ("resolve", "resolve(value)", "Create a resolved future"),
+            ("reject", "reject(error)", "Create a rejected future"),
+        ],
+        properties: &[],
+    },
+    BuiltinClass {
+        name: "Crypto",
+        doc: "Cryptographic operations",
+        methods: &[
+            ("hash", "hash(algorithm, data)", "Hash data with algorithm (sha256, md5, etc.)"),
+            ("hmac", "hmac(algorithm, key, data)", "HMAC signature"),
+            ("uuid", "uuid()", "Generate UUID v4"),
+            ("randomBytes", "randomBytes(length)", "Generate random bytes"),
+            ("randomInt", "randomInt(min, max)", "Generate random integer"),
+            ("base64Encode", "base64Encode(data)", "Encode to base64"),
+            ("base64Decode", "base64Decode(data)", "Decode from base64"),
+        ],
+        properties: &[],
+    },
 ];
-

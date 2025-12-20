@@ -180,6 +180,7 @@ impl Compiler {
         match stmt {
             Stmt::Let {
                 name,
+                name_span: _,
                 initializer,
                 span,
             } => {
@@ -937,7 +938,7 @@ impl Compiler {
         // First pass: compile let/const as locals
         for stmt in body {
             match stmt {
-                Stmt::Let { name: var_name, initializer, span: var_span } => {
+                Stmt::Let { name: var_name, name_span: _, initializer, span: var_span } => {
                     if let Some(init) = initializer {
                         self.compile_expr(init)?;
                     } else {
@@ -1085,7 +1086,7 @@ impl Compiler {
         // First pass: compile let/const as locals
         for stmt in body {
             match stmt {
-                Stmt::Let { name: var_name, initializer, span: var_span } => {
+                Stmt::Let { name: var_name, name_span: _, initializer, span: var_span } => {
                     if let Some(init) = initializer {
                         self.compile_expr(init)?;
                     } else {
