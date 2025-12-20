@@ -6,7 +6,7 @@ import "spark"
 
 namespace WebRoutes {
     
-    // ==================== Session Helpers (using Spark.Session v0.2.0) ====================
+    // ==================== Session Helpers (using Spark.Session v1.0.5) ====================
     // Sessions are now stored in signed cookies (client-side)
     
     fun getSession(req) {
