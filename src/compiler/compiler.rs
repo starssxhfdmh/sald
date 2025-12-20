@@ -1644,67 +1644,106 @@ impl Compiler {
         default: Option<&Expr>,
         span: Span,
     ) -> SaldResult<()> {
-        // First, compile the value and store it in a local for repeated access
+        // First, compile the value - it stays on stack as value_slot's value
         self.begin_scope();
         self.compile_expr(value)?;
+        // Value is now on top of stack - add_local_unnamed marks this position as a local
         let value_slot = self.add_local_unnamed();
-        self.emit_op(OpCode::SetLocal, span);
-        self.emit_u16(value_slot as u16, span);
-        self.emit_op(OpCode::Pop, span);
+        // DON'T SetLocal/Pop - the value is already at the correct stack position!
 
         // Track all end jumps (to jump to after each arm succeeds)
         let mut end_jumps = Vec::new();
 
         for arm in arms {
-            // For multi-pattern arms (1, 2, 3 -> ...), ANY pattern can match.
-            // We test each pattern; first match wins and we execute body.
+            // For single-pattern arms (most common), simple flow
+            // For multi-pattern arms (1, 2, 3 -> ...), test each; first match wins
             
-            let mut success_jumps = Vec::new();
-            
-            for pattern in &arm.patterns {
-                // Test if this pattern matches (without binding yet)
+            if arm.patterns.len() == 1 {
+                // Single pattern - test, then compile body
+                let pattern = &arm.patterns[0];
+                
+                // Begin scope for this arm (covers both test and body)
+                self.begin_scope();
+                
+                // Remember how many locals before pattern test (for failure cleanup)
+                let locals_before_test = self.current_scope().locals.len();
+                
                 let match_result = self.compile_pattern_test(value_slot, pattern, span)?;
                 
                 if let Some(success_jump) = match_result {
-                    // Conditional pattern - jump to body on success
-                    success_jumps.push(success_jump);
-                    self.emit_op(OpCode::Pop, span); // pop false on failure path
+                    // Conditional pattern - JumpIfTrue jumps on TRUE
+                    // 
+                    // IMPORTANT: At compile time, we emit code for BOTH paths sequentially.
+                    // We must NOT modify compiler state (locals, scope_depth) on failure path
+                    // because success path still needs that state!
+                    
+                    // Failure path: emit runtime cleanup, then jump away
+                    self.emit_op(OpCode::Pop, span); // pop the false
+                    
+                    // Pop any locals added during pattern test at RUNTIME
+                    // But DON'T remove them from compiler tracking - success path needs them
+                    let locals_to_pop = self.current_scope().locals.len() - locals_before_test;
+                    for _ in 0..locals_to_pop {
+                        self.emit_op(OpCode::Pop, span);
+                    }
+                    
+                    let next_arm_jump = self.emit_jump(OpCode::Jump, span);
+                    
+                    // Success path - locals are still in compiler's list
+                    self.patch_jump(success_jump);
+                    self.emit_op(OpCode::Pop, span); // pop the true
+                    
+                    // Bind and compile body
+                    // compile_pattern_bindings skips if guard already bound the variable
+                    self.compile_pattern_bindings(value_slot, pattern, span)?;
+                    self.compile_expr(&arm.body)?;
+                    
+                    // end_scope_keep_result pops all locals including guard bindings
+                    self.end_scope_keep_result();
+                    end_jumps.push(self.emit_jump(OpCode::Jump, span));
+                    
+                    // Next arm starts here (after scope ended, so depth is correct)
+                    self.patch_jump(next_arm_jump);
                 } else {
-                    // Unconditional pattern (e.g. `x` without guard) - always matches
-                    // Just jump directly to body
-                    success_jumps.push(self.emit_jump(OpCode::Jump, span));
+                    // Unconditional match - always succeeds
+                    self.compile_pattern_bindings(value_slot, pattern, span)?;
+                    self.compile_expr(&arm.body)?;
+                    self.end_scope_keep_result();
+                    end_jumps.push(self.emit_jump(OpCode::Jump, span));
+                    // Note: following arms are unreachable
                 }
+            } else {
+                // Multi-pattern arm (e.g., 1, 2, 3 -> ...)
+                // These are literals without bindings, no scope needed for test
+                let mut success_jumps = Vec::new();
+                
+                for pattern in &arm.patterns {
+                    let match_result = self.compile_pattern_test(value_slot, pattern, span)?;
+                    if let Some(success_jump) = match_result {
+                        success_jumps.push(success_jump);
+                        self.emit_op(OpCode::Pop, span);
+                    } else {
+                        success_jumps.push(self.emit_jump(OpCode::Jump, span));
+                    }
+                }
+                
+                // All patterns failed
+                let next_arm_jump = self.emit_jump(OpCode::Jump, span);
+                
+                // Patch successes to body
+                for jump in success_jumps {
+                    self.patch_jump(jump);
+                }
+                self.emit_op(OpCode::Pop, span);
+                
+                // Body in its own scope
+                self.begin_scope();
+                self.compile_expr(&arm.body)?;
+                self.end_scope_keep_result();
+                end_jumps.push(self.emit_jump(OpCode::Jump, span));
+                
+                self.patch_jump(next_arm_jump);
             }
-            
-            // All patterns failed, jump to next arm
-            let next_arm_jump = self.emit_jump(OpCode::Jump, span);
-            
-            // Patch all success jumps to here (body execution)
-            for jump in success_jumps {
-                self.patch_jump(jump);
-            }
-            // Pop the true value (from JumpIfTrue that succeeded)
-            self.emit_op(OpCode::Pop, span);
-            
-            // Now in body scope - bind pattern variables
-            self.begin_scope();
-            
-            // Bind the matched pattern's variables
-            // For simplicity, we only bind the first pattern's variables
-            // (in multi-pattern arms like `1, 2, 3 ->`, there are no bindings anyway)
-            self.compile_pattern_bindings(value_slot, &arm.patterns[0], span)?;
-            
-            // Compile arm body
-            self.compile_expr(&arm.body)?;
-            
-            // End scope, keep result
-            self.end_scope_keep_result();
-            
-            // Jump to switch end
-            end_jumps.push(self.emit_jump(OpCode::Jump, span));
-            
-            // Patch next arm jump
-            self.patch_jump(next_arm_jump);
         }
 
         // Compile default arm or push null
@@ -1745,24 +1784,21 @@ impl Compiler {
                 Ok(Some(self.emit_jump(OpCode::JumpIfTrue, span)))
             }
             
-            Pattern::Binding { guard, .. } => {
-                // If there's a guard, test it
+            Pattern::Binding { name, guard, .. } => {
+                // If there's a guard, we need to bind the value so guard can reference it
                 if let Some(guard_expr) = guard {
-                    // We need the value bound temporarily for the guard
-                    // Push value onto stack for guard evaluation
+                    // Push the value onto stack FIRST
                     self.emit_op(OpCode::GetLocal, span);
                     self.emit_u16(value_slot as u16, span);
-                    // Store in a temp slot
-                    let temp_slot = self.add_local_unnamed();
-                    self.emit_op(OpCode::SetLocal, span);
-                    self.emit_u16(temp_slot as u16, span);
-                    self.emit_op(OpCode::Pop, span);
+                    // NOW declare the local - the value is at the top of stack = this local's slot
+                    self.declare_local(name, span)?;
+                    self.mark_initialized();
                     
-                    // Compile guard
+                    // Compile guard (now it can reference the binding by name via GetLocal)
                     self.compile_expr(guard_expr)?;
                     Ok(Some(self.emit_jump(OpCode::JumpIfTrue, span)))
                 } else {
-                    // Unconditional match
+                    // Unconditional match - no guard, binding will be done in compile_pattern_bindings
                     Ok(None)
                 }
             }
@@ -1829,12 +1865,16 @@ impl Compiler {
                 Ok(())
             }
             
-            Pattern::Binding { name, .. } => {
-                // Bind the value to a local
-                self.declare_local(name, span)?;
-                self.emit_op(OpCode::GetLocal, span);
-                self.emit_u16(value_slot as u16, span);
-                self.mark_initialized();
+            Pattern::Binding { name, guard, .. } => {
+                // If pattern has a guard, the binding was already declared in compile_pattern_test
+                // Only declare if there was no guard
+                if guard.is_none() {
+                    self.declare_local(name, span)?;
+                    self.emit_op(OpCode::GetLocal, span);
+                    self.emit_u16(value_slot as u16, span);
+                    self.mark_initialized();
+                }
+                // If there was a guard, binding already exists and has the value
                 Ok(())
             }
             
@@ -1851,11 +1891,9 @@ impl Compiler {
                             self.emit_u16(idx_const as u16, span);
                             self.emit_op(OpCode::GetIndex, span);
                             
-                            // Store in temp and recursively bind
+                            // Value is now on top of stack - mark it as a local
                             let temp_slot = self.add_local_unnamed();
-                            self.emit_op(OpCode::SetLocal, span);
-                            self.emit_u16(temp_slot as u16, span);
-                            self.emit_op(OpCode::Pop, span);
+                            // DON'T SetLocal/Pop - value is already at correct stack position!
                             
                             self.compile_pattern_bindings(temp_slot, sub_pattern, span)?;
                             idx += 1;
@@ -1889,11 +1927,9 @@ impl Compiler {
                     self.emit_u16(key_const as u16, span);
                     self.emit_op(OpCode::GetIndex, span);
                     
-                    // Store in temp and recursively bind
+                    // Value is now on top of stack - mark it as a local
                     let temp_slot = self.add_local_unnamed();
-                    self.emit_op(OpCode::SetLocal, span);
-                    self.emit_u16(temp_slot as u16, span);
-                    self.emit_op(OpCode::Pop, span);
+                    // DON'T SetLocal/Pop - value is already at correct stack position!
                     
                     self.compile_pattern_bindings(temp_slot, sub_pattern, span)?;
                 }
