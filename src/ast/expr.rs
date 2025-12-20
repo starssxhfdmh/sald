@@ -273,6 +273,14 @@ pub enum Expr {
 
     /// Spread expression: ...array (used in function calls)
     Spread { expr: Box<Expr>, span: Span },
+
+    /// Range expression: 1..5 (inclusive) or 1..<5 (exclusive)
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        inclusive: bool,  // true for .., false for ..<
+        span: Span,
+    },
 }
 
 /// Pattern for switch expression matching
@@ -299,6 +307,14 @@ pub enum Pattern {
         entries: Vec<(String, Pattern)>,
         span: Span,
     },
+    
+    /// Range pattern: 1..10 (inclusive) or 1..<10 (exclusive)
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        inclusive: bool,
+        span: Span,
+    },
 }
 
 impl Pattern {
@@ -308,6 +324,7 @@ impl Pattern {
             Pattern::Binding { span, .. } => *span,
             Pattern::Array { span, .. } => *span,
             Pattern::Dict { span, .. } => *span,
+            Pattern::Range { span, .. } => *span,
         }
     }
 }
@@ -366,6 +383,7 @@ impl Expr {
             Expr::Break { span } => *span,
             Expr::Continue { span } => *span,
             Expr::Spread { span, .. } => *span,
+            Expr::Range { span, .. } => *span,
         }
     }
 

@@ -93,6 +93,8 @@ pub enum TokenKind {
     RightBracket, // ]
     Comma,        // ,
     Dot,          // .
+    DotDot,       // .. (range inclusive)
+    DotDotLess,   // ..< (range exclusive)
     DotDotDot,    // ... (variadic/spread)
     Semicolon,    // ;
     Colon,        // :
@@ -186,6 +188,8 @@ impl fmt::Display for TokenKind {
             TokenKind::RightBracket => write!(f, "]"),
             TokenKind::Comma => write!(f, ","),
             TokenKind::Dot => write!(f, "."),
+            TokenKind::DotDot => write!(f, ".."),
+            TokenKind::DotDotLess => write!(f, "..<"),
             TokenKind::DotDotDot => write!(f, "..."),
             TokenKind::Semicolon => write!(f, ";"),
             TokenKind::Colon => write!(f, ":"),

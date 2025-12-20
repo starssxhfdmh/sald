@@ -1153,11 +1153,85 @@ impl VM {
                     };
                     variants.insert(key_str, value);
                 }
-                // Create enum with empty name (will be set by DefineGlobal)
                 self.push(Value::Enum {
                     name: String::new(),
                     variants: Arc::new(variants),
                 })?;
+            }
+
+            OpCode::BuildRangeInclusive => {
+                // Pop end and start
+                let end = self.pop()?;
+                let start = self.pop()?;
+                
+                // Both must be numbers
+                let start_num = match &start {
+                    Value::Number(n) => *n as i64,
+                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
+                        "Range start must be a number, got {}", start.type_name()
+                    ))),
+                };
+                let end_num = match &end {
+                    Value::Number(n) => *n as i64,
+                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
+                        "Range end must be a number, got {}", end.type_name()
+                    ))),
+                };
+                
+                // Build array [start..=end]
+                let mut elements = Vec::new();
+                if start_num <= end_num {
+                    for i in start_num..=end_num {
+                        elements.push(Value::Number(i as f64));
+                    }
+                } else {
+                    // Descending range
+                    for i in (end_num..=start_num).rev() {
+                        elements.push(Value::Number(i as f64));
+                    }
+                }
+                
+                let arr = Arc::new(Mutex::new(elements));
+                self.track_array(&arr);
+                self.push(Value::Array(arr))?;
+            }
+
+            OpCode::BuildRangeExclusive => {
+                // Pop end and start
+                let end = self.pop()?;
+                let start = self.pop()?;
+                
+                // Both must be numbers
+                let start_num = match &start {
+                    Value::Number(n) => *n as i64,
+                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
+                        "Range start must be a number, got {}", start.type_name()
+                    ))),
+                };
+                let end_num = match &end {
+                    Value::Number(n) => *n as i64,
+                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
+                        "Range end must be a number, got {}", end.type_name()
+                    ))),
+                };
+                
+                // Build array [start..<end]
+                let mut elements = Vec::new();
+                if start_num < end_num {
+                    for i in start_num..end_num {
+                        elements.push(Value::Number(i as f64));
+                    }
+                } else if start_num > end_num {
+                    // Descending range (exclusive)
+                    for i in ((end_num + 1)..=start_num).rev() {
+                        elements.push(Value::Number(i as f64));
+                    }
+                }
+                // If start == end, empty array
+                
+                let arr = Arc::new(Mutex::new(elements));
+                self.track_array(&arr);
+                self.push(Value::Array(arr))?;
             }
 
             OpCode::GetIndex => {

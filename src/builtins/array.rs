@@ -4,17 +4,13 @@
 
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::caller::{CallableNativeInstanceFn, ValueCaller};
-use crate::vm::value::{Class, NativeInstanceFn, NativeStaticFn, Value};
+use crate::vm::value::{Class, NativeInstanceFn, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub fn create_array_class() -> Class {
     let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
     let mut callable_methods: HashMap<String, CallableNativeInstanceFn> = HashMap::new();
-
-    // Static methods
-    static_methods.insert("range".to_string(), array_range);
 
     // Regular instance methods (no closure calls)
     instance_methods.insert("length".to_string(), array_length);
@@ -58,56 +54,11 @@ pub fn create_array_class() -> Class {
 
     // Create class with all method types
     let mut class = Class::new_with_instance("Array", instance_methods, Some(array_constructor));
-    class.native_static_methods = static_methods;
     class.callable_native_instance_methods = callable_methods;
     class
 }
 
-/// Array.range(end) or Array.range(start, end) or Array.range(start, end, step)
-fn array_range(args: &[Value]) -> Result<Value, String> {
-    if args.is_empty() || args.len() > 3 {
-        return Err(format!("Expected 1-3 arguments but got {}", args.len()));
-    }
 
-    let (start, end, step) = match args.len() {
-        1 => {
-            let end = get_number_arg(&args[0], "end")? as i64;
-            (0, end, 1)
-        }
-        2 => {
-            let start = get_number_arg(&args[0], "start")? as i64;
-            let end = get_number_arg(&args[1], "end")? as i64;
-            (start, end, 1)
-        }
-        3 => {
-            let start = get_number_arg(&args[0], "start")? as i64;
-            let end = get_number_arg(&args[1], "end")? as i64;
-            let step = get_number_arg(&args[2], "step")? as i64;
-            if step == 0 {
-                return Err("Step cannot be zero".to_string());
-            }
-            (start, end, step)
-        }
-        _ => unreachable!(),
-    };
-
-    let mut result = Vec::new();
-    if step > 0 {
-        let mut i = start;
-        while i < end {
-            result.push(Value::Number(i as f64));
-            i += step;
-        }
-    } else {
-        let mut i = start;
-        while i > end {
-            result.push(Value::Number(i as f64));
-            i += step;
-        }
-    }
-
-    Ok(Value::Array(Arc::new(Mutex::new(result))))
-}
 
 fn array_constructor(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {

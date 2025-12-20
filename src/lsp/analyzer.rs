@@ -374,6 +374,11 @@ impl SemanticAnalyzer {
                     self.analyze_pattern(sub_pattern);
                 }
             }
+            Pattern::Range { start, end, .. } => {
+                // Analyze start and end expressions
+                self.analyze_expr(start);
+                self.analyze_expr(end);
+            }
         }
     }
 
@@ -540,6 +545,10 @@ impl SemanticAnalyzer {
             }
             Expr::Spread { expr, .. } => {
                 self.analyze_expr(expr);
+            }
+            Expr::Range { start, end, .. } => {
+                self.analyze_expr(start);
+                self.analyze_expr(end);
             }
         }
     }

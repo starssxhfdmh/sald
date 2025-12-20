@@ -985,7 +985,7 @@ impl Parser {
     }
 
     fn comparison(&mut self) -> SaldResult<Expr> {
-        let mut expr = self.shift()?;
+        let mut expr = self.range()?;
 
         loop {
             let op = if self.match_token(&TokenKind::Less) {
@@ -1000,7 +1000,7 @@ impl Parser {
                 break;
             };
 
-            let right = self.shift()?;
+            let right = self.range()?;
             let span = Span::from_positions(
                 expr.span().start.line,
                 expr.span().start.column,
@@ -1011,6 +1011,35 @@ impl Parser {
                 left: Box::new(expr),
                 op,
                 right: Box::new(right),
+                span,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    /// Parse range expressions: start..end (inclusive) or start..<end (exclusive)
+    fn range(&mut self) -> SaldResult<Expr> {
+        let mut expr = self.shift()?;
+
+        // Check for range operators
+        if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotLess) {
+            let inclusive = self.match_token(&TokenKind::DotDot);
+            if !inclusive {
+                self.advance(); // consume DotDotLess
+            }
+            
+            let end = self.shift()?;
+            let span = Span::from_positions(
+                expr.span().start.line,
+                expr.span().start.column,
+                end.span().end.line,
+                end.span().end.column,
+            );
+            expr = Expr::Range {
+                start: Box::new(expr),
+                end: Box::new(end),
+                inclusive,
                 span,
             };
         }
@@ -1879,6 +1908,42 @@ impl Parser {
             TokenKind::Number(n) => {
                 let value = *n;
                 self.advance();
+                
+                // Check for range pattern: num..num or num..<num
+                if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotLess) {
+                    let inclusive = self.match_token(&TokenKind::DotDot);
+                    if !inclusive {
+                        self.advance(); // consume DotDotLess
+                    }
+                    
+                    // Parse end value (must be a number for patterns)
+                    let end_value = if let TokenKind::Number(n) = &self.peek().kind {
+                        *n
+                    } else {
+                        return Err(self.error("Expected number after range operator in pattern"));
+                    };
+                    self.advance();
+                    
+                    let end_span = self.previous().span;
+                    return Ok(Pattern::Range {
+                        start: Box::new(Expr::Literal {
+                            value: Literal::Number(value),
+                            span: start_span,
+                        }),
+                        end: Box::new(Expr::Literal {
+                            value: Literal::Number(end_value),
+                            span: end_span,
+                        }),
+                        inclusive,
+                        span: Span::from_positions(
+                            start_span.start.line,
+                            start_span.start.column,
+                            end_span.end.line,
+                            end_span.end.column,
+                        ),
+                    });
+                }
+                
                 Ok(Pattern::Literal {
                     value: Literal::Number(value),
                     span: start_span,
@@ -1943,7 +2008,7 @@ impl Parser {
                 })
             }
             _ => {
-                Err(self.error("Expected a pattern (literal, identifier, array, or dict)"))
+                Err(self.error("Expected a pattern (literal, identifier, array, dict, or range)"))
             }
         }
     }

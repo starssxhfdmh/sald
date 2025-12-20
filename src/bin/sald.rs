@@ -1103,6 +1103,13 @@ fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald::ast::Expr) {
             build_expr_tree(tree, expr);
             tree.end_child();
         }
+        Expr::Range { start, end, inclusive, .. } => {
+            let op = if *inclusive { ".." } else { "..<" };
+            tree.begin_child(format!("Range ({})", op));
+            build_expr_tree(tree, start);
+            build_expr_tree(tree, end);
+            tree.end_child();
+        }
     }
 }
 
@@ -1151,6 +1158,13 @@ fn build_pattern_tree(tree: &mut ptree::TreeBuilder, pattern: &sald::ast::Patter
                 build_pattern_tree(tree, sub);
                 tree.end_child();
             }
+            tree.end_child();
+        }
+        Pattern::Range { start, end, inclusive, .. } => {
+            let op = if *inclusive { ".." } else { "..<" };
+            tree.begin_child(format!("RangePattern ({})", op));
+            build_expr_tree(tree, start);
+            build_expr_tree(tree, end);
             tree.end_child();
         }
     }

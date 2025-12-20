@@ -61,8 +61,14 @@ impl Scanner {
             ']' => self.add_token(TokenKind::RightBracket),
             ',' => self.add_token(TokenKind::Comma),
             '.' => {
-                if self.match_char('.') && self.match_char('.') {
-                    self.add_token(TokenKind::DotDotDot);
+                if self.match_char('.') {
+                    if self.match_char('<') {
+                        self.add_token(TokenKind::DotDotLess);  // ..<
+                    } else if self.match_char('.') {
+                        self.add_token(TokenKind::DotDotDot);   // ...
+                    } else {
+                        self.add_token(TokenKind::DotDot);      // ..
+                    }
                 } else {
                     self.add_token(TokenKind::Dot);
                 }

@@ -1633,6 +1633,22 @@ impl Compiler {
                 // Mark that this needs to be spread at runtime
                 self.emit_op(OpCode::SpreadArray, *span);
             }
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+                span,
+            } => {
+                // Compile start and end expressions
+                self.compile_expr(start)?;
+                self.compile_expr(end)?;
+                // Emit appropriate range opcode
+                if *inclusive {
+                    self.emit_op(OpCode::BuildRangeInclusive, *span);
+                } else {
+                    self.emit_op(OpCode::BuildRangeExclusive, *span);
+                }
+            }
         }
         Ok(())
     }
@@ -1849,6 +1865,48 @@ impl Compiler {
                 }
                 Ok(Some(self.emit_jump(OpCode::JumpIfTrue, span)))
             }
+            
+            Pattern::Range { start, end, inclusive, .. } => {
+                // Range pattern: check if value >= start && value <= end (or < end for exclusive)
+                // We compile: (value >= start) && (value <= end)
+                
+                // Push value
+                self.emit_op(OpCode::GetLocal, span);
+                self.emit_u16(value_slot as u16, span);
+                // Compile start
+                self.compile_expr(start)?;
+                // value >= start
+                self.emit_op(OpCode::GreaterEqual, span);
+                
+                // Now we need to check value <= end (or < end)
+                // We'll use short-circuit AND: if first test fails, jump to failure
+                let first_test_jump = self.emit_jump(OpCode::JumpIfFalse, span);
+                
+                // Pop the result of first test (true if here)
+                self.emit_op(OpCode::Pop, span);
+                
+                // Push value again
+                self.emit_op(OpCode::GetLocal, span);
+                self.emit_u16(value_slot as u16, span);
+                // Compile end
+                self.compile_expr(end)?;
+                // value <= end (inclusive) or value < end (exclusive)
+                if *inclusive {
+                    self.emit_op(OpCode::LessEqual, span);
+                } else {
+                    self.emit_op(OpCode::Less, span);
+                }
+                
+                // Jump to success if second test also passes
+                let second_test_jump = self.emit_jump(OpCode::JumpIfTrue, span);
+                
+                // Patch first test failure to here
+                self.patch_jump(first_test_jump);
+                
+                // At this point top of stack is false from first or second test
+                // Return the success jump offset
+                Ok(Some(second_test_jump))
+            }
         }
     }
 
@@ -1933,6 +1991,11 @@ impl Compiler {
                     
                     self.compile_pattern_bindings(temp_slot, sub_pattern, span)?;
                 }
+                Ok(())
+            }
+            
+            Pattern::Range { .. } => {
+                // Range patterns don't create bindings
                 Ok(())
             }
         }

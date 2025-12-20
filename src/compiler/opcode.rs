@@ -106,6 +106,10 @@ pub enum OpCode {
     BitNot,     // ~a
     LeftShift,  // a << b
     RightShift, // a >> b
+
+    // Range operations
+    BuildRangeInclusive, // start..end (inclusive)
+    BuildRangeExclusive, // start..<end (exclusive)
 }
 
 impl OpCode {
