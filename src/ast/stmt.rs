@@ -28,7 +28,24 @@ pub struct FunctionDef {
 pub struct ClassDef {
     pub name: String,
     pub superclass: Option<String>,
+    pub implements: Vec<String>,
     pub methods: Vec<FunctionDef>,
+    pub span: Span,
+}
+
+/// Method signature for interfaces (no body, just signature)
+#[derive(Debug, Clone)]
+pub struct InterfaceMethodDef {
+    pub name: String,
+    pub params: Vec<FunctionParam>,
+    pub span: Span,
+}
+
+/// Interface definition
+#[derive(Debug, Clone)]
+pub struct InterfaceDef {
+    pub name: String,
+    pub methods: Vec<InterfaceMethodDef>,
     pub span: Span,
 }
 
@@ -157,6 +174,9 @@ pub enum Stmt {
         variants: Vec<String>,
         span: Span,
     },
+
+    /// Interface declaration: interface Name { fun method(self) }
+    Interface { def: InterfaceDef },
 }
 
 impl Stmt {
@@ -181,6 +201,7 @@ impl Stmt {
             Stmt::Namespace { span, .. } => *span,
             Stmt::Const { span, .. } => *span,
             Stmt::Enum { span, .. } => *span,
+            Stmt::Interface { def } => def.span,
         }
     }
 }

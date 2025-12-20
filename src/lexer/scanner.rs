@@ -891,6 +891,8 @@ impl Scanner {
             "namespace" => TokenKind::Namespace,
             "const" => TokenKind::Const,
             "enum" => TokenKind::Enum,
+            "interface" => TokenKind::Interface,
+            "implements" => TokenKind::Implements,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "null" => TokenKind::Null,

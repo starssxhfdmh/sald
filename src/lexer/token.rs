@@ -50,6 +50,8 @@ pub enum TokenKind {
     Namespace, // namespace
     Const,     // const
     Enum,      // enum
+    Interface, // interface
+    Implements, // implements
 
     // Operators
     ThinArrow, // ->
@@ -152,6 +154,8 @@ impl fmt::Display for TokenKind {
             TokenKind::Namespace => write!(f, "namespace"),
             TokenKind::Const => write!(f, "const"),
             TokenKind::Enum => write!(f, "enum"),
+            TokenKind::Interface => write!(f, "interface"),
+            TokenKind::Implements => write!(f, "implements"),
             TokenKind::ThinArrow => write!(f, "->"),
             TokenKind::Plus => write!(f, "+"),
             TokenKind::Minus => write!(f, "-"),

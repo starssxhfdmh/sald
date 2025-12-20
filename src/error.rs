@@ -88,6 +88,7 @@ pub enum ErrorKind {
     DivisionByZero,
     ImportError,
     AccessError,
+    InterfaceError,
 }
 
 impl fmt::Display for ErrorKind {
@@ -104,6 +105,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::DivisionByZero => write!(f, "DivisionByZero"),
             ErrorKind::ImportError => write!(f, "ImportError"),
             ErrorKind::AccessError => write!(f, "AccessError"),
+            ErrorKind::InterfaceError => write!(f, "InterfaceError"),
         }
     }
 }
@@ -374,5 +376,9 @@ impl SaldError {
 
     pub fn division_by_zero(span: Span, file: impl Into<String>) -> Self {
         Self::new(ErrorKind::DivisionByZero, "Division by zero", span, file)
+    }
+
+    pub fn interface_error(message: impl Into<String>, span: Span, file: impl Into<String>) -> Self {
+        Self::new(ErrorKind::InterfaceError, message, span, file)
     }
 }

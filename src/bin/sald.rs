@@ -862,6 +862,14 @@ fn build_stmt_tree(tree: &mut ptree::TreeBuilder, stmt: &sald::ast::Stmt) {
             }
             tree.end_child();
         }
+        Stmt::Interface { def } => {
+            tree.begin_child(format!("Interface '{}'", def.name));
+            for method in &def.methods {
+                let params: Vec<_> = method.params.iter().map(|p| p.name.as_str()).collect();
+                tree.add_empty_child(format!("fun {}({})", method.name, params.join(", ")));
+            }
+            tree.end_child();
+        }
     }
 }
 

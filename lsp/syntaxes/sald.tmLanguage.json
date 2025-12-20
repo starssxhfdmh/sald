@@ -29,20 +29,35 @@
 				{
 					"comment": "Interpolated triple double-quote string",
 					"name": "meta.string.interpolated.triple.sald",
-					"begin": "(\\$)(\"\"\")",
+					"begin": "\\$\"\"\"",
 					"beginCaptures": {
-						"1": { "name": "punctuation.definition.string.template.sald" },
-						"2": { "name": "punctuation.definition.string.begin.sald" }
+						"0": { "name": "string.quoted.other.sald punctuation.definition.string.begin.sald" }
 					},
-					"end": "(\"\"\")",
+					"end": "\"\"\"",
 					"endCaptures": {
-						"1": { "name": "punctuation.definition.string.end.sald" }
+						"0": { "name": "string.quoted.other.sald punctuation.definition.string.end.sald" }
 					},
+					"contentName": "string.quoted.other.sald",
 					"patterns": [
 						{ "include": "#interpolation-block" },
-						{ "include": "#string-escapes" },
-						{ "name": "string.quoted.other.sald", "match": "[^{\\\\]+" },
-						{ "name": "string.quoted.other.sald", "match": "." }
+						{ "include": "#string-escapes" }
+					]
+				},
+				{
+					"comment": "Interpolated triple single-quote string",
+					"name": "meta.string.interpolated.triple.sald",
+					"begin": "\\$'''",
+					"beginCaptures": {
+						"0": { "name": "string.quoted.other.sald punctuation.definition.string.begin.sald" }
+					},
+					"end": "'''",
+					"endCaptures": {
+						"0": { "name": "string.quoted.other.sald punctuation.definition.string.end.sald" }
+					},
+					"contentName": "string.quoted.other.sald",
+					"patterns": [
+						{ "include": "#interpolation-block" },
+						{ "include": "#string-escapes" }
 					]
 				},
 				{
@@ -121,12 +136,12 @@
 		"keywords": {
 			"patterns": [
 				{ "name": "keyword.control.sald", "match": "\\b(if|else|while|for|in|do|switch|default|return|break|continue|try|catch|throw|await|async)\\b" },
-				{ "name": "keyword.other.sald", "match": "\\b(import|as|extends|super)\\b" }
+				{ "name": "keyword.other.sald", "match": "\\b(import|as|extends|super|implements)\\b" }
 			]
 		},
 		"storage": {
 			"patterns": [
-				{ "name": "storage.type.sald", "match": "\\b(let|const|fun|class|namespace|enum)\\b" },
+				{ "name": "storage.type.sald", "match": "\\b(let|const|fun|class|namespace|enum|interface)\\b" },
 				{ "name": "variable.language.this.sald", "match": "\\b(self|super)\\b" }
 			]
 		},
@@ -161,7 +176,7 @@
 		"classes": {
 			"patterns": [
 				{
-					"match": "\\b(class|namespace|enum)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+					"match": "\\b(class|namespace|enum|interface)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
 					"captures": {
 						"1": { "name": "storage.type.class.sald" },
 						"2": { "name": "entity.name.class.sald" }

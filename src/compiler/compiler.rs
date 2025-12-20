@@ -5,6 +5,7 @@ use super::chunk::{Chunk, Constant, FunctionConstant, UpvalueInfo};
 use super::opcode::OpCode;
 use crate::ast::*;
 use crate::error::{SaldError, SaldResult, Span};
+use std::collections::HashMap;
 
 /// Result type for constant folding at compile time
 #[derive(Debug, Clone)]
@@ -84,6 +85,7 @@ pub struct Compiler {
     source: String,
     had_error: bool,
     class_depth: usize,
+    interfaces: HashMap<String, InterfaceDef>,
 }
 
 impl Compiler {
@@ -94,6 +96,7 @@ impl Compiler {
             source: source.into(),
             had_error: false,
             class_depth: 0,
+            interfaces: HashMap::new(),
         }
     }
 
@@ -271,6 +274,9 @@ impl Compiler {
             }
             Stmt::Enum { name, variants, span } => {
                 self.compile_enum(name, variants, *span)?;
+            }
+            Stmt::Interface { def } => {
+                self.compile_interface(def)?;
             }
         }
         Ok(())
@@ -795,6 +801,19 @@ impl Compiler {
         let class_span = def.span;
         self.class_depth += 1;
 
+        // Validate interface implementations BEFORE compiling
+        for interface_name in &def.implements {
+            if let Some(interface_def) = self.interfaces.get(interface_name).cloned() {
+                self.validate_interface_implementation(def, &interface_def)?;
+            } else {
+                return Err(SaldError::interface_error(
+                    format!("Interface '{}' is not defined", interface_name),
+                    def.span,
+                    &self.file,
+                ).with_source(&self.source));
+            }
+        }
+
         // Emit class instruction
         let name_const = self
             .current_chunk()
@@ -832,6 +851,75 @@ impl Compiler {
 
         self.class_depth -= 1;
 
+        Ok(())
+    }
+
+    /// Compile interface declaration - stores interface definition for validation
+    fn compile_interface(&mut self, def: &InterfaceDef) -> SaldResult<()> {
+        // Store interface definition for later validation when classes implement it
+        self.interfaces.insert(def.name.clone(), def.clone());
+        
+        // Interfaces don't generate bytecode, they're purely compile-time constructs
+        Ok(())
+    }
+
+    /// Validate that a class implements all methods required by an interface
+    fn validate_interface_implementation(
+        &self,
+        class_def: &ClassDef,
+        interface_def: &InterfaceDef,
+    ) -> SaldResult<()> {
+        for interface_method in &interface_def.methods {
+            // Find matching method in class
+            let class_method = class_def.methods.iter().find(|m| m.name == interface_method.name);
+            
+            match class_method {
+                None => {
+                    // Build expected signature for help message
+                    let param_list: Vec<&str> = interface_method.params.iter()
+                        .map(|p| p.name.as_str())
+                        .collect();
+                    
+                    return Err(SaldError::interface_error(
+                        format!(
+                            "Class '{}' does not implement method '{}' required by interface '{}'",
+                            class_def.name, interface_method.name, interface_def.name
+                        ),
+                        class_def.span,
+                        &self.file,
+                    ).with_source(&self.source).with_help(format!(
+                        "Add method: fun {}({})",
+                        interface_method.name,
+                        param_list.join(", ")
+                    )));
+                }
+                Some(method) => {
+                    // Validate parameter count (excluding 'self' for both)
+                    let interface_param_count = interface_method.params.iter()
+                        .filter(|p| p.name != "self")
+                        .count();
+                    let class_param_count = method.params.iter()
+                        .filter(|p| p.name != "self")
+                        .count();
+                        
+                    if interface_param_count != class_param_count {
+                        return Err(SaldError::interface_error(
+                            format!(
+                                "Method '{}' in class '{}' has {} parameter(s), but interface '{}' requires {}",
+                                interface_method.name,
+                                class_def.name,
+                                class_param_count,
+                                interface_def.name,
+                                interface_param_count
+                            ),
+                            method.span,
+                            &self.file,
+                        ).with_source(&self.source));
+                    }
+                }
+            }
+        }
+        
         Ok(())
     }
 

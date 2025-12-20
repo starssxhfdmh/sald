@@ -64,6 +64,8 @@ impl Parser {
             self.namespace_declaration()
         } else if self.check(&TokenKind::Enum) {
             self.enum_declaration()
+        } else if self.check(&TokenKind::Interface) {
+            self.interface_declaration()
         } else if self.check(&TokenKind::Import) {
             self.import_statement()
         } else {
@@ -302,6 +304,21 @@ impl Parser {
             None
         };
 
+        // Check for implements
+        let implements = if self.match_token(&TokenKind::Implements) {
+            let mut interfaces = Vec::new();
+            loop {
+                let interface_token = self.consume_identifier("Expected interface name")?;
+                interfaces.push(interface_token.lexeme.clone());
+                if !self.match_token(&TokenKind::Comma) {
+                    break;
+                }
+            }
+            interfaces
+        } else {
+            Vec::new()
+        };
+
         self.consume(&TokenKind::LeftBrace, "Expected '{' before class body")?;
 
         let mut methods = Vec::new();
@@ -330,6 +347,7 @@ impl Parser {
             def: ClassDef {
                 name,
                 superclass,
+                implements,
                 methods,
                 span: Span::from_positions(
                     start_span.start.line,
@@ -459,6 +477,64 @@ impl Parser {
                 end_span.end.line,
                 end_span.end.column,
             ),
+        })
+    }
+
+    /// Parse interface declaration: interface Name { fun method(self, ...) }
+    fn interface_declaration(&mut self) -> SaldResult<Stmt> {
+        let start_span = self.advance().span; // consume 'interface'
+
+        let name_token = self.consume_identifier("Expected interface name")?;
+        let name = name_token.lexeme.clone();
+
+        self.consume(&TokenKind::LeftBrace, "Expected '{' after interface name")?;
+
+        let mut methods = Vec::new();
+
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            // Parse method signature: fun name(params)
+            if !self.check(&TokenKind::Fun) {
+                return Err(self
+                    .error("Expected 'fun' for method signature in interface")
+                    .with_help("Interface can only contain method signatures"));
+            }
+
+            let method_start = self.advance().span; // consume 'fun'
+            let method_name_token = self.consume_identifier("Expected method name")?;
+            let method_name = method_name_token.lexeme.clone();
+
+            self.consume(&TokenKind::LeftParen, "Expected '(' after method name")?;
+            let params = self.parse_parameters()?;
+            self.consume(&TokenKind::RightParen, "Expected ')' after parameters")?;
+
+            let method_end = self.previous().span;
+
+            methods.push(InterfaceMethodDef {
+                name: method_name,
+                params,
+                span: Span::from_positions(
+                    method_start.start.line,
+                    method_start.start.column,
+                    method_end.end.line,
+                    method_end.end.column,
+                ),
+            });
+        }
+
+        self.consume(&TokenKind::RightBrace, "Expected '}' after interface body")?;
+        let end_span = self.previous().span;
+
+        Ok(Stmt::Interface {
+            def: InterfaceDef {
+                name,
+                methods,
+                span: Span::from_positions(
+                    start_span.start.line,
+                    start_span.start.column,
+                    end_span.end.line,
+                    end_span.end.column,
+                ),
+            },
         })
     }
 

@@ -331,7 +331,7 @@ impl SemanticAnalyzer {
                 // Import statements introduce globals from external files
                 // We can't fully analyze without loading them
             }
-            Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Enum { .. } => {}
+            Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Enum { .. } | Stmt::Interface { .. } => {}
         }
     }
 

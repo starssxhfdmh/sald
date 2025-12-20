@@ -469,6 +469,57 @@ enum Status {
 let s = Status.Active
 ```
 
+### Interface
+
+Interfaces define contracts that classes must implement:
+
+```javascript
+// Define an interface
+interface Printable {
+    fun print(self)
+}
+
+interface Comparable {
+    fun compare(self, other)
+    fun equals(self, other)
+}
+
+// Implement interfaces
+class Document implements Printable {
+    fun init(self, content) {
+        self.content = content
+    }
+    
+    fun print(self) {
+        Console.println(self.content)
+    }
+}
+
+// Multiple interfaces + inheritance
+class Article extends Document implements Printable, Comparable {
+    fun compare(self, other) {
+        return self.content.length() - other.content.length()
+    }
+    
+    fun equals(self, other) {
+        return self.content == other.content
+    }
+}
+```
+
+Interface validation happens at **compile time** - if a class doesn't implement all required methods, compilation fails:
+
+```javascript
+interface Drawable {
+    fun draw(self, x, y)
+}
+
+class Circle implements Drawable {
+    // Error: Class 'Circle' does not implement method 'draw' 
+    //        required by interface 'Drawable'
+}
+```
+
 ---
 
 ## Standard Library
