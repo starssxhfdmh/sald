@@ -3,6 +3,8 @@
 .gitignore
 src/**
 **/*.ts
+!out/extension.js
 node_modules/**
 *.vsix
 tsconfig.json
+package-lock.json
