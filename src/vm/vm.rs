@@ -1,5 +1,5 @@
-// Sald Virtual Machine
-// Stack-based VM for executing bytecode
+// Sald Virtual Machine - Threaded Code Implementation
+// Stack-based VM with dispatch table for fast execution
 // Uses Arc/Mutex for thread-safe async support
 // Implements suspend/resume for true non-blocking async
 
@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::builtins;
 use crate::compiler::chunk::{Chunk, Constant};
 use crate::compiler::Compiler;
-use crate::compiler::OpCode;
 use crate::error::{ErrorKind, SaldError, SaldResult, Span, StackFrame};
 use crate::lexer::Scanner;
 use crate::parser::Parser;
@@ -23,15 +22,10 @@ const FRAMES_MAX: usize = 4096;
 
 /// Result of VM execution - supports suspend/resume for async
 pub enum ExecutionResult {
-    /// VM completed execution with a value
     Completed(Value),
-    
-    /// VM suspended on await - needs to resume after future resolves
     Suspended {
         receiver: oneshot::Receiver<Result<Value, String>>,
     },
-    
-    /// VM encountered an unhandled error
     Error(SaldError),
 }
 
@@ -41,27 +35,16 @@ struct CallFrame {
     function: Arc<Function>,
     ip: usize,
     slots_start: usize,
-    /// For init methods, stores the instance to return
     init_instance: Option<Value>,
 }
 
 impl CallFrame {
     fn new(function: Arc<Function>, slots_start: usize) -> Self {
-        Self {
-            function,
-            ip: 0,
-            slots_start,
-            init_instance: None,
-        }
+        Self { function, ip: 0, slots_start, init_instance: None }
     }
 
     fn new_init(function: Arc<Function>, slots_start: usize, instance: Value) -> Self {
-        Self {
-            function,
-            ip: 0,
-            slots_start,
-            init_instance: Some(instance),
-        }
+        Self { function, ip: 0, slots_start, init_instance: Some(instance) }
     }
 
     #[inline(always)]
@@ -84,105 +67,928 @@ impl CallFrame {
     }
 }
 
-/// Exception handler for try-catch
 #[derive(Clone)]
 struct ExceptionHandler {
-    /// Frame index when handler was pushed
     frame_index: usize,
-    /// Stack size when handler was pushed
     stack_size: usize,
-    /// IP to jump to for catch block
     catch_ip: usize,
 }
 
-/// The Sald Virtual Machine
-/// Uses suspend/resume model for true non-blocking async
+/// The Sald Virtual Machine with Threaded Code Dispatch
 pub struct VM {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
-    /// Shared globals using Arc<RwLock> for thread-safe access across VMs
     globals: Arc<RwLock<HashMap<String, Value>>>,
     file: String,
     source: String,
-    /// Stack of exception handlers (for try-catch)
     exception_handlers: Vec<ExceptionHandler>,
-    /// Open upvalues (pointing to stack slots)
     open_upvalues: Vec<Arc<Mutex<UpvalueObj>>>,
-    /// Garbage collector heap for cycle detection
     gc: GcHeap,
-    /// Instruction counter for periodic GC checks
     gc_counter: usize,
-    /// Whether to print GC statistics when collection runs
     gc_stats_enabled: bool,
-    /// Pending module workspace to push during import (set by resolve_module_import)
     pending_module_workspace: Option<std::path::PathBuf>,
-    /// Command-line arguments passed to the script
     args: Vec<String>,
 }
 
-// Implement ValueCaller trait to allow native functions to call closures
-impl ValueCaller for VM {
-    fn call(&mut self, callee: &Value, args: Vec<Value>) -> Result<Value, String> {
-        // Save current frame count to know when the call returns
-        let frame_count_before = self.frames.len();
+// ==================== Dispatch Table ====================
 
-        // Push callee onto stack
-        self.push(callee.clone()).map_err(|e| e.message)?;
+/// Control flow result from opcode handlers
+enum ControlFlow {
+    Continue,
+    Return(Value),
+    Suspend(oneshot::Receiver<Result<Value, String>>),
+    Error(SaldError),
+}
 
-        // Push all arguments
-        for arg in args.iter() {
-            self.push(arg.clone()).map_err(|e| e.message)?;
+/// Opcode handler function type
+type OpHandler = fn(&mut VM) -> ControlFlow;
+
+/// Static dispatch table - indexed by opcode byte
+static DISPATCH: [OpHandler; 48] = [
+    op_constant,      // 0
+    op_pop,           // 1
+    op_dup,           // 2
+    op_dup_two,       // 3
+    op_swap,          // 4
+    op_null,          // 5
+    op_true,          // 6
+    op_false,         // 7
+    op_define_global, // 8
+    op_get_global,    // 9
+    op_set_global,    // 10
+    op_get_local,     // 11
+    op_set_local,     // 12
+    op_add,           // 13
+    op_sub,           // 14
+    op_mul,           // 15
+    op_div,           // 16
+    op_mod,           // 17
+    op_negate,        // 18
+    op_equal,         // 19
+    op_not_equal,     // 20
+    op_less,          // 21
+    op_less_equal,    // 22
+    op_greater,       // 23
+    op_greater_equal, // 24
+    op_not,           // 25
+    op_jump,          // 26
+    op_jump_if_false, // 27
+    op_jump_if_true,  // 28
+    op_jump_if_not_null, // 29
+    op_loop,          // 30
+    op_call,          // 31
+    op_return,        // 32
+    op_closure,       // 33
+    op_class,         // 34
+    op_method,        // 35
+    op_static_method, // 36
+    op_get_property,  // 37
+    op_set_property,  // 38
+    op_get_self,      // 39
+    op_invoke,        // 40
+    op_build_array,   // 41
+    op_get_index,     // 42
+    op_set_index,     // 43
+    op_build_dict,    // 44
+    op_build_namespace, // 45
+    op_build_enum,    // 46
+    op_inherit,       // 47
+];
+
+// Extended dispatch for opcodes 48+
+static DISPATCH_EXT: [OpHandler; 16] = [
+    op_get_super,     // 48
+    op_import,        // 49
+    op_import_as,     // 50
+    op_get_upvalue,   // 51
+    op_set_upvalue,   // 52
+    op_close_upvalue, // 53
+    op_try_start,     // 54
+    op_try_end,       // 55
+    op_throw,         // 56
+    op_await,         // 57
+    op_spread_array,  // 58
+    op_bit_and,       // 59
+    op_bit_or,        // 60
+    op_bit_xor,       // 61
+    op_bit_not,       // 62
+    op_left_shift,    // 63
+];
+
+// More extended dispatch
+static DISPATCH_EXT2: [OpHandler; 4] = [
+    op_right_shift,   // 64
+    op_build_range_inclusive, // 65
+    op_build_range_exclusive, // 66
+    op_nop,           // 67 (padding)
+];
+
+// ==================== Opcode Handlers ====================
+
+#[inline(always)]
+fn op_constant(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    let constant = vm.read_constant(idx);
+    if vm.push_fast(constant).is_err() {
+        return ControlFlow::Error(vm.create_error(ErrorKind::RuntimeError, "Stack overflow"));
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_pop(vm: &mut VM) -> ControlFlow {
+    vm.stack.pop();
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_dup(vm: &mut VM) -> ControlFlow {
+    if let Some(v) = vm.stack.last().cloned() {
+        vm.stack.push(v);
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_dup_two(vm: &mut VM) -> ControlFlow {
+    let len = vm.stack.len();
+    if len >= 2 {
+        let b = vm.stack[len - 1].clone();
+        let a = vm.stack[len - 2].clone();
+        vm.stack.push(a);
+        vm.stack.push(b);
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_swap(vm: &mut VM) -> ControlFlow {
+    let len = vm.stack.len();
+    if len >= 2 {
+        vm.stack.swap(len - 1, len - 2);
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_null(vm: &mut VM) -> ControlFlow {
+    vm.stack.push(Value::Null);
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_true(vm: &mut VM) -> ControlFlow {
+    vm.stack.push(Value::Boolean(true));
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_false(vm: &mut VM) -> ControlFlow {
+    vm.stack.push(Value::Boolean(false));
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_define_global(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => {
+            if let Some(value) = vm.stack.pop() {
+                vm.globals.write().unwrap().insert(name, value);
+            }
+            ControlFlow::Continue
         }
+        Err(e) => ControlFlow::Error(e),
+    }
+}
 
-        // Call the value (this sets up a new call frame)
-        self.call_value(args.len()).map_err(|e| e.message)?;
+#[inline(always)]
+fn op_get_global(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => {
+            let value = vm.globals.read().unwrap().get(&name).cloned();
+            match value {
+                Some(v) => {
+                    vm.stack.push(v);
+                    ControlFlow::Continue
+                }
+                None => ControlFlow::Error(vm.create_error(
+                    ErrorKind::NameError,
+                    &format!("Undefined variable '{}'", name),
+                )),
+            }
+        }
+        Err(e) => ControlFlow::Error(e),
+    }
+}
 
-        // Execute until the call returns (frame count goes back to before)
-        // NOTE: This is synchronous - if the callee uses await, we'll get Suspended
-        // which we handle by running a mini event loop here
-        loop {
-            // Check if we've returned from the call
-            if self.frames.len() == frame_count_before {
-                // The result should be on top of the stack
-                if let Some(result) = self.stack.pop() {
-                    return Ok(result);
+#[inline(always)]
+fn op_set_global(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => {
+            if !vm.globals.read().unwrap().contains_key(&name) {
+                return ControlFlow::Error(vm.create_error(
+                    ErrorKind::NameError,
+                    &format!("Undefined variable '{}'", name),
+                ));
+            }
+            if let Some(value) = vm.stack.last().cloned() {
+                vm.globals.write().unwrap().insert(name, value);
+            }
+            ControlFlow::Continue
+        }
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+#[inline(always)]
+fn op_get_local(vm: &mut VM) -> ControlFlow {
+    let slot = vm.read_u16() as usize;
+    let slots_start = vm.current_frame().slots_start;
+    let value = vm.stack[slots_start + slot].clone();
+    vm.stack.push(value);
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_set_local(vm: &mut VM) -> ControlFlow {
+    let slot = vm.read_u16() as usize;
+    let slots_start = vm.current_frame().slots_start;
+    if let Some(value) = vm.stack.last().cloned() {
+        vm.stack[slots_start + slot] = value;
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_add(vm: &mut VM) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    let result = match (&a, &b) {
+        (Value::Number(a), Value::Number(b)) => Value::Number(a + b),
+        (Value::String(a), Value::String(b)) => Value::String(Arc::new(format!("{}{}", a, b))),
+        (Value::String(a), b) => Value::String(Arc::new(format!("{}{}", a, b))),
+        (a, Value::String(b)) => Value::String(Arc::new(format!("{}{}", a, b))),
+        _ => {
+            return ControlFlow::Error(vm.create_error(
+                ErrorKind::TypeError,
+                &format!("Cannot add '{}' and '{}'", a.type_name(), b.type_name()),
+            ));
+        }
+    };
+    vm.stack.push(result);
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_sub(vm: &mut VM) -> ControlFlow {
+    binary_num_op(vm, |a, b| a - b)
+}
+
+#[inline(always)]
+fn op_mul(vm: &mut VM) -> ControlFlow {
+    binary_num_op(vm, |a, b| a * b)
+}
+
+#[inline(always)]
+fn op_div(vm: &mut VM) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    match (&a, &b) {
+        (Value::Number(a), Value::Number(b)) => {
+            if *b == 0.0 {
+                return ControlFlow::Error(vm.create_error(ErrorKind::DivisionByZero, "Division by zero"));
+            }
+            vm.stack.push(Value::Number(a / b));
+            ControlFlow::Continue
+        }
+        _ => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot divide '{}' by '{}'", a.type_name(), b.type_name()),
+        )),
+    }
+}
+
+#[inline(always)]
+fn op_mod(vm: &mut VM) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    match (&a, &b) {
+        (Value::Number(a), Value::Number(b)) => {
+            if *b == 0.0 {
+                return ControlFlow::Error(vm.create_error(ErrorKind::DivisionByZero, "Modulo by zero"));
+            }
+            vm.stack.push(Value::Number(a % b));
+            ControlFlow::Continue
+        }
+        _ => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot modulo '{}' by '{}'", a.type_name(), b.type_name()),
+        )),
+    }
+}
+
+#[inline(always)]
+fn op_negate(vm: &mut VM) -> ControlFlow {
+    match vm.stack.pop() {
+        Some(Value::Number(n)) => {
+            vm.stack.push(Value::Number(-n));
+            ControlFlow::Continue
+        }
+        Some(v) => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot negate '{}'", v.type_name()),
+        )),
+        None => ControlFlow::Continue,
+    }
+}
+
+#[inline(always)]
+fn op_equal(vm: &mut VM) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    vm.stack.push(Value::Boolean(a == b));
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_not_equal(vm: &mut VM) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    vm.stack.push(Value::Boolean(a != b));
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_less(vm: &mut VM) -> ControlFlow {
+    comparison_op(vm, |a, b| a < b)
+}
+
+#[inline(always)]
+fn op_less_equal(vm: &mut VM) -> ControlFlow {
+    comparison_op(vm, |a, b| a <= b)
+}
+
+#[inline(always)]
+fn op_greater(vm: &mut VM) -> ControlFlow {
+    comparison_op(vm, |a, b| a > b)
+}
+
+#[inline(always)]
+fn op_greater_equal(vm: &mut VM) -> ControlFlow {
+    comparison_op(vm, |a, b| a >= b)
+}
+
+#[inline(always)]
+fn op_not(vm: &mut VM) -> ControlFlow {
+    if let Some(v) = vm.stack.pop() {
+        vm.stack.push(Value::Boolean(!v.is_truthy()));
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_jump(vm: &mut VM) -> ControlFlow {
+    let offset = vm.read_u16() as usize;
+    vm.current_frame_mut().ip += offset;
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_jump_if_false(vm: &mut VM) -> ControlFlow {
+    let offset = vm.read_u16() as usize;
+    if let Some(v) = vm.stack.last() {
+        if !v.is_truthy() {
+            vm.current_frame_mut().ip += offset;
+        }
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_jump_if_true(vm: &mut VM) -> ControlFlow {
+    let offset = vm.read_u16() as usize;
+    if let Some(v) = vm.stack.last() {
+        if v.is_truthy() {
+            vm.current_frame_mut().ip += offset;
+        }
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_jump_if_not_null(vm: &mut VM) -> ControlFlow {
+    let offset = vm.read_u16() as usize;
+    if let Some(v) = vm.stack.last() {
+        if !v.is_null() {
+            vm.current_frame_mut().ip += offset;
+        }
+    }
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_loop(vm: &mut VM) -> ControlFlow {
+    let offset = vm.read_u16() as usize;
+    vm.current_frame_mut().ip -= offset;
+    ControlFlow::Continue
+}
+
+#[inline(always)]
+fn op_call(vm: &mut VM) -> ControlFlow {
+    let arg_count = vm.read_u16() as usize;
+    match vm.expand_spread_args(arg_count) {
+        Ok(actual_count) => match vm.call_value(actual_count) {
+            Ok(()) => ControlFlow::Continue,
+            Err(e) => ControlFlow::Error(e),
+        },
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+#[inline(always)]
+fn op_return(vm: &mut VM) -> ControlFlow {
+    let result = vm.stack.pop().unwrap_or(Value::Null);
+    let returning_frame_index = vm.frames.len() - 1;
+    let frame = vm.frames.pop().unwrap();
+
+    if !frame.function.file.is_empty() {
+        crate::pop_script_dir();
+    }
+
+    while let Some(handler) = vm.exception_handlers.last() {
+        if handler.frame_index >= returning_frame_index {
+            vm.exception_handlers.pop();
+        } else {
+            break;
+        }
+    }
+
+    vm.close_upvalues(frame.slots_start);
+
+    if vm.frames.is_empty() {
+        vm.stack.truncate(frame.slots_start);
+        vm.stack.push(result.clone());
+        return ControlFlow::Return(result);
+    }
+
+    vm.stack.truncate(frame.slots_start);
+
+    if let Some(instance) = frame.init_instance {
+        vm.stack.push(instance);
+    } else {
+        vm.stack.push(result);
+    }
+    ControlFlow::Continue
+}
+
+fn op_closure(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    let constant = vm.current_frame().function.chunk.constants[idx].clone();
+    if let Constant::Function(ref func_const) = constant {
+        let mut function = Function::from_constant(func_const);
+        for upvalue_info in &func_const.upvalues {
+            let upvalue = if upvalue_info.is_local {
+                let slots_start = vm.current_frame().slots_start;
+                let location = slots_start + upvalue_info.index as usize;
+                vm.capture_upvalue(location)
+            } else {
+                vm.current_frame().function.upvalues[upvalue_info.index as usize].clone()
+            };
+            function.upvalues.push(upvalue);
+        }
+        vm.stack.push(Value::Function(Arc::new(function)));
+    }
+    ControlFlow::Continue
+}
+
+fn op_class(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => {
+            vm.stack.push(Value::Class(Arc::new(Class::new(&name))));
+            ControlFlow::Continue
+        }
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_method(vm: &mut VM) -> ControlFlow {
+    op_method_impl(vm, false)
+}
+
+fn op_static_method(vm: &mut VM) -> ControlFlow {
+    op_method_impl(vm, true)
+}
+
+fn op_method_impl(vm: &mut VM, is_static: bool) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    let constant = vm.current_frame().function.chunk.constants[idx].clone();
+    if let Constant::Function(ref func_const) = constant {
+        let function = Arc::new(Function::from_constant(func_const));
+        if let Some(Value::Class(class)) = vm.stack.last().cloned() {
+            let class_mut = Arc::as_ptr(&class) as *mut Class;
+            unsafe {
+                if is_static {
+                    (*class_mut).user_static_methods.insert(func_const.name.clone(), Value::Function(function));
                 } else {
-                    return Ok(Value::Null);
+                    (*class_mut).methods.insert(func_const.name.clone(), Value::Function(function));
                 }
             }
+        }
+    }
+    ControlFlow::Continue
+}
 
-            // Execute one instruction
-            match self.execute_one_suspendable() {
-                Ok(None) => continue,
-                Ok(Some(ExecutionResult::Completed(v))) => {
-                    // Unexpected completion - return the value
-                    return Ok(v);
-                }
-                Ok(Some(ExecutionResult::Suspended { receiver })) => {
-                    // Handler uses await - we need to handle this properly in async context
-                    // Use tokio::task::block_in_place to safely block within Tokio runtime
-                    // This moves the blocking work to a separate thread, preventing deadlocks
+fn op_get_property(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => match vm.handle_get_property(&name) {
+            Ok(()) => ControlFlow::Continue,
+            Err(e) => ControlFlow::Error(e),
+        },
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_set_property(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => match vm.handle_set_property(&name) {
+            Ok(()) => ControlFlow::Continue,
+            Err(e) => ControlFlow::Error(e),
+        },
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_get_self(vm: &mut VM) -> ControlFlow {
+    let slots_start = vm.current_frame().slots_start;
+    let value = vm.stack[slots_start].clone();
+    vm.stack.push(value);
+    ControlFlow::Continue
+}
+
+fn op_invoke(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    let arg_count = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => match vm.invoke(&name, arg_count) {
+            Ok(()) => ControlFlow::Continue,
+            Err(e) => ControlFlow::Error(e),
+        },
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_build_array(vm: &mut VM) -> ControlFlow {
+    let count = vm.read_u16() as usize;
+    let mut elements = Vec::with_capacity(count);
+    for _ in 0..count {
+        elements.push(vm.stack.pop().unwrap_or(Value::Null));
+    }
+    elements.reverse();
+    let arr = Arc::new(Mutex::new(elements));
+    vm.track_array(&arr);
+    vm.stack.push(Value::Array(arr));
+    ControlFlow::Continue
+}
+
+fn op_get_index(vm: &mut VM) -> ControlFlow {
+    match vm.handle_get_index() {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_set_index(vm: &mut VM) -> ControlFlow {
+    match vm.handle_set_index() {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_build_dict(vm: &mut VM) -> ControlFlow {
+    match vm.handle_build_dict() {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_build_namespace(vm: &mut VM) -> ControlFlow {
+    match vm.handle_build_namespace() {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_build_enum(vm: &mut VM) -> ControlFlow {
+    match vm.handle_build_enum() {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_inherit(vm: &mut VM) -> ControlFlow {
+    let _ = vm.read_u16();
+    match vm.handle_inherit() {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_get_super(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(name) => match vm.handle_get_super(&name) {
+            Ok(()) => ControlFlow::Continue,
+            Err(e) => ControlFlow::Error(e),
+        },
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_import(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    match vm.read_string_constant(idx) {
+        Ok(path) => match vm.handle_import(&path) {
+            Ok(()) => ControlFlow::Continue,
+            Err(e) => ControlFlow::Error(e),
+        },
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_import_as(vm: &mut VM) -> ControlFlow {
+    let path_idx = vm.read_u16() as usize;
+    let alias_idx = vm.read_u16() as usize;
+    match (vm.read_string_constant(path_idx), vm.read_string_constant(alias_idx)) {
+        (Ok(path), Ok(alias)) => match vm.handle_import_as(&path, &alias) {
+            Ok(()) => ControlFlow::Continue,
+            Err(e) => ControlFlow::Error(e),
+        },
+        (Err(e), _) | (_, Err(e)) => ControlFlow::Error(e),
+    }
+}
+
+fn op_get_upvalue(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    let upvalue = vm.current_frame().function.upvalues[idx].clone();
+    let upvalue_ref = upvalue.lock().unwrap();
+    let value = if let Some(ref closed) = upvalue_ref.closed {
+        (**closed).clone()
+    } else {
+        vm.stack[upvalue_ref.location].clone()
+    };
+    drop(upvalue_ref);
+    vm.stack.push(value);
+    ControlFlow::Continue
+}
+
+fn op_set_upvalue(vm: &mut VM) -> ControlFlow {
+    let idx = vm.read_u16() as usize;
+    let value = vm.stack.last().cloned().unwrap_or(Value::Null);
+    let upvalue = vm.current_frame().function.upvalues[idx].clone();
+    let mut upvalue_ref = upvalue.lock().unwrap();
+    if upvalue_ref.closed.is_some() {
+        upvalue_ref.closed = Some(Box::new(value));
+    } else {
+        let location = upvalue_ref.location;
+        drop(upvalue_ref);
+        vm.stack[location] = value;
+    }
+    ControlFlow::Continue
+}
+
+fn op_close_upvalue(vm: &mut VM) -> ControlFlow {
+    let stack_top = vm.stack.len() - 1;
+    vm.close_upvalues(stack_top);
+    vm.stack.pop();
+    ControlFlow::Continue
+}
+
+fn op_try_start(vm: &mut VM) -> ControlFlow {
+    let catch_offset = vm.read_u16() as usize;
+    let catch_ip = vm.current_frame().ip + catch_offset;
+    vm.exception_handlers.push(ExceptionHandler {
+        frame_index: vm.frames.len() - 1,
+        stack_size: vm.stack.len(),
+        catch_ip,
+    });
+    ControlFlow::Continue
+}
+
+fn op_try_end(vm: &mut VM) -> ControlFlow {
+    vm.exception_handlers.pop();
+    ControlFlow::Continue
+}
+
+fn op_throw(vm: &mut VM) -> ControlFlow {
+    let exception_value = vm.stack.pop().unwrap_or(Value::Null);
+    if let Some(handler) = vm.exception_handlers.pop() {
+        while vm.frames.len() > handler.frame_index + 1 {
+            vm.frames.pop();
+        }
+        while vm.stack.len() > handler.stack_size {
+            vm.stack.pop();
+        }
+        vm.stack.push(exception_value);
+        vm.current_frame_mut().ip = handler.catch_ip;
+        ControlFlow::Continue
+    } else {
+        let msg = match &exception_value {
+            Value::String(s) => s.to_string(),
+            other => format!("{}", other),
+        };
+        ControlFlow::Error(vm.create_error(ErrorKind::RuntimeError, &format!("Uncaught exception: {}", msg)))
+    }
+}
+
+fn op_await(vm: &mut VM) -> ControlFlow {
+    let value = vm.stack.pop().unwrap_or(Value::Null);
+    match value {
+        Value::Future(future_arc) => {
+            let mut guard = future_arc.lock().unwrap();
+            if let Some(future) = guard.take() {
+                drop(guard);
+                return ControlFlow::Suspend(future.receiver);
+            } else {
+                return ControlFlow::Error(vm.create_error(ErrorKind::RuntimeError, "Future has already been consumed"));
+            }
+        }
+        other => {
+            vm.stack.push(other);
+            ControlFlow::Continue
+        }
+    }
+}
+
+fn op_spread_array(vm: &mut VM) -> ControlFlow {
+    if let Some(value) = vm.stack.pop() {
+        vm.stack.push(Value::SpreadMarker(Box::new(value)));
+    }
+    ControlFlow::Continue
+}
+
+fn op_bit_and(vm: &mut VM) -> ControlFlow {
+    bitwise_op(vm, |a, b| a & b)
+}
+
+fn op_bit_or(vm: &mut VM) -> ControlFlow {
+    bitwise_op(vm, |a, b| a | b)
+}
+
+fn op_bit_xor(vm: &mut VM) -> ControlFlow {
+    bitwise_op(vm, |a, b| a ^ b)
+}
+
+fn op_bit_not(vm: &mut VM) -> ControlFlow {
+    match vm.stack.pop() {
+        Some(Value::Number(n)) => {
+            vm.stack.push(Value::Number((!(n as i64)) as f64));
+            ControlFlow::Continue
+        }
+        Some(v) => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot perform bitwise NOT on '{}'", v.type_name()),
+        )),
+        None => ControlFlow::Continue,
+    }
+}
+
+fn op_left_shift(vm: &mut VM) -> ControlFlow {
+    shift_op(vm, |a, b| a << b)
+}
+
+fn op_right_shift(vm: &mut VM) -> ControlFlow {
+    shift_op(vm, |a, b| a >> b)
+}
+
+fn op_build_range_inclusive(vm: &mut VM) -> ControlFlow {
+    match vm.handle_build_range(true) {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_build_range_exclusive(vm: &mut VM) -> ControlFlow {
+    match vm.handle_build_range(false) {
+        Ok(()) => ControlFlow::Continue,
+        Err(e) => ControlFlow::Error(e),
+    }
+}
+
+fn op_nop(_vm: &mut VM) -> ControlFlow {
+    ControlFlow::Continue
+}
+
+// ==================== Helper Functions ====================
+
+#[inline(always)]
+fn binary_num_op(vm: &mut VM, op: fn(f64, f64) -> f64) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    match (&a, &b) {
+        (Value::Number(a), Value::Number(b)) => {
+            vm.stack.push(Value::Number(op(*a, *b)));
+            ControlFlow::Continue
+        }
+        _ => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot perform operation on '{}' and '{}'", a.type_name(), b.type_name()),
+        )),
+    }
+}
+
+#[inline(always)]
+fn comparison_op(vm: &mut VM, op: fn(f64, f64) -> bool) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    match (&a, &b) {
+        (Value::Number(a), Value::Number(b)) => {
+            vm.stack.push(Value::Boolean(op(*a, *b)));
+            ControlFlow::Continue
+        }
+        (Value::String(a), Value::String(b)) => {
+            use std::cmp::Ordering;
+            let result = match a.cmp(b) {
+                Ordering::Less => op(-1.0, 0.0),
+                Ordering::Equal => op(0.0, 0.0),
+                Ordering::Greater => op(1.0, 0.0),
+            };
+            vm.stack.push(Value::Boolean(result));
+            ControlFlow::Continue
+        }
+        _ => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot compare '{}' and '{}'", a.type_name(), b.type_name()),
+        )),
+    }
+}
+
+#[inline(always)]
+fn bitwise_op(vm: &mut VM, op: fn(i64, i64) -> i64) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    match (&a, &b) {
+        (Value::Number(a), Value::Number(b)) => {
+            vm.stack.push(Value::Number(op(*a as i64, *b as i64) as f64));
+            ControlFlow::Continue
+        }
+        _ => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot perform bitwise operation on '{}' and '{}'", a.type_name(), b.type_name()),
+        )),
+    }
+}
+
+#[inline(always)]
+fn shift_op(vm: &mut VM, op: fn(i64, u32) -> i64) -> ControlFlow {
+    let b = vm.stack.pop().unwrap_or(Value::Null);
+    let a = vm.stack.pop().unwrap_or(Value::Null);
+    match (&a, &b) {
+        (Value::Number(a), Value::Number(b)) => {
+            vm.stack.push(Value::Number(op(*a as i64, *b as u32) as f64));
+            ControlFlow::Continue
+        }
+        _ => ControlFlow::Error(vm.create_error(
+            ErrorKind::TypeError,
+            &format!("Cannot perform shift on '{}' and '{}'", a.type_name(), b.type_name()),
+        )),
+    }
+}
+
+// ==================== ValueCaller Implementation ====================
+
+impl ValueCaller for VM {
+    fn call(&mut self, callee: &Value, args: Vec<Value>) -> Result<Value, String> {
+        let frame_count_before = self.frames.len();
+        self.push_fast(callee.clone()).map_err(|e| e.message)?;
+        for arg in args.iter() {
+            self.push_fast(arg.clone()).map_err(|e| e.message)?;
+        }
+        self.call_value(args.len()).map_err(|e| e.message)?;
+
+        loop {
+            if self.frames.len() == frame_count_before {
+                return Ok(self.stack.pop().unwrap_or(Value::Null));
+            }
+            match self.execute_one_threaded() {
+                ControlFlow::Continue => continue,
+                ControlFlow::Return(v) => return Ok(v),
+                ControlFlow::Suspend(receiver) => {
                     let result = tokio::task::block_in_place(|| {
                         tokio::runtime::Handle::current().block_on(receiver)
                     });
-                    
                     match result {
-                        Ok(Ok(value)) => {
-                            self.push(value).map_err(|e| e.message)?;
-                        }
-                        Ok(Err(e)) => {
-                            return Err(e);
-                        }
-                        Err(_) => {
-                            return Err("Future was cancelled".to_string());
-                        }
+                        Ok(Ok(value)) => { self.stack.push(value); }
+                        Ok(Err(e)) => return Err(e),
+                        Err(_) => return Err("Future was cancelled".to_string()),
                     }
                 }
-                Ok(Some(ExecutionResult::Error(e))) => {
-                    // Runtime error - return as string error
-                    return Err(e.message);
-                }
-                Err(e) => return Err(e.message),
+                ControlFlow::Error(e) => return Err(e.message),
             }
         }
     }
@@ -190,17 +996,17 @@ impl ValueCaller for VM {
     fn get_globals(&self) -> HashMap<String, Value> {
         self.globals.read().unwrap().clone()
     }
-    
+
     fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> {
         self.globals.clone()
     }
 }
 
+// ==================== VM Implementation ====================
+
 impl VM {
     pub fn new() -> Self {
-        // Populate globals with built-in type classes
         let globals = builtins::create_builtin_classes();
-
         Self {
             stack: Vec::with_capacity(STACK_MAX),
             frames: Vec::with_capacity(FRAMES_MAX),
@@ -217,8 +1023,6 @@ impl VM {
         }
     }
 
-    /// Create a new VM with SHARED globals (for HTTP handlers)
-    /// The Arc<RwLock<HashMap>> is shared directly, so modifications are visible to all VMs
     pub fn new_with_shared_globals(globals: Arc<RwLock<HashMap<String, Value>>>) -> Self {
         Self {
             stack: Vec::with_capacity(STACK_MAX),
@@ -236,29 +1040,13 @@ impl VM {
         }
     }
 
-    /// Set command-line arguments for the script
-    pub fn set_args(&mut self, args: Vec<String>) {
-        self.args = args;
-    }
+    pub fn set_args(&mut self, args: Vec<String>) { self.args = args; }
+    pub fn set_gc_stats_enabled(&mut self, enabled: bool) { self.gc_stats_enabled = enabled; }
+    pub fn get_globals(&self) -> HashMap<String, Value> { self.globals.read().unwrap().clone() }
+    pub fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> { self.globals.clone() }
+    pub fn gc_stats(&self) -> super::gc::GcStats { self.gc.get_stats() }
 
-    /// Enable or disable GC statistics printing
-    pub fn set_gc_stats_enabled(&mut self, enabled: bool) {
-        self.gc_stats_enabled = enabled;
-    }
-
-    /// Get a clone of the current globals (for read-only access)
-    pub fn get_globals(&self) -> HashMap<String, Value> {
-        self.globals.read().unwrap().clone()
-    }
-    
-    /// Get the shared globals Arc for passing to child VMs
-    pub fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> {
-        self.globals.clone()
-    }
-
-    /// Run garbage collection if threshold is reached
     fn maybe_collect_garbage(&mut self) {
-        // Check every 100 instructions
         self.gc_counter += 1;
         if self.gc_counter >= 100 {
             self.gc_counter = 0;
@@ -268,1314 +1056,118 @@ impl VM {
         }
     }
 
-    /// Force garbage collection
     pub fn collect_garbage(&mut self) {
-        // Gather roots from stack and globals
         let mut roots: Vec<&Value> = Vec::new();
-        
-        // Stack values are roots
-        for value in &self.stack {
-            roots.push(value);
-        }
-        
-        // Global values are roots
+        for value in &self.stack { roots.push(value); }
         let globals_guard = self.globals.read().unwrap();
-        for value in globals_guard.values() {
-            roots.push(value);
-        }
-        
-        // Closed upvalues are roots
-        for upvalue in &self.open_upvalues {
-            if let Ok(uv) = upvalue.lock() {
-                if uv.closed.is_some() {
-                    // Note: closed upvalues traced through function upvalues
-                    // during GC's mark phase
-                }
-            }
-        }
-        
+        for value in globals_guard.values() { roots.push(value); }
         self.gc.collect(roots);
-        
-        // Print GC stats if enabled
         if self.gc_stats_enabled {
             let stats = self.gc.get_stats();
-            eprintln!(
-                "[GC] collection #{}: tracked={}, cycles_broken={}, total_tracked={}",
-                stats.collections,
-                stats.tracked_count,
-                stats.cycles_broken,
-                stats.total_tracked
-            );
+            eprintln!("[GC] collection #{}: tracked={}, cycles_broken={}", stats.collections, stats.tracked_count, stats.cycles_broken);
         }
     }
 
-    /// Track a newly created array for GC
-    fn track_array(&mut self, arr: &Arc<Mutex<Vec<Value>>>) {
-        self.gc.track_array(arr);
-    }
+    fn track_array(&mut self, arr: &Arc<Mutex<Vec<Value>>>) { self.gc.track_array(arr); }
+    fn track_dict(&mut self, dict: &Arc<Mutex<HashMap<String, Value>>>) { self.gc.track_dict(dict); }
+    fn track_instance(&mut self, inst: &Arc<Mutex<Instance>>) { self.gc.track_instance(inst); }
 
-    /// Track a newly created dictionary for GC
-    fn track_dict(&mut self, dict: &Arc<Mutex<HashMap<String, Value>>>) {
-        self.gc.track_dict(dict);
-    }
-
-    /// Track a newly created instance for GC
-    fn track_instance(&mut self, inst: &Arc<Mutex<Instance>>) {
-        self.gc.track_instance(inst);
-    }
-
-    /// Get GC statistics
-    pub fn gc_stats(&self) -> super::gc::GcStats {
-        self.gc.get_stats()
-    }
-
-    /// Run bytecode chunk - async entry point with event loop
-    /// This is the main entry point that handles suspend/resume
+    /// Main entry point - async execution with event loop
     pub async fn run(&mut self, chunk: Chunk, file: &str, source: &str) -> SaldResult<Value> {
         self.file = file.to_string();
         self.source = source.to_string();
-        
-        // Push script directory for this file (will be popped when done)
         crate::push_script_dir(file);
 
         let mut main_function = Function::new("<script>", 0, chunk);
-    main_function.file = file.to_string();
-    let main_function = Arc::new(main_function);
+        main_function.file = file.to_string();
+        let main_function = Arc::new(main_function);
 
-        // Remember current stack position BEFORE pushing placeholder
-        // This is important for REPL where VM is reused and stack may have values from previous runs
         let slots_start = self.stack.len();
-        
-        // Push a placeholder for the reserved slot 0 (like how functions have
-        // their closure in slot 0). This keeps slot indices in sync.
         self.stack.push(Value::Null);
-
         self.frames.push(CallFrame::new(main_function, slots_start));
 
-        // Run the event loop - this handles all suspend/resume
         let result = self.run_event_loop().await;
-        
-        // Pop script directory when done
         crate::pop_script_dir();
-        
         result
     }
 
-    /// Run a handler function with a single argument (used by HTTP server)
-    /// Each request gets its own VM instance for true concurrent handling
-    /// script_dir should be the directory of the main script for path resolution
     pub async fn run_handler(&mut self, handler: Value, arg: Value, script_dir: Option<&str>) -> SaldResult<Value> {
         self.file = "<handler>".to_string();
         self.source = String::new();
-
-        // Push script directory for path resolution in handlers
-        // We use the main script's directory (passed from HTTP server)
         if let Some(dir) = script_dir {
-            // Create a fake file path to push as script dir
-            let fake_path = format!("{}/handler.sald", dir);
-            crate::push_script_dir(&fake_path);
+            crate::push_script_dir(&format!("{}/handler.sald", dir));
         }
-
-        // Push placeholder for slot 0
         self.stack.push(Value::Null);
-
-        // Push the handler function
         self.stack.push(handler.clone());
-        
-        // Push the argument
         self.stack.push(arg);
-
-        // Call the handler with 1 argument
         self.call_value(1)?;
-
-        // Run the event loop to execute the handler
         let result = self.run_event_loop().await;
-        
-        // Pop script directory if we pushed one
-        if script_dir.is_some() {
-            crate::pop_script_dir();
-        }
-        
+        if script_dir.is_some() { crate::pop_script_dir(); }
         result
     }
 
-    /// Event loop - handles suspend/resume for async operations
-    /// This is TRUE non-blocking async - no block_on anywhere!
     async fn run_event_loop(&mut self) -> SaldResult<Value> {
         loop {
             match self.execute_until_suspend() {
-                ExecutionResult::Completed(value) => {
-                    return Ok(value);
-                }
+                ExecutionResult::Completed(value) => return Ok(value),
                 ExecutionResult::Suspended { receiver } => {
-                    // TRUE ASYNC AWAIT - no blocking!
                     match receiver.await {
-                        Ok(Ok(value)) => {
-                            // Push the resolved value and continue execution
-                            self.push(value)?;
-                        }
-                        Ok(Err(e)) => {
-                            // Handle error through exception system
-                            self.handle_native_error(e)?;
-                        }
-                        Err(_) => {
-                            return Err(self.create_error(ErrorKind::RuntimeError, "Future was cancelled"));
-                        }
+                        Ok(Ok(value)) => { self.stack.push(value); }
+                        Ok(Err(e)) => { self.handle_native_error(e)?; }
+                        Err(_) => return Err(self.create_error(ErrorKind::RuntimeError, "Future was cancelled")),
                     }
                 }
-                ExecutionResult::Error(e) => {
-                    // Unhandled runtime error - propagate to caller
-                    return Err(e);
-                }
+                ExecutionResult::Error(e) => return Err(e),
             }
         }
     }
 
-    /// Execute bytecode until we hit await or complete
-    /// Returns ExecutionResult to indicate if we suspended or completed
+    /// Execute with threaded dispatch until suspend or complete
     fn execute_until_suspend(&mut self) -> ExecutionResult {
         loop {
             if self.frames.is_empty() {
-                // Program completed - result is on top of stack
-                return ExecutionResult::Completed(
-                    self.stack.pop().unwrap_or(Value::Null)
-                );
+                return ExecutionResult::Completed(self.stack.pop().unwrap_or(Value::Null));
             }
-
-            match self.execute_one_suspendable() {
-                Ok(None) => continue, // Keep executing
-                Ok(Some(result)) => return result, // Suspend or complete
-                Err(e) => {
-                    // Check if there's an exception handler to catch this error
+            match self.execute_one_threaded() {
+                ControlFlow::Continue => continue,
+                ControlFlow::Return(v) => return ExecutionResult::Completed(v),
+                ControlFlow::Suspend(receiver) => return ExecutionResult::Suspended { receiver },
+                ControlFlow::Error(e) => {
                     if !self.exception_handlers.is_empty() {
-                        // Route through exception handler
                         if let Err(handler_err) = self.handle_native_error(e.message.clone()) {
-                            // Handler itself failed, return error (caller will print)
                             return ExecutionResult::Error(handler_err);
                         }
-                        // Handler set up the catch block, continue execution
                         continue;
-                    } else {
-                        // No handler - return Error for programmatic handling (caller will print)
-                        return ExecutionResult::Error(e);
                     }
+                    return ExecutionResult::Error(e);
                 }
             }
         }
     }
 
-    /// Execute a single bytecode instruction
-    /// Returns Ok(None) to continue, Ok(Some(...)) to suspend/complete, Err on error
-    fn execute_one_suspendable(&mut self) -> SaldResult<Option<ExecutionResult>> {
-        if self.frames.is_empty() {
-            return Ok(Some(ExecutionResult::Completed(Value::Null)));
-        }
-
-        // Periodic GC check
+    /// Core threaded dispatch - single instruction execution
+    #[inline(always)]
+    fn execute_one_threaded(&mut self) -> ControlFlow {
         self.maybe_collect_garbage();
 
         let op = self.read_byte();
-        let opcode = OpCode::from(op);
 
-        match opcode {
-            OpCode::Constant => {
-                let idx = self.read_u16() as usize;
-                let constant = self.read_constant(idx);
-                self.push(constant)?;
-            }
-
-            OpCode::Null => self.push(Value::Null)?,
-            OpCode::True => self.push(Value::Boolean(true))?,
-            OpCode::False => self.push(Value::Boolean(false))?,
-
-            OpCode::Pop => {
-                self.pop()?;
-            }
-
-            OpCode::Dup => {
-                let value = self.peek(0)?.clone();
-                self.push(value)?;
-            }
-
-            OpCode::DupTwo => {
-                // Duplicate top two elements: [a, b] -> [a, b, a, b]
-                let b = self.peek(0)?.clone();
-                let a = self.peek(1)?.clone();
-                self.push(a)?;
-                self.push(b)?;
-            }
-
-            OpCode::Swap => {
-                // Swap top two elements: [a, b] -> [b, a]
-                let len = self.stack.len();
-                if len >= 2 {
-                    self.stack.swap(len - 1, len - 2);
-                }
-            }
-
-            OpCode::DefineGlobal => {
-                let idx = self.read_u16() as usize;
-                let name = self.read_string_constant(idx)?;
-                let value = self.pop()?;
-                self.globals.write().unwrap().insert(name, value);
-            }
-
-            OpCode::GetGlobal => {
-                let idx = self.read_u16() as usize;
-                let name = self.read_string_constant(idx)?;
-                let value =
-                    self.globals.read().unwrap().get(&name).cloned().ok_or_else(|| {
-                        self.create_error(ErrorKind::NameError, &format!("Undefined variable '{}'", name))
-                    })?;
-                self.push(value)?;
-            }
-
-            OpCode::SetGlobal => {
-                let idx = self.read_u16() as usize;
-                let name = self.read_string_constant(idx)?;
-                if !self.globals.read().unwrap().contains_key(&name) {
-                    return Err(self.create_error(ErrorKind::NameError, &format!("Undefined variable '{}'", name)));
-                }
-                let value = self.peek(0)?.clone();
-                self.globals.write().unwrap().insert(name, value);
-            }
-
-            OpCode::GetLocal => {
-                let slot = self.read_u16() as usize;
-                let slots_start = self.current_frame().slots_start;
-                let value = self.stack[slots_start + slot].clone();
-                self.push(value)?;
-            }
-
-            OpCode::SetLocal => {
-                let slot = self.read_u16() as usize;
-                let slots_start = self.current_frame().slots_start;
-                let value = self.peek(0)?.clone();
-                self.stack[slots_start + slot] = value;
-            }
-
-            OpCode::GetUpvalue => {
-                let idx = self.read_u16() as usize;
-                let upvalue = self.current_frame().function.upvalues[idx].clone();
-                let upvalue_ref = upvalue.lock().unwrap();
-                let value = if let Some(ref closed) = upvalue_ref.closed {
-                    // Closed upvalue - value is stored in the upvalue itself
-                    (**closed).clone()
-                } else {
-                    // Open upvalue - value is on the stack
-                    self.stack[upvalue_ref.location].clone()
-                };
-                drop(upvalue_ref);
-                self.push(value)?;
-            }
-
-            OpCode::SetUpvalue => {
-                let idx = self.read_u16() as usize;
-                let value = self.peek(0)?.clone();
-                let upvalue = self.current_frame().function.upvalues[idx].clone();
-                let mut upvalue_ref = upvalue.lock().unwrap();
-                if upvalue_ref.closed.is_some() {
-                    // Closed upvalue - store in the upvalue
-                    upvalue_ref.closed = Some(Box::new(value));
-                } else {
-                    // Open upvalue - store on the stack
-                    let location = upvalue_ref.location;
-                    drop(upvalue_ref);
-                    self.stack[location] = value;
-                }
-            }
-
-            OpCode::CloseUpvalue => {
-                // Close the upvalue at the top of the stack
-                // This is called when a local goes out of scope that has been captured
-                let stack_top = self.stack.len() - 1;
-                self.close_upvalues(stack_top);
-                self.pop()?;
-            }
-
-            OpCode::Add => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                let result = match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => Value::Number(a + b),
-                    (Value::String(a), Value::String(b)) => {
-                        Value::String(Arc::new(format!("{}{}", a, b)))
-                    }
-                    (Value::String(a), b) => Value::String(Arc::new(format!("{}{}", a, b))),
-                    (a, Value::String(b)) => Value::String(Arc::new(format!("{}{}", a, b))),
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot add '{}' and '{}'",
-                            a.type_name(),
-                            b.type_name()
-                        )));
-                    }
-                };
-                self.push(result)?;
-            }
-
-            OpCode::Sub => self.binary_number_op(|a, b| a - b)?,
-            OpCode::Mul => self.binary_number_op(|a, b| a * b)?,
-            OpCode::Div => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => {
-                        if *b == 0.0 {
-                            return Err(self.create_error(ErrorKind::DivisionByZero, "Division by zero"));
-                        }
-                        self.push(Value::Number(a / b))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot divide '{}' by '{}'",
-                            a.type_name(),
-                            b.type_name()
-                        )));
-                    }
-                }
-            }
-            OpCode::Mod => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => {
-                        if *b == 0.0 {
-                            return Err(self.create_error(ErrorKind::DivisionByZero, "Modulo by zero"));
-                        }
-                        self.push(Value::Number(a % b))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot modulo '{}' by '{}'",
-                            a.type_name(),
-                            b.type_name()
-                        )));
-                    }
-                }
-            }
-            OpCode::Negate => {
-                let value = self.pop()?;
-                match value {
-                    Value::Number(n) => self.push(Value::Number(-n))?,
-                    _ => {
-                        return Err(
-                            self.create_error(ErrorKind::TypeError, &format!("Cannot negate '{}'", value.type_name()))
-                        );
-                    }
-                }
-            }
-
-            OpCode::Equal => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                self.push(Value::Boolean(a == b))?;
-            }
-
-            OpCode::NotEqual => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                self.push(Value::Boolean(a != b))?;
-            }
-
-            OpCode::Less => self.comparison_op(|a, b| a < b)?,
-            OpCode::LessEqual => self.comparison_op(|a, b| a <= b)?,
-            OpCode::Greater => self.comparison_op(|a, b| a > b)?,
-            OpCode::GreaterEqual => self.comparison_op(|a, b| a >= b)?,
-
-            OpCode::Not => {
-                let value = self.pop()?;
-                self.push(Value::Boolean(!value.is_truthy()))?;
-            }
-
-            // Bitwise operations
-            OpCode::BitAnd => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => {
-                        self.push(Value::Number(((*a as i64) & (*b as i64)) as f64))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot perform bitwise AND on '{}' and '{}'",
-                            a.type_name(), b.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::BitOr => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => {
-                        self.push(Value::Number(((*a as i64) | (*b as i64)) as f64))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot perform bitwise OR on '{}' and '{}'",
-                            a.type_name(), b.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::BitXor => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => {
-                        self.push(Value::Number(((*a as i64) ^ (*b as i64)) as f64))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot perform bitwise XOR on '{}' and '{}'",
-                            a.type_name(), b.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::BitNot => {
-                let value = self.pop()?;
-                match value {
-                    Value::Number(n) => {
-                        self.push(Value::Number((!(n as i64)) as f64))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot perform bitwise NOT on '{}'",
-                            value.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::LeftShift => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => {
-                        self.push(Value::Number(((*a as i64) << (*b as u32)) as f64))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot perform left shift on '{}' and '{}'",
-                            a.type_name(), b.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::RightShift => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                match (&a, &b) {
-                    (Value::Number(a), Value::Number(b)) => {
-                        self.push(Value::Number(((*a as i64) >> (*b as u32)) as f64))?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot perform right shift on '{}' and '{}'",
-                            a.type_name(), b.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::Jump => {
-                let offset = self.read_u16() as usize;
-                self.current_frame_mut().ip += offset;
-            }
-
-            OpCode::JumpIfFalse => {
-                let offset = self.read_u16() as usize;
-                if !self.peek(0)?.is_truthy() {
-                    self.current_frame_mut().ip += offset;
-                }
-            }
-
-            OpCode::JumpIfTrue => {
-                let offset = self.read_u16() as usize;
-                if self.peek(0)?.is_truthy() {
-                    self.current_frame_mut().ip += offset;
-                }
-            }
-
-            OpCode::JumpIfNotNull => {
-                let offset = self.read_u16() as usize;
-                if !self.peek(0)?.is_null() {
-                    self.current_frame_mut().ip += offset;
-                }
-            }
-
-            OpCode::Loop => {
-                let offset = self.read_u16() as usize;
-                self.current_frame_mut().ip -= offset;
-            }
-
-            OpCode::Call => {
-                let arg_count = self.read_u16() as usize;
-                // Expand any SpreadMarker values in the arguments
-                let actual_arg_count = self.expand_spread_args(arg_count)?;
-                self.call_value(actual_arg_count)?;
-            }
-
-            OpCode::Closure => {
-                let idx = self.read_u16() as usize;
-                let constant = self.current_frame().function.chunk.constants[idx].clone();
-                if let Constant::Function(ref func_const) = constant {
-                    let mut function = Function::from_constant(func_const);
-
-                    // Capture upvalues based on compile-time upvalue info
-                    for upvalue_info in &func_const.upvalues {
-                        let upvalue = if upvalue_info.is_local {
-                            // Capture from enclosing function's local (on stack)
-                            let slots_start = self.current_frame().slots_start;
-                            let location = slots_start + upvalue_info.index as usize;
-                            self.capture_upvalue(location)
-                        } else {
-                            // Capture from enclosing function's upvalue
-                            self.current_frame().function.upvalues[upvalue_info.index as usize]
-                                .clone()
-                        };
-                        function.upvalues.push(upvalue);
-                    }
-
-                    self.push(Value::Function(Arc::new(function)))?;
-                }
-            }
-
-            OpCode::Return => {
-                let result = self.pop()?;
-                let returning_frame_index = self.frames.len() - 1;
-                let frame = self.frames.pop().unwrap();
-                
-                // Pop the script directory if this function pushed one
-                if !frame.function.file.is_empty() {
-                    crate::pop_script_dir();
-                }
-
-                // CRITICAL: Clean up any exception handlers that belong to this frame
-                // If we don't do this, stale handlers with invalid catch_ip values
-                // will cause panics when exceptions occur later
-                while let Some(handler) = self.exception_handlers.last() {
-                    if handler.frame_index >= returning_frame_index {
-                        self.exception_handlers.pop();
-                    } else {
-                        break;
-                    }
-                }
-
-                // Close any upvalues that point to the current frame's locals
-                // This must happen BEFORE we truncate the stack
-                self.close_upvalues(frame.slots_start);
-
-                if self.frames.is_empty() {
-                    // Push result to stack for caller to retrieve
-                    self.stack.truncate(frame.slots_start);
-                    let return_value = result.clone();
-                    self.push(result)?;
-                    return Ok(Some(ExecutionResult::Completed(return_value)));
-                }
-
-                self.stack.truncate(frame.slots_start);
-
-                // For init methods, return the instance instead of the result
-                if let Some(instance) = frame.init_instance {
-                    self.push(instance)?;
-                } else {
-                    self.push(result)?;
-                }
-            }
-
-            OpCode::Class => {
-                let idx = self.read_u16() as usize;
-                let name = self.read_string_constant(idx)?;
-                let class = Arc::new(Class::new(&name));
-                self.push(Value::Class(class))?;
-            }
-
-            OpCode::Method | OpCode::StaticMethod => {
-                let idx = self.read_u16() as usize;
-                let constant = self.current_frame().function.chunk.constants[idx].clone();
-
-                if let Constant::Function(ref func_const) = constant {
-                    let function = Arc::new(Function::from_constant(func_const));
-
-                    // Get the class from stack
-                    if let Value::Class(class) = self.peek(0)?.clone() {
-                        let class_mut = Arc::as_ptr(&class) as *mut Class;
-                        unsafe {
-                            if opcode == OpCode::StaticMethod {
-                                (*class_mut)
-                                    .user_static_methods
-                                    .insert(func_const.name.clone(), Value::Function(function));
-                            } else {
-                                (*class_mut)
-                                    .methods
-                                    .insert(func_const.name.clone(), Value::Function(function));
-                            }
-                        }
-                    }
-                }
-            }
-
-            OpCode::GetProperty => {
-                let idx = self.read_u16() as usize;
-                let name = self.read_string_constant(idx)?;
-                let obj = self.pop()?;
-
-                match obj {
-                    Value::Instance(instance) => {
-                        // Check fields first
-                        if let Some(value) = instance.lock().unwrap().fields.get(&name).cloned() {
-                            self.push(value)?;
-                        } else if let Some(method) =
-                            instance.lock().unwrap().class.methods.get(&name).cloned()
-                        {
-                            // Bind method to instance
-                            self.push(Value::Instance(instance.clone()))?;
-                            self.push(method)?;
-                        } else {
-                            return Err(
-                                self.create_error(ErrorKind::AttributeError, &format!("Undefined property '{}'", name))
-                            );
-                        }
-                    }
-                    Value::Class(class) => {
-                        // Static field access (Math.PI, Math.E)
-                        if let Some(value) = class.native_static_fields.get(&name) {
-                            self.push(value.clone())?;
-                        // Static method access - check user methods first, then native
-                        } else if let Some(method) = class.user_static_methods.get(&name).cloned() {
-                            self.push(method)?;
-                        } else if let Some(method) = class.native_static_methods.get(&name) {
-                            // Wrap native static method
-                            self.push(Value::NativeFunction {
-                                func: *method,
-                                class_name: class.name.clone(),
-                            })?;
-                        } else {
-                            return Err(
-                                self.create_error(ErrorKind::AttributeError, &format!("Undefined property or method '{}' on class '{}'", name, class.name))
-                            );
-                        }
-                    }
-                    // Handle primitive types and arrays - look up their class's native_instance_methods
-                    Value::String(_)
-                    | Value::Number(_)
-                    | Value::Boolean(_)
-                    | Value::Null
-                    | Value::Array(_)
-                    | Value::Dictionary(_) => {
-                        let class_name = builtins::get_builtin_class_name(&obj);
-                        // Look up method FIRST, release the borrow before pushing
-                        let method_result = {
-                            let globals_guard = self.globals.read().unwrap();
-                            if let Some(Value::Class(class)) = globals_guard.get(class_name) {
-                                if let Some(method) = class.native_instance_methods.get(&name) {
-                                    Ok((*method, name.clone()))
-                                } else {
-                                    Err(format!("'{}' has no method '{}'", class_name, name))
-                                }
-                            } else {
-                                Err(format!("Built-in class '{}' not found", class_name))
-                            }
-                        };
-                        // Now we can call self.push safely
-                        match method_result {
-                            Ok((method_fn, method_name)) => {
-                                let receiver = obj.clone();
-                                self.push(Value::InstanceMethod {
-                                    receiver: Box::new(receiver),
-                                    method: method_fn,
-                                    method_name,
-                                })?;
-                            }
-                            Err(msg) => {
-                                return Err(self.create_error(ErrorKind::RuntimeError, &msg));
-                            }
-                        }
-                    }
-                    // Namespace member access
-                    Value::Namespace { members, name: ns_name } => {
-                        if let Ok(members) = members.lock() {
-                            if let Some(value) = members.get(&name) {
-                                self.push(value.clone())?;
-                            } else {
-                                return Err(self.create_error(ErrorKind::AttributeError, &format!(
-                                    "Namespace '{}' has no member '{}'",
-                                    ns_name, name
-                                )));
-                            }
-                        } else {
-                            return Err(self.create_error(ErrorKind::RuntimeError, "Failed to lock namespace members"));
-                        }
-                    }
-                    // Enum variant access
-                    Value::Enum { variants, name: enum_name } => {
-                        if let Some(value) = variants.get(&name) {
-                            self.push(value.clone())?;
-                        } else {
-                            return Err(self.create_error(ErrorKind::AttributeError, &format!(
-                                "Enum '{}' has no variant '{}'",
-                                enum_name, name
-                            )));
-                        }
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Only instances have properties, got '{}'",
-                            obj.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::SetProperty => {
-                let idx = self.read_u16() as usize;
-                let name = self.read_string_constant(idx)?;
-                let value = self.pop()?;
-                let obj = self.pop()?;
-
-                match obj {
-                    Value::Instance(instance) => {
-                        instance.lock().unwrap().fields.insert(name, value.clone());
-                        self.push(value)?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Only instances have properties, got '{}'",
-                            obj.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::GetSelf => {
-                let slots_start = self.current_frame().slots_start;
-                let value = self.stack[slots_start].clone();
-                self.push(value)?;
-            }
-
-            OpCode::Invoke => {
-                let idx = self.read_u16() as usize;
-                let arg_count = self.read_u16() as usize;
-                let name = self.read_string_constant(idx)?;
-
-                self.invoke(&name, arg_count)?;
-            }
-
-            OpCode::BuildArray => {
-                let count = self.read_u16() as usize;
-                let mut elements = Vec::with_capacity(count);
-                for _ in 0..count {
-                    elements.push(self.pop()?);
-                }
-                elements.reverse(); // Stack order is reversed
-                let arr = Arc::new(Mutex::new(elements));
-                self.track_array(&arr);
-                self.push(Value::Array(arr))?;
-            }
-
-            OpCode::BuildDict => {
-                let count = self.read_u16() as usize;
-                let mut map = std::collections::HashMap::new();
-                
-                // Collect key-value pairs from stack (they're in reverse order)
-                let mut pairs = Vec::with_capacity(count);
-                for _ in 0..count {
-                    let value = self.pop()?;
-                    let key = self.pop()?;
-                    pairs.push((key, value));
-                }
-                // Reverse to get original source order (earlier entries first)
-                pairs.reverse();
-                
-                // Insert in source order - later entries will override earlier ones
-                for (key, value) in pairs {
-                    // Check for dict spread: value is SpreadMarker and key is Null
-                    if let (Value::Null, Value::SpreadMarker(spread_value)) = (&key, &value) {
-                        // Merge entries from the spread dict
-                        if let Value::Dictionary(dict) = spread_value.as_ref() {
-                            if let Ok(dict_map) = dict.lock() {
-                                for (k, v) in dict_map.iter() {
-                                    map.insert(k.clone(), v.clone());
-                                }
-                            }
-                        } else {
-                            return Err(self.create_error(ErrorKind::TypeError, "Can only spread dictionaries with **"));
-                        }
-                    } else {
-                        // Normal key-value pair
-                        let key_str = match key {
-                            Value::String(s) => s.to_string(),
-                            _ => return Err(self.create_error(ErrorKind::TypeError, "Dictionary keys must be strings")),
-                        };
-                        map.insert(key_str, value);
-                    }
-                }
-                let dict = Arc::new(Mutex::new(map));
-                self.track_dict(&dict);
-                self.push(Value::Dictionary(dict))?;
-            }
-
-            OpCode::BuildNamespace => {
-                let count = self.read_u16() as usize;
-                let mut members = std::collections::HashMap::new();
-                // Pop key-value pairs in reverse order
-                for _ in 0..count {
-                    let value = self.pop()?;
-                    let key = self.pop()?;
-                    let key_str = match key {
-                        Value::String(s) => s.to_string(),
-                        _ => return Err(self.create_error(ErrorKind::TypeError, "Namespace member keys must be strings")),
-                    };
-                    members.insert(key_str, value);
-                }
-                // Create namespace with empty name (will be set by DefineGlobal)
-                self.push(Value::Namespace {
-                    name: String::new(),
-                    members: Arc::new(Mutex::new(members)),
-                })?;
-            }
-
-            OpCode::BuildEnum => {
-                let count = self.read_u16() as usize;
-                let mut variants = std::collections::HashMap::new();
-                // Pop key-value pairs in reverse order
-                for _ in 0..count {
-                    let value = self.pop()?;
-                    let key = self.pop()?;
-                    let key_str = match key {
-                        Value::String(s) => s.to_string(),
-                        _ => return Err(self.create_error(ErrorKind::TypeError, "Enum variant keys must be strings")),
-                    };
-                    variants.insert(key_str, value);
-                }
-                self.push(Value::Enum {
-                    name: String::new(),
-                    variants: Arc::new(variants),
-                })?;
-            }
-
-            OpCode::BuildRangeInclusive => {
-                // Pop end and start
-                let end = self.pop()?;
-                let start = self.pop()?;
-                
-                // Both must be numbers
-                let start_num = match &start {
-                    Value::Number(n) => *n as i64,
-                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
-                        "Range start must be a number, got {}", start.type_name()
-                    ))),
-                };
-                let end_num = match &end {
-                    Value::Number(n) => *n as i64,
-                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
-                        "Range end must be a number, got {}", end.type_name()
-                    ))),
-                };
-                
-                // Build array [start..=end]
-                let mut elements = Vec::new();
-                if start_num <= end_num {
-                    for i in start_num..=end_num {
-                        elements.push(Value::Number(i as f64));
-                    }
-                } else {
-                    // Descending range
-                    for i in (end_num..=start_num).rev() {
-                        elements.push(Value::Number(i as f64));
-                    }
-                }
-                
-                let arr = Arc::new(Mutex::new(elements));
-                self.track_array(&arr);
-                self.push(Value::Array(arr))?;
-            }
-
-            OpCode::BuildRangeExclusive => {
-                // Pop end and start
-                let end = self.pop()?;
-                let start = self.pop()?;
-                
-                // Both must be numbers
-                let start_num = match &start {
-                    Value::Number(n) => *n as i64,
-                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
-                        "Range start must be a number, got {}", start.type_name()
-                    ))),
-                };
-                let end_num = match &end {
-                    Value::Number(n) => *n as i64,
-                    _ => return Err(self.create_error(ErrorKind::TypeError, &format!(
-                        "Range end must be a number, got {}", end.type_name()
-                    ))),
-                };
-                
-                // Build array [start..<end]
-                let mut elements = Vec::new();
-                if start_num < end_num {
-                    for i in start_num..end_num {
-                        elements.push(Value::Number(i as f64));
-                    }
-                } else if start_num > end_num {
-                    // Descending range (exclusive)
-                    for i in ((end_num + 1)..=start_num).rev() {
-                        elements.push(Value::Number(i as f64));
-                    }
-                }
-                // If start == end, empty array
-                
-                let arr = Arc::new(Mutex::new(elements));
-                self.track_array(&arr);
-                self.push(Value::Array(arr))?;
-            }
-
-            OpCode::GetIndex => {
-                let index = self.pop()?;
-                let object = self.pop()?;
-
-                match (&object, &index) {
-                    (Value::Array(arr), Value::Number(idx)) => {
-                        let idx = *idx as usize;
-                        let arr = arr.lock().unwrap();
-                        if idx < arr.len() {
-                            self.push(arr[idx].clone())?;
-                        } else {
-                            return Err(self.create_error(ErrorKind::IndexError, &format!(
-                                "Index {} out of bounds for array of length {}",
-                                idx,
-                                arr.len()
-                            )));
-                        }
-                    }
-                    (Value::String(s), Value::Number(idx)) => {
-                        let idx = *idx as usize;
-                        if idx < s.len() {
-                            let ch = s.chars().nth(idx).unwrap_or(' ');
-                            self.push(Value::String(Arc::new(ch.to_string())))?;
-                        } else {
-                            return Err(self.create_error(ErrorKind::IndexError, &format!(
-                                "Index {} out of bounds for string of length {}",
-                                idx,
-                                s.len()
-                            )));
-                        }
-                    }
-                    (Value::Dictionary(dict), Value::String(key)) => {
-                        let dict = dict.lock().unwrap();
-                        let value = dict.get(key.as_str()).cloned().unwrap_or(Value::Null);
-                        self.push(value)?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot index '{}' with '{}'",
-                            object.type_name(),
-                            index.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::SetIndex => {
-                let value = self.pop()?;
-                let index = self.pop()?;
-                let object = self.pop()?;
-
-                match (&object, &index) {
-                    (Value::Array(arr), Value::Number(idx)) => {
-                        let idx = *idx as usize;
-                        let mut arr = arr.lock().unwrap();
-                        if idx < arr.len() {
-                            arr[idx] = value.clone();
-                            self.push(value)?;
-                        } else {
-                            return Err(self.create_error(ErrorKind::IndexError, &format!(
-                                "Index {} out of bounds for array of length {}",
-                                idx,
-                                arr.len()
-                            )));
-                        }
-                    }
-                    (Value::Dictionary(dict), Value::String(key)) => {
-                        dict.lock().unwrap().insert(key.to_string(), value.clone());
-                        self.push(value)?;
-                    }
-                    _ => {
-                        return Err(self.create_error(ErrorKind::TypeError, &format!(
-                            "Cannot set index on '{}' with '{}'",
-                            object.type_name(),
-                            index.type_name()
-                        )));
-                    }
-                }
-            }
-
-            OpCode::Inherit => {
-                let _ = self.read_u16(); // Read operand (not used)
-
-                // Stack: [subclass, superclass]
-                let superclass_val = self.pop()?;
-                let subclass_val = self.pop()?;
-
-                if let (Value::Class(superclass), Value::Class(subclass)) =
-                    (&superclass_val, &subclass_val)
-                {
-                    // Create new class with inherited methods
-                    let mut new_class = Class::new(subclass.name.clone());
-
-                    // Copy parent methods first
-                    for (name, method) in &superclass.methods {
-                        new_class.methods.insert(name.clone(), method.clone());
-                    }
-
-                    // Then copy child methods (override parent)
-                    for (name, method) in &subclass.methods {
-                        new_class.methods.insert(name.clone(), method.clone());
-                    }
-
-                    // Copy static methods
-                    for (name, method) in &subclass.user_static_methods {
-                        new_class
-                            .user_static_methods
-                            .insert(name.clone(), method.clone());
-                    }
-
-                    // Set superclass reference
-                    new_class.superclass = Some(superclass.clone());
-
-                    self.push(Value::Class(Arc::new(new_class)))?;
-                } else {
-                    return Err(self.create_error(ErrorKind::TypeError, &format!(
-                        "Superclass must be a class, got '{}'",
-                        superclass_val.type_name()
-                    )));
-                }
-            }
-
-            OpCode::GetSuper => {
-                let idx = self.read_u16() as usize;
-                let method_name = self.read_string_constant(idx)?;
-
-                // Self should be on stack
-                let receiver = self.pop()?;
-
-                // Find method in superclass
-                if let Value::Instance(ref instance) = receiver {
-                    let inst = instance.lock().unwrap();
-                    // Use the class stored in the instance directly
-                    let class = inst.class.clone();
-                    drop(inst);
-
-                    // Access superclass from the instance's class
-                    if let Some(ref superclass) = class.superclass {
-                        if let Some(method) = superclass.methods.get(&method_name) {
-                            if let Value::Function(func) = method {
-                                // Create bound method so that
-                                // when called, receiver is properly passed as 'self'
-                                self.push(Value::BoundMethod {
-                                    receiver: Box::new(receiver),
-                                    method: func.clone(),
-                                })?;
-                            } else {
-                                return Err(self.create_error(ErrorKind::TypeError, &format!(
-                                    "Method '{}' is not a function",
-                                    method_name
-                                )));
-                            }
-                        } else {
-                            return Err(self.create_error(ErrorKind::AttributeError, &format!(
-                                "Undefined method '{}' in superclass",
-                                method_name
-                            )));
-                        }
-                    } else {
-                        return Err(self.create_error(ErrorKind::RuntimeError, "Class has no superclass"));
-                    }
-                } else {
-                    return Err(self.create_error(ErrorKind::RuntimeError, "'super' can only be used in instance methods"));
-                }
-            }
-
-            OpCode::Import => {
-                let idx = self.read_u16() as usize;
-                let import_path = self.read_string_constant(idx)?;
-
-                // Resolve path relative to current file (may set pending_module_workspace)
-                let resolved_path = self.resolve_import_path(&import_path)?;
-
-                // Check if this is a module import (has pending workspace)
-                let module_workspace = self.pending_module_workspace.take();
-                
-                // Push module workspace if this is a module import
-                if let Some(ref workspace) = module_workspace {
-                    crate::push_module_workspace(workspace);
-                }
-
-                // Read, compile, and execute imported file
-                let imported_globals = self.import_and_execute(&resolved_path)?;
-
-                // Pop module workspace after import
-                if module_workspace.is_some() {
-                    crate::pop_module_workspace();
-                }
-
-                // Merge all globals from imported file into current globals
-                for (name, value) in imported_globals {
-                    // Skip built-in types that already exist
-                    let globals_guard = self.globals.read().unwrap();
-                    let should_insert = !globals_guard.contains_key(&name)
-                        || !matches!(globals_guard.get(&name), Some(Value::Class(_)));
-                    drop(globals_guard);
-                    if should_insert {
-                        self.globals.write().unwrap().insert(name, value);
-                    }
-                }
-            }
-
-            OpCode::ImportAs => {
-                let path_idx = self.read_u16() as usize;
-                let alias_idx = self.read_u16() as usize;
-                let import_path = self.read_string_constant(path_idx)?;
-                let alias = self.read_string_constant(alias_idx)?;
-
-                // Resolve path relative to current file (may set pending_module_workspace)
-                let resolved_path = self.resolve_import_path(&import_path)?;
-
-                // Check if this is a module import (has pending workspace)
-                let module_workspace = self.pending_module_workspace.take();
-                
-                // Push module workspace if this is a module import
-                if let Some(ref workspace) = module_workspace {
-                    crate::push_module_workspace(workspace);
-                }
-
-                // Read, compile, and execute imported file
-                let imported_globals = self.import_and_execute(&resolved_path)?;
-
-                // Pop module workspace after import
-                if module_workspace.is_some() {
-                    crate::pop_module_workspace();
-                }
-
-                // Create a module-like instance with all imported globals as fields
-                let mut module_fields = HashMap::new();
-                for (name, value) in imported_globals {
-                    // Skip built-in types
-                    if !matches!(&value, Value::Class(c) if
-                            ["String", "Number", "Boolean", "Null", "Array"].contains(&c.name.as_str()))
-                    {
-                        module_fields.insert(name, value);
-                    }
-                }
-
-                // Create a dummy class for the module
-                let module_class = Arc::new(Class::new(&alias));
-
-                // Create instance to hold module fields
-                let module = Instance {
-                    class_name: alias.clone(),
-                    class: module_class,
-                    fields: module_fields,
-                };
-
-                // Define module as global with alias name
-                self.globals.write().unwrap()
-                    .insert(alias, Value::Instance(Arc::new(Mutex::new(module))));
-            }
-
-            OpCode::TryStart => {
-                let catch_offset = self.read_u16() as usize;
-
-                // Calculate absolute catch IP
-                let catch_ip = self.current_frame().ip + catch_offset;
-
-                // Push exception handler
-                self.exception_handlers.push(ExceptionHandler {
-                    frame_index: self.frames.len() - 1,
-                    stack_size: self.stack.len(),
-                    catch_ip,
-                });
-            }
-
-            OpCode::TryEnd => {
-                // Try block completed successfully, pop handler
-                self.exception_handlers.pop();
-            }
-
-            OpCode::Throw => {
-                let exception_value = self.pop()?;
-
-                // Look for exception handler
-                if let Some(handler) = self.exception_handlers.pop() {
-                    // Unwind stack to handler's frame
-                    while self.frames.len() > handler.frame_index + 1 {
-                        self.frames.pop();
-                    }
-
-                    // Restore stack size
-                    while self.stack.len() > handler.stack_size {
-                        self.stack.pop();
-                    }
-
-                    // Push exception value onto stack (will be bound to catch var)
-                    self.push(exception_value)?;
-
-                    // Jump to catch block
-                    self.current_frame_mut().ip = handler.catch_ip;
-                } else {
-                    // No handler, convert to runtime error
-                    let msg = match &exception_value {
-                        Value::String(s) => s.to_string(),
-                        other => format!("{}", other),
-                    };
-                    return Err(self.create_error(ErrorKind::RuntimeError, &format!("Uncaught exception: {}", msg)));
-                }
-            }
-
-            OpCode::Await => {
-                let value = self.pop()?;
-
-                match value {
-                    Value::Future(future_arc) => {
-                        // Take the future receiver out of the Option
-                        let mut guard = future_arc.lock().unwrap();
-                        if let Some(future) = guard.take() {
-                            drop(guard); // Release the lock
-
-                            // SUSPEND - return to event loop with the receiver
-                            // The event loop will await this and push the result
-                            return Ok(Some(ExecutionResult::Suspended {
-                                receiver: future.receiver,
-                            }));
-                        } else {
-                            return Err(self.create_error(ErrorKind::RuntimeError, "Future has already been consumed"));
-                        }
-                    }
-                    // Non-future values pass through unchanged
-                    other => self.push(other)?,
-                }
-            }
-
-            OpCode::SpreadArray => {
-                // Pop the value and wrap it in a SpreadMarker for special handling in Call
-                let value = self.pop()?;
-                self.push(Value::SpreadMarker(Box::new(value)))?;
-            }
+        // Dispatch table lookup - O(1) instead of O(n) match
+        if op < 48 {
+            DISPATCH[op as usize](self)
+        } else if op < 64 {
+            DISPATCH_EXT[(op - 48) as usize](self)
+        } else if op < 68 {
+            DISPATCH_EXT2[(op - 64) as usize](self)
+        } else {
+            ControlFlow::Error(self.create_error(ErrorKind::RuntimeError, &format!("Unknown opcode: {}", op)))
         }
-
-        Ok(None) // Continue execution
     }
 
-    // ==================== Helper Methods ====================
+    // ==================== Stack Operations ====================
 
     #[inline(always)]
-    fn push(&mut self, value: Value) -> SaldResult<()> {
+    fn push_fast(&mut self, value: Value) -> SaldResult<()> {
         if self.stack.len() >= STACK_MAX {
             return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow"));
         }
@@ -1584,64 +1176,13 @@ impl VM {
     }
 
     #[inline(always)]
-    fn pop(&mut self) -> SaldResult<Value> {
-        self.stack
-            .pop()
-            .ok_or_else(|| self.create_error(ErrorKind::RuntimeError, "Stack underflow"))
-    }
-
-    #[inline(always)]
-    fn peek(&self, distance: usize) -> SaldResult<&Value> {
-        let idx = self
-            .stack
-            .len()
-            .checked_sub(1 + distance)
-            .ok_or_else(|| self.create_error(ErrorKind::RuntimeError, "Stack underflow"))?;
-        Ok(&self.stack[idx])
-    }
-
-    /// Capture an upvalue for a given stack location
-    /// If an open upvalue already exists for this location, reuse it
-    fn capture_upvalue(&mut self, location: usize) -> Arc<Mutex<UpvalueObj>> {
-        // Check if we already have an open upvalue for this location
-        for upvalue in &self.open_upvalues {
-            if upvalue.lock().unwrap().location == location {
-                return upvalue.clone();
-            }
-        }
-
-        // Create a new upvalue
-        let upvalue = Arc::new(Mutex::new(UpvalueObj::new(location)));
-        self.open_upvalues.push(upvalue.clone());
-        upvalue
-    }
-
-    /// Close all upvalues at or above the given stack location
-    /// This moves the value from the stack into the upvalue
-    fn close_upvalues(&mut self, last: usize) {
-        // Close any open upvalues pointing at or above 'last'
-        self.open_upvalues.retain(|upvalue| {
-            let location = upvalue.lock().unwrap().location;
-            if location >= last {
-                // Close this upvalue by capturing the value
-                // Use get() to safely handle edge cases where stack might have been modified
-                let value = self.stack.get(location).cloned().unwrap_or(Value::Null);
-                upvalue.lock().unwrap().closed = Some(Box::new(value));
-                false // Remove from open_upvalues list
-            } else {
-                true // Keep in list
-            }
-        });
-    }
-
-    #[inline(always)]
     fn current_frame(&self) -> &CallFrame {
-        self.frames.last().unwrap()
+        unsafe { self.frames.last().unwrap_unchecked() }
     }
 
     #[inline(always)]
     fn current_frame_mut(&mut self) -> &mut CallFrame {
-        self.frames.last_mut().unwrap()
+        unsafe { self.frames.last_mut().unwrap_unchecked() }
     }
 
     #[inline(always)]
@@ -1660,882 +1201,682 @@ impl VM {
             Constant::Number(n) => Value::Number(*n),
             Constant::String(s) => Value::String(Arc::new(s.clone())),
             Constant::Function(f) => Value::Function(Arc::new(Function::from_constant(f))),
-            Constant::Class(c) => {
-                let class = Class::new(&c.name);
-                // Methods will be added via Method/StaticMethod opcodes
-                Value::Class(Arc::new(class))
-            }
+            Constant::Class(c) => Value::Class(Arc::new(Class::new(&c.name))),
         }
     }
 
     fn read_string_constant(&self, idx: usize) -> SaldResult<String> {
-        let constant = &self.current_frame().function.chunk.constants[idx];
-        match constant {
+        match &self.current_frame().function.chunk.constants[idx] {
             Constant::String(s) => Ok(s.clone()),
             _ => Err(self.create_error(ErrorKind::TypeError, "Expected string constant")),
         }
     }
 
-    fn binary_number_op(&mut self, op: fn(f64, f64) -> f64) -> SaldResult<()> {
-        let b = self.pop()?;
-        let a = self.pop()?;
-
-        match (&a, &b) {
-            (Value::Number(a), Value::Number(b)) => {
-                self.push(Value::Number(op(*a, *b)))?;
-            }
-            _ => {
-                return Err(self.create_error(ErrorKind::TypeError, &format!(
-                    "Cannot perform operation on '{}' and '{}'",
-                    a.type_name(),
-                    b.type_name()
-                )));
+    fn capture_upvalue(&mut self, location: usize) -> Arc<Mutex<UpvalueObj>> {
+        for upvalue in &self.open_upvalues {
+            if upvalue.lock().unwrap().location == location {
+                return upvalue.clone();
             }
         }
-        Ok(())
+        let upvalue = Arc::new(Mutex::new(UpvalueObj::new(location)));
+        self.open_upvalues.push(upvalue.clone());
+        upvalue
     }
 
-    fn comparison_op(&mut self, op: fn(f64, f64) -> bool) -> SaldResult<()> {
-        let b = self.pop()?;
-        let a = self.pop()?;
-
-        match (&a, &b) {
-            (Value::Number(a), Value::Number(b)) => {
-                self.push(Value::Boolean(op(*a, *b)))?;
+    fn close_upvalues(&mut self, last: usize) {
+        self.open_upvalues.retain(|upvalue| {
+            let location = upvalue.lock().unwrap().location;
+            if location >= last {
+                let value = self.stack.get(location).cloned().unwrap_or(Value::Null);
+                upvalue.lock().unwrap().closed = Some(Box::new(value));
+                false
+            } else {
+                true
             }
-            (Value::String(a), Value::String(b)) => {
-                // Use lexicographic comparison for strings (like JavaScript/Rust)
-                use std::cmp::Ordering;
-                let cmp = a.cmp(b);
-                let result = match cmp {
-                    Ordering::Less => op(-1.0, 0.0),   // a < b
-                    Ordering::Equal => op(0.0, 0.0),   // a == b
-                    Ordering::Greater => op(1.0, 0.0), // a > b
-                };
-                self.push(Value::Boolean(result))?;
-            }
-            _ => {
-                return Err(self.create_error(ErrorKind::TypeError, &format!(
-                    "Cannot compare '{}' and '{}'",
-                    a.type_name(),
-                    b.type_name()
-                )));
-            }
-        }
-        Ok(())
+        });
     }
 
-    /// Expand any SpreadMarker values in the top `arg_count` stack positions into individual values.
-    /// Returns the new actual argument count after expansion.
-    /// Uses splice to replace args in-place, preserving stack positions below args_start.
     fn expand_spread_args(&mut self, arg_count: usize) -> SaldResult<usize> {
-        if arg_count == 0 {
-            return Ok(0);
-        }
-        
+        if arg_count == 0 { return Ok(0); }
         let stack_len = self.stack.len();
         let args_start = stack_len - arg_count;
-        
-        // First pass: check if there are any SpreadMarkers
         let mut has_spread = false;
         for i in args_start..stack_len {
-            if matches!(&self.stack[i], Value::SpreadMarker(_)) {
-                has_spread = true;
-                break;
-            }
+            if matches!(&self.stack[i], Value::SpreadMarker(_)) { has_spread = true; break; }
         }
-        
-        if !has_spread {
-            return Ok(arg_count);
-        }
-        
-        // Collect all args values (clone to avoid borrow issues)
+        if !has_spread { return Ok(arg_count); }
+
         let args: Vec<Value> = self.stack[args_start..stack_len].to_vec();
-        
-        // Build expanded args list
         let mut expanded_args = Vec::new();
         for arg in args {
             match arg {
                 Value::SpreadMarker(boxed_value) => {
-                    match *boxed_value {
-                        Value::Array(arr) => {
-                            // Expand array elements
-                            let arr_guard = arr.lock().unwrap();
-                            for elem in arr_guard.iter() {
-                                expanded_args.push(elem.clone());
-                            }
-                        }
-                        other => {
-                            // Non-array values just pass through
-                            expanded_args.push(other);
-                        }
+                    if let Value::Array(arr) = *boxed_value {
+                        for elem in arr.lock().unwrap().iter() { expanded_args.push(elem.clone()); }
+                    } else {
+                        expanded_args.push(*boxed_value);
                     }
                 }
-                other => {
-                    expanded_args.push(other);
-                }
+                other => expanded_args.push(other),
             }
         }
-        
-        let new_arg_count = expanded_args.len();
-        
-        // Use splice to replace the args range in-place
-        // This preserves all stack elements before args_start
+        let new_count = expanded_args.len();
         let _ = self.stack.splice(args_start.., expanded_args);
-        
-        Ok(new_arg_count)
+        Ok(new_count)
     }
 
+    // ==================== Call Methods ====================
+
     fn call_value(&mut self, arg_count: usize) -> SaldResult<()> {
-        let callee = self.peek(arg_count)?.clone();
-
+        let callee = self.stack.get(self.stack.len() - arg_count - 1).cloned().unwrap_or(Value::Null);
         match callee {
-            Value::Function(function) => {
-                self.call_function(function, arg_count)?;
-            }
-            Value::Class(class) => {
-                // Check if this is a built-in class with a constructor (type conversion)
-                if let Some(constructor) = class.constructor {
-                    let args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - arg_count..).collect();
-                    self.pop()?; // Pop the class
-
-                    match constructor(&args) {
-                        Ok(result) => self.push(result)?,
-                        Err(e) => {
-                            self.handle_native_error(e)?;
-                            return Ok(()); // Execution continues from catch block
-                        }
-                    }
-                } else {
-                    // User-defined class - create instance
-                    let instance = Arc::new(Mutex::new(Instance::new(class.clone())));
-                    self.track_instance(&instance);
-                    let instance_value = Value::Instance(instance.clone());
-
-                    // Replace class with instance on stack
-                    let stack_idx = self.stack.len() - arg_count - 1;
-                    self.stack[stack_idx] = instance_value.clone();
-
-                    // Call init if it exists
-                    if let Some(init) = class.methods.get("init") {
-                        if let Value::Function(init_fn) = init {
-                            // Use special init call that will return instance
-                            self.call_function_init(init_fn.clone(), arg_count, instance_value)?;
-                        }
-                    } else if arg_count > 0 {
-                        return Err(self.create_error(ErrorKind::ArgumentError, &format!(
-                            "Expected 0 arguments but got {}",
-                            arg_count
-                        )));
-                    }
-                }
-            }
-            Value::NativeFunction { func, .. } => {
-                let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
-                self.pop()?; // Pop the native function
-
-                match func(&args) {
-                    Ok(result) => self.push(result)?,
-                    Err(e) => {
-                        self.handle_native_error(e)?;
-                        return Ok(()); // Execution continues from catch block
-                    }
-                }
-            }
-            Value::InstanceMethod {
-                receiver, method, ..
-            } => {
-                // Call native instance method on primitive
-                let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
-                self.pop()?; // Pop the instance method
-
-                match method(&receiver, &args) {
-                    Ok(result) => self.push(result)?,
-                    Err(e) => {
-                        self.handle_native_error(e)?;
-                        return Ok(()); // Execution continues from catch block
-                    }
-                }
-            }
-            Value::BoundMethod { receiver, method } => {
-                // User-defined method bound to a receiver (used for super calls)
-                // We need to set up the call frame so that 'self' (receiver) is at slot 0
-                let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
-                self.pop()?; // Pop the bound method
-
-                // Push receiver first (will be at slot 0)
-                self.push((*receiver).clone())?;
-                // Push arguments
-                for arg in args {
-                    self.push(arg)?;
-                }
-
-                // Call the function
-                self.call_function(method.clone(), arg_count)?;
-            }
-            _ => {
-                return Err(
-                    self.create_error(ErrorKind::TypeError, &format!("'{}' is not callable", callee.type_name()))
-                );
-            }
+            Value::Function(function) => self.call_function(function, arg_count),
+            Value::Class(class) => self.call_class(class, arg_count),
+            Value::NativeFunction { func, .. } => self.call_native(func, arg_count),
+            Value::InstanceMethod { receiver, method, .. } => self.call_instance_method(*receiver, method, arg_count),
+            Value::BoundMethod { receiver, method } => self.call_bound_method(*receiver, method, arg_count),
+            _ => Err(self.create_error(ErrorKind::TypeError, &format!("'{}' is not callable", callee.type_name()))),
         }
-
-        Ok(())
     }
 
     fn call_function(&mut self, function: Arc<Function>, arg_count: usize) -> SaldResult<()> {
-        // For variadic functions, arity is minimum required args (excluding variadic param itself)
-        let min_arity = if function.is_variadic {
-            function.arity.saturating_sub(1)
-        } else {
-            function.arity
-        };
+        let min_arity = if function.is_variadic { function.arity.saturating_sub(1) } else { function.arity };
 
         if function.is_variadic {
-            // Variadic: need at least (arity-1) args, extra args packed into array
             if arg_count < min_arity {
-                return Err(self.create_error(ErrorKind::ArgumentError, &format!(
-                    "Expected at least {} arguments but got {}",
-                    min_arity, arg_count
-                )));
+                return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", min_arity, arg_count)));
             }
-
-            // Pack variadic args into array
             let variadic_count = arg_count - min_arity;
             let mut variadic_args = Vec::with_capacity(variadic_count);
-
-            // Pop variadic args from stack (in reverse order)
-            for _ in 0..variadic_count {
-                variadic_args.push(self.pop()?);
-            }
+            for _ in 0..variadic_count { variadic_args.push(self.stack.pop().unwrap_or(Value::Null)); }
             variadic_args.reverse();
-
-            // Push the array onto stack as the variadic parameter
-            let array = Value::Array(Arc::new(Mutex::new(variadic_args)));
-            self.push(array)?;
-
-            // Now arg_count on stack is min_arity + 1 (for the array)
+            self.stack.push(Value::Array(Arc::new(Mutex::new(variadic_args))));
             let effective_arg_count = min_arity + 1;
-
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
             }
-
             let slots_start = self.stack.len() - effective_arg_count - 1;
-            
-            // Push the function's file directory for path resolution
-            // This ensures relative paths are resolved based on where the function is defined
-            if !function.file.is_empty() {
-                crate::push_script_dir(&function.file);
-            }
-            
+            if !function.file.is_empty() { crate::push_script_dir(&function.file); }
             self.frames.push(CallFrame::new(function, slots_start));
         } else {
-            // Non-variadic: check arity with default params support
-            // Required params = arity - default_count
             let required_arity = function.arity.saturating_sub(function.default_count);
-            
             if arg_count < required_arity {
-                return Err(self.create_error(ErrorKind::ArgumentError, &format!(
-                    "Expected at least {} arguments but got {}",
-                    required_arity, arg_count
-                )));
+                return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", required_arity, arg_count)));
             }
-            
             if arg_count > function.arity {
-                return Err(self.create_error(ErrorKind::ArgumentError, &format!(
-                    "Expected at most {} arguments but got {}",
-                    function.arity, arg_count
-                )));
+                return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at most {} arguments but got {}", function.arity, arg_count)));
             }
-            
-            // Push Null values for missing optional arguments
-            let missing_args = function.arity - arg_count;
-            for _ in 0..missing_args {
-                self.push(Value::Null)?;
-            }
-
+            for _ in 0..(function.arity - arg_count) { self.stack.push(Value::Null); }
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
             }
-
             let slots_start = self.stack.len() - function.arity - 1;
-            
-            // Push the function's file directory for path resolution
-            if !function.file.is_empty() {
-                crate::push_script_dir(&function.file);
-            }
-            
+            if !function.file.is_empty() { crate::push_script_dir(&function.file); }
             self.frames.push(CallFrame::new(function, slots_start));
         }
-
         Ok(())
     }
 
-    fn call_function_init(
-        &mut self,
-        function: Arc<Function>,
-        arg_count: usize,
-        instance: Value,
-    ) -> SaldResult<()> {
-        // Support default parameters: required = arity - default_count
-        let required_arity = function.arity.saturating_sub(function.default_count);
-        
-        if arg_count < required_arity {
-            return Err(self.create_error(ErrorKind::ArgumentError, &format!(
-                "Expected at least {} arguments but got {}",
-                required_arity, arg_count
-            )));
+    fn call_class(&mut self, class: Arc<Class>, arg_count: usize) -> SaldResult<()> {
+        if let Some(constructor) = class.constructor {
+            let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+            self.stack.pop();
+            match constructor(&args) {
+                Ok(result) => { self.stack.push(result); Ok(()) }
+                Err(e) => { self.handle_native_error(e)?; Ok(()) }
+            }
+        } else {
+            let instance = Arc::new(Mutex::new(Instance::new(class.clone())));
+            self.track_instance(&instance);
+            let instance_value = Value::Instance(instance.clone());
+            let stack_idx = self.stack.len() - arg_count - 1;
+            self.stack[stack_idx] = instance_value.clone();
+            if let Some(init) = class.methods.get("init") {
+                if let Value::Function(init_fn) = init {
+                    self.call_function_init(init_fn.clone(), arg_count, instance_value)?;
+                }
+            } else if arg_count > 0 {
+                return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected 0 arguments but got {}", arg_count)));
+            }
+            Ok(())
         }
-        
-        if arg_count > function.arity {
-            return Err(self.create_error(ErrorKind::ArgumentError, &format!(
-                "Expected at most {} arguments but got {}",
-                function.arity, arg_count
-            )));
-        }
-        
-        // Push Null values for missing optional arguments
-        // The function's bytecode will apply defaults via JumpIfNotNull
-        let missing_args = function.arity - arg_count;
-        for _ in 0..missing_args {
-            self.push(Value::Null)?;
-        }
+    }
 
+    fn call_native(&mut self, func: fn(&[Value]) -> Result<Value, String>, arg_count: usize) -> SaldResult<()> {
+        let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+        self.stack.pop();
+        match func(&args) {
+            Ok(result) => { self.stack.push(result); Ok(()) }
+            Err(e) => { self.handle_native_error(e)?; Ok(()) }
+        }
+    }
+
+    fn call_instance_method(&mut self, receiver: Value, method: fn(&Value, &[Value]) -> Result<Value, String>, arg_count: usize) -> SaldResult<()> {
+        let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+        self.stack.pop();
+        match method(&receiver, &args) {
+            Ok(result) => { self.stack.push(result); Ok(()) }
+            Err(e) => { self.handle_native_error(e)?; Ok(()) }
+        }
+    }
+
+    fn call_bound_method(&mut self, receiver: Value, method: Arc<Function>, arg_count: usize) -> SaldResult<()> {
+        let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+        self.stack.pop();
+        self.stack.push(receiver);
+        for arg in args { self.stack.push(arg); }
+        self.call_function(method, arg_count)
+    }
+
+    fn call_function_init(&mut self, function: Arc<Function>, arg_count: usize, instance: Value) -> SaldResult<()> {
+        let required_arity = function.arity.saturating_sub(function.default_count);
+        if arg_count < required_arity {
+            return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", required_arity, arg_count)));
+        }
+        if arg_count > function.arity {
+            return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at most {} arguments but got {}", function.arity, arg_count)));
+        }
+        for _ in 0..(function.arity - arg_count) { self.stack.push(Value::Null); }
         if self.frames.len() >= FRAMES_MAX {
             return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
         }
-
         let slots_start = self.stack.len() - function.arity - 1;
-        
-        // Push the function's file directory for path resolution
-        if !function.file.is_empty() {
-            crate::push_script_dir(&function.file);
-        }
-        
-        self.frames
-            .push(CallFrame::new_init(function, slots_start, instance));
-
+        if !function.file.is_empty() { crate::push_script_dir(&function.file); }
+        self.frames.push(CallFrame::new_init(function, slots_start, instance));
         Ok(())
     }
 
-    fn invoke(&mut self, name: &str, arg_count: usize) -> SaldResult<()> {
-        let receiver = self.peek(arg_count)?.clone();
+    // ==================== Invoke Method ====================
 
+    fn invoke(&mut self, name: &str, arg_count: usize) -> SaldResult<()> {
+        let receiver = self.stack.get(self.stack.len() - arg_count - 1).cloned().unwrap_or(Value::Null);
         match receiver {
             Value::Instance(ref instance) => {
-                // Check for field first
                 if let Some(field) = instance.lock().unwrap().fields.get(name).cloned() {
-                    // Replace receiver with field value and call
                     let stack_idx = self.stack.len() - arg_count - 1;
-                    self.stack[stack_idx] = field.clone();
+                    self.stack[stack_idx] = field;
                     return self.call_value(arg_count);
                 }
-
-                // Get class reference for method lookup
                 let class = instance.lock().unwrap().class.clone();
-
-                // Check user-defined methods
                 if let Some(method) = class.methods.get(name).cloned() {
                     if let Value::Function(func) = method {
                         return self.call_function(func, arg_count);
                     }
                 }
-
-                // Check callable native instance methods (methods that need ValueCaller)
                 if let Some(callable_method) = class.callable_native_instance_methods.get(name).copied() {
-                    let args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - arg_count..).collect();
-                    self.pop()?; // Pop receiver
-
+                    let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                    self.stack.pop();
                     match callable_method(&receiver, &args, self) {
-                        Ok(result) => {
-                            self.push(result)?;
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            self.handle_native_error(e)?;
-                            return Ok(());
-                        }
+                        Ok(result) => { self.stack.push(result); return Ok(()); }
+                        Err(e) => { self.handle_native_error(e)?; return Ok(()); }
                     }
                 }
-
-                // Check regular native instance methods
                 if let Some(method) = class.native_instance_methods.get(name).copied() {
-                    let args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - arg_count..).collect();
-                    self.pop()?; // Pop receiver
-
+                    let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                    self.stack.pop();
                     match method(&receiver, &args) {
-                        Ok(result) => {
-                            self.push(result)?;
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            self.handle_native_error(e)?;
-                            return Ok(());
-                        }
+                        Ok(result) => { self.stack.push(result); return Ok(()); }
+                        Err(e) => { self.handle_native_error(e)?; return Ok(()); }
                     }
                 }
-
                 Err(self.create_error(ErrorKind::AttributeError, &format!("Undefined method '{}' on instance", name)))
             }
             Value::Class(class) => {
-
-                // Static method call - check user methods first, then native
                 if let Some(method) = class.user_static_methods.get(name).cloned() {
-                    // Pop class and push null for static methods (no self)
                     let stack_idx = self.stack.len() - arg_count - 1;
                     self.stack[stack_idx] = Value::Null;
-
                     if let Value::Function(func) = method {
                         return self.call_function(func, arg_count);
                     }
                 }
-
-                // Check native static methods
                 if let Some(native_fn) = class.native_static_methods.get(name).copied() {
-                    let args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - arg_count..).collect();
-                    self.pop()?; // Pop class
-
+                    let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                    self.stack.pop();
                     match native_fn(&args) {
-                        Ok(result) => {
-                            self.push(result)?;
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            self.handle_native_error(e)?;
-                            return Ok(()); // Execution continues from catch block
-                        }
+                        Ok(result) => { self.stack.push(result); return Ok(()); }
+                        Err(e) => { self.handle_native_error(e)?; return Ok(()); }
                     }
                 }
-
                 Err(self.create_error(ErrorKind::AttributeError, &format!("Undefined static method '{}'", name)))
             }
-            // Handle primitive types - look up native methods from class
-            Value::String(_)
-            | Value::Number(_)
-            | Value::Boolean(_)
-            | Value::Null
-            | Value::Array(_)
-            | Value::Dictionary(_) => {
+            Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::Null | Value::Array(_) | Value::Dictionary(_) => {
                 let class_name = builtins::get_builtin_class_name(&receiver);
-
-                // Get class reference first
-                let class = if let Some(Value::Class(c)) = self.globals.read().unwrap().get(class_name).cloned() {
-                    c
-                } else {
-                    return Err(
-                        self.create_error(ErrorKind::RuntimeError, &format!("Built-in class '{}' not found", class_name))
-                    );
-                };
-
-                // First check callable native methods (map, filter, forEach, etc.)
-                if let Some(callable_method) =
-                    class.callable_native_instance_methods.get(name).copied()
-                {
-                    // Pop args from stack
-                    let args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - arg_count..).collect();
-                    // Pop receiver
-                    self.pop()?;
-
-                    // Call callable native method with self as the caller
+                let class = if let Some(Value::Class(c)) = self.globals.read().unwrap().get(class_name).cloned() { c }
+                else { return Err(self.create_error(ErrorKind::RuntimeError, &format!("Built-in class '{}' not found", class_name))); };
+                if let Some(callable_method) = class.callable_native_instance_methods.get(name).copied() {
+                    let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                    self.stack.pop();
                     match callable_method(&receiver, &args, self) {
-                        Ok(result) => {
-                            self.push(result)?;
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            self.handle_native_error(e)?;
-                            return Ok(()); // Execution continues from catch block
-                        }
+                        Ok(result) => { self.stack.push(result); return Ok(()); }
+                        Err(e) => { self.handle_native_error(e)?; return Ok(()); }
                     }
                 }
-
-                // Then check regular native methods
                 if let Some(method) = class.native_instance_methods.get(name).copied() {
-                    // Pop args from stack
-                    let args: Vec<Value> =
-                        self.stack.drain(self.stack.len() - arg_count..).collect();
-                    // Pop receiver
-                    self.pop()?;
-
-                    // Call native method
+                    let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
+                    self.stack.pop();
                     match method(&receiver, &args) {
-                        Ok(result) => {
-                            self.push(result)?;
-                            Ok(())
-                        }
-                        Err(e) => {
-                            self.handle_native_error(e)?;
-                            Ok(()) // Execution continues from catch block
-                        }
+                        Ok(result) => { self.stack.push(result); Ok(()) }
+                        Err(e) => { self.handle_native_error(e)?; Ok(()) }
                     }
                 } else {
                     Err(self.create_error(ErrorKind::AttributeError, &format!("'{}' has no method '{}'", class_name, name)))
                 }
             }
-            // Namespace member invocation
             Value::Namespace { members, name: ns_name } => {
-                if let Ok(members) = members.lock() {
-                    if let Some(member) = members.get(name).cloned() {
-                        drop(members); // Release lock before call
-                        // Replace receiver (namespace) with the member value on stack
+                if let Ok(m) = members.lock() {
+                    if let Some(member) = m.get(name).cloned() {
+                        drop(m);
                         let stack_idx = self.stack.len() - arg_count - 1;
                         self.stack[stack_idx] = member;
                         return self.call_value(arg_count);
-                    } else {
-                        return Err(self.create_error(ErrorKind::AttributeError, &format!(
-                            "Namespace '{}' has no member '{}'",
-                            ns_name, name
-                        )));
                     }
+                    return Err(self.create_error(ErrorKind::AttributeError, &format!("Namespace '{}' has no member '{}'", ns_name, name)));
+                }
+                Err(self.create_error(ErrorKind::RuntimeError, "Failed to lock namespace"))
+            }
+            _ => Err(self.create_error(ErrorKind::TypeError, &format!("Only instances have methods, got '{}'", receiver.type_name()))),
+        }
+    }
+
+    // ==================== Property Handlers ====================
+
+    fn handle_get_property(&mut self, name: &str) -> SaldResult<()> {
+        let obj = self.stack.pop().unwrap_or(Value::Null);
+        match obj {
+            Value::Instance(instance) => {
+                if let Some(value) = instance.lock().unwrap().fields.get(name).cloned() {
+                    self.stack.push(value);
+                } else if let Some(method) = instance.lock().unwrap().class.methods.get(name).cloned() {
+                    self.stack.push(Value::Instance(instance.clone()));
+                    self.stack.push(method);
                 } else {
-                    return Err(self.create_error(ErrorKind::RuntimeError, "Failed to lock namespace members"));
+                    return Err(self.create_error(ErrorKind::AttributeError, &format!("Undefined property '{}'", name)));
                 }
             }
-            _ => Err(self.create_error(ErrorKind::TypeError, &format!(
-                "Only instances have methods, got '{}'",
-                receiver.type_name()
-            ))),
-        }
-    }
-
-    fn create_error(&self, kind: ErrorKind, message: &str) -> SaldError {
-        let (span, file) = if !self.frames.is_empty() {
-            let frame = self.current_frame();
-            let f = if frame.function.file.is_empty() {
-                &self.file
-            } else {
-                &frame.function.file
-            };
-            (frame.current_span(), f)
-        } else {
-            (Span::default(), &self.file)
-        };
-
-        let mut error = SaldError::new(kind, message, span, file);
-
-        // Attach source
-        if file == &self.file {
-            error = error.with_source(&self.source);
-        } else {
-            // Try to read source from file
-            if let Ok(source) = std::fs::read_to_string(file) {
-                error = error.with_source(&source);
-            }
-        }
-
-        // Add stack trace with span info
-        let mut stack_trace = Vec::new();
-        for frame in self.frames.iter().rev() {
-            let frame_span = frame.current_span();
-            stack_trace.push(StackFrame::new(
-                &frame.function.name,
-                if frame.function.file.is_empty() {
-                    &self.file
+            Value::Class(class) => {
+                if let Some(value) = class.native_static_fields.get(name) {
+                    self.stack.push(value.clone());
+                } else if let Some(method) = class.user_static_methods.get(name).cloned() {
+                    self.stack.push(method);
+                } else if let Some(method) = class.native_static_methods.get(name) {
+                    self.stack.push(Value::NativeFunction { func: *method, class_name: class.name.clone() });
                 } else {
-                    &frame.function.file
-                },
-                frame_span.start.line,
-                frame_span.start.column,
-            ));
+                    return Err(self.create_error(ErrorKind::AttributeError, &format!("Undefined property '{}' on class '{}'", name, class.name)));
+                }
+            }
+            Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::Null | Value::Array(_) | Value::Dictionary(_) => {
+                let class_name = builtins::get_builtin_class_name(&obj);
+                let method_result = {
+                    let globals_guard = self.globals.read().unwrap();
+                    if let Some(Value::Class(class)) = globals_guard.get(class_name) {
+                        if let Some(method) = class.native_instance_methods.get(name) {
+                            Ok((*method, name.to_string()))
+                        } else { Err(format!("'{}' has no method '{}'", class_name, name)) }
+                    } else { Err(format!("Built-in class '{}' not found", class_name)) }
+                };
+                match method_result {
+                    Ok((method_fn, method_name)) => {
+                        self.stack.push(Value::InstanceMethod { receiver: Box::new(obj), method: method_fn, method_name });
+                    }
+                    Err(msg) => return Err(self.create_error(ErrorKind::RuntimeError, &msg)),
+                }
+            }
+            Value::Namespace { members, name: ns_name } => {
+                if let Ok(m) = members.lock() {
+                    if let Some(value) = m.get(name) {
+                        self.stack.push(value.clone());
+                    } else {
+                        return Err(self.create_error(ErrorKind::AttributeError, &format!("Namespace '{}' has no member '{}'", ns_name, name)));
+                    }
+                }
+            }
+            Value::Enum { variants, name: enum_name } => {
+                if let Some(value) = variants.get(name) {
+                    self.stack.push(value.clone());
+                } else {
+                    return Err(self.create_error(ErrorKind::AttributeError, &format!("Enum '{}' has no variant '{}'", enum_name, name)));
+                }
+            }
+            _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Only instances have properties, got '{}'", obj.type_name()))),
         }
-        error = error.with_stack_trace(stack_trace);
-
-        error
+        Ok(())
     }
 
-    fn handle_native_error(&mut self, error_msg: String) -> SaldResult<()> {
-        // Check if there's an exception handler
-        if let Some(handler) = self.exception_handlers.pop() {
-            // Unwind stack to handler's frame
-            while self.frames.len() > handler.frame_index + 1 {
-                self.frames.pop();
-            }
-
-            // Restore stack size
-            while self.stack.len() > handler.stack_size {
-                self.stack.pop();
-            }
-
-            // Push error message as the exception value
-            let exception = Value::String(Arc::new(error_msg));
-            self.push(exception)?;
-
-            // Jump to catch block
-            self.current_frame_mut().ip = handler.catch_ip;
-
+    fn handle_set_property(&mut self, name: &str) -> SaldResult<()> {
+        let value = self.stack.pop().unwrap_or(Value::Null);
+        let obj = self.stack.pop().unwrap_or(Value::Null);
+        if let Value::Instance(instance) = obj {
+            instance.lock().unwrap().fields.insert(name.to_string(), value.clone());
+            self.stack.push(value);
             Ok(())
         } else {
-            // No handler, return as runtime error
-            Err(self.create_error(ErrorKind::RuntimeError, &format!("Uncaught exception: {}", error_msg)))
+            Err(self.create_error(ErrorKind::TypeError, &format!("Only instances have properties, got '{}'", obj.type_name())))
         }
     }
 
-    // ==================== Import Helper Methods ====================
+    fn handle_get_index(&mut self) -> SaldResult<()> {
+        let index = self.stack.pop().unwrap_or(Value::Null);
+        let object = self.stack.pop().unwrap_or(Value::Null);
+        match (&object, &index) {
+            (Value::Array(arr), Value::Number(idx)) => {
+                let idx = *idx as usize;
+                let arr = arr.lock().unwrap();
+                if idx < arr.len() { self.stack.push(arr[idx].clone()); }
+                else { return Err(self.create_error(ErrorKind::IndexError, &format!("Index {} out of bounds for array of length {}", idx, arr.len()))); }
+            }
+            (Value::String(s), Value::Number(idx)) => {
+                let idx = *idx as usize;
+                if idx < s.len() {
+                    let ch = s.chars().nth(idx).unwrap_or(' ');
+                    self.stack.push(Value::String(Arc::new(ch.to_string())));
+                } else { return Err(self.create_error(ErrorKind::IndexError, &format!("Index {} out of bounds for string of length {}", idx, s.len()))); }
+            }
+            (Value::Dictionary(dict), Value::String(key)) => {
+                let value = dict.lock().unwrap().get(key.as_str()).cloned().unwrap_or(Value::Null);
+                self.stack.push(value);
+            }
+            _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Cannot index '{}' with '{}'", object.type_name(), index.type_name()))),
+        }
+        Ok(())
+    }
+
+    fn handle_set_index(&mut self) -> SaldResult<()> {
+        let value = self.stack.pop().unwrap_or(Value::Null);
+        let index = self.stack.pop().unwrap_or(Value::Null);
+        let object = self.stack.pop().unwrap_or(Value::Null);
+        match (&object, &index) {
+            (Value::Array(arr), Value::Number(idx)) => {
+                let idx = *idx as usize;
+                let mut arr = arr.lock().unwrap();
+                if idx < arr.len() { arr[idx] = value.clone(); self.stack.push(value); }
+                else { return Err(self.create_error(ErrorKind::IndexError, &format!("Index {} out of bounds for array of length {}", idx, arr.len()))); }
+            }
+            (Value::Dictionary(dict), Value::String(key)) => {
+                dict.lock().unwrap().insert(key.to_string(), value.clone());
+                self.stack.push(value);
+            }
+            _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Cannot set index on '{}' with '{}'", object.type_name(), index.type_name()))),
+        }
+        Ok(())
+    }
+
+    fn handle_build_dict(&mut self) -> SaldResult<()> {
+        let count = self.read_u16() as usize;
+        let mut map = HashMap::new();
+        let mut pairs = Vec::with_capacity(count);
+        for _ in 0..count {
+            let value = self.stack.pop().unwrap_or(Value::Null);
+            let key = self.stack.pop().unwrap_or(Value::Null);
+            pairs.push((key, value));
+        }
+        pairs.reverse();
+        for (key, value) in pairs {
+            if let (Value::Null, Value::SpreadMarker(spread_value)) = (&key, &value) {
+                if let Value::Dictionary(dict) = spread_value.as_ref() {
+                    for (k, v) in dict.lock().unwrap().iter() { map.insert(k.clone(), v.clone()); }
+                } else { return Err(self.create_error(ErrorKind::TypeError, "Can only spread dictionaries with **")); }
+            } else {
+                let key_str = match key {
+                    Value::String(s) => s.to_string(),
+                    _ => return Err(self.create_error(ErrorKind::TypeError, "Dictionary keys must be strings")),
+                };
+                map.insert(key_str, value);
+            }
+        }
+        let dict = Arc::new(Mutex::new(map));
+        self.track_dict(&dict);
+        self.stack.push(Value::Dictionary(dict));
+        Ok(())
+    }
+
+    fn handle_build_namespace(&mut self) -> SaldResult<()> {
+        let count = self.read_u16() as usize;
+        let mut members = HashMap::new();
+        for _ in 0..count {
+            let value = self.stack.pop().unwrap_or(Value::Null);
+            let key = self.stack.pop().unwrap_or(Value::Null);
+            if let Value::String(s) = key { members.insert(s.to_string(), value); }
+            else { return Err(self.create_error(ErrorKind::TypeError, "Namespace member keys must be strings")); }
+        }
+        self.stack.push(Value::Namespace { name: String::new(), members: Arc::new(Mutex::new(members)) });
+        Ok(())
+    }
+
+    fn handle_build_enum(&mut self) -> SaldResult<()> {
+        let count = self.read_u16() as usize;
+        let mut variants = HashMap::new();
+        for _ in 0..count {
+            let value = self.stack.pop().unwrap_or(Value::Null);
+            let key = self.stack.pop().unwrap_or(Value::Null);
+            if let Value::String(s) = key { variants.insert(s.to_string(), value); }
+            else { return Err(self.create_error(ErrorKind::TypeError, "Enum variant keys must be strings")); }
+        }
+        self.stack.push(Value::Enum { name: String::new(), variants: Arc::new(variants) });
+        Ok(())
+    }
+
+    fn handle_build_range(&mut self, inclusive: bool) -> SaldResult<()> {
+        let end = self.stack.pop().unwrap_or(Value::Null);
+        let start = self.stack.pop().unwrap_or(Value::Null);
+        let start_num = match &start {
+            Value::Number(n) => *n as i64,
+            _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Range start must be a number, got {}", start.type_name()))),
+        };
+        let end_num = match &end {
+            Value::Number(n) => *n as i64,
+            _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Range end must be a number, got {}", end.type_name()))),
+        };
+        let mut elements = Vec::new();
+        if inclusive {
+            if start_num <= end_num { for i in start_num..=end_num { elements.push(Value::Number(i as f64)); } }
+            else { for i in (end_num..=start_num).rev() { elements.push(Value::Number(i as f64)); } }
+        } else {
+            if start_num < end_num { for i in start_num..end_num { elements.push(Value::Number(i as f64)); } }
+            else if start_num > end_num { for i in ((end_num + 1)..=start_num).rev() { elements.push(Value::Number(i as f64)); } }
+        }
+        let arr = Arc::new(Mutex::new(elements));
+        self.track_array(&arr);
+        self.stack.push(Value::Array(arr));
+        Ok(())
+    }
+
+    fn handle_inherit(&mut self) -> SaldResult<()> {
+        let superclass_val = self.stack.pop().unwrap_or(Value::Null);
+        let subclass_val = self.stack.pop().unwrap_or(Value::Null);
+        if let (Value::Class(superclass), Value::Class(subclass)) = (&superclass_val, &subclass_val) {
+            let mut new_class = Class::new(subclass.name.clone());
+            for (name, method) in &superclass.methods { new_class.methods.insert(name.clone(), method.clone()); }
+            for (name, method) in &subclass.methods { new_class.methods.insert(name.clone(), method.clone()); }
+            for (name, method) in &subclass.user_static_methods { new_class.user_static_methods.insert(name.clone(), method.clone()); }
+            new_class.superclass = Some(superclass.clone());
+            self.stack.push(Value::Class(Arc::new(new_class)));
+            Ok(())
+        } else {
+            Err(self.create_error(ErrorKind::TypeError, &format!("Superclass must be a class, got '{}'", superclass_val.type_name())))
+        }
+    }
+
+    fn handle_get_super(&mut self, method_name: &str) -> SaldResult<()> {
+        let receiver = self.stack.pop().unwrap_or(Value::Null);
+        if let Value::Instance(ref instance) = receiver {
+            let class = instance.lock().unwrap().class.clone();
+            if let Some(ref superclass) = class.superclass {
+                if let Some(method) = superclass.methods.get(method_name) {
+                    if let Value::Function(func) = method {
+                        self.stack.push(Value::BoundMethod { receiver: Box::new(receiver), method: func.clone() });
+                        return Ok(());
+                    }
+                    return Err(self.create_error(ErrorKind::TypeError, &format!("Method '{}' is not a function", method_name)));
+                }
+                return Err(self.create_error(ErrorKind::AttributeError, &format!("Undefined method '{}' in superclass", method_name)));
+            }
+            return Err(self.create_error(ErrorKind::RuntimeError, "Class has no superclass"));
+        }
+        Err(self.create_error(ErrorKind::RuntimeError, "'super' can only be used in instance methods"))
+    }
+
+    // ==================== Import Handlers ====================
+
+    fn handle_import(&mut self, import_path: &str) -> SaldResult<()> {
+        let resolved_path = self.resolve_import_path(import_path)?;
+        let module_workspace = self.pending_module_workspace.take();
+        if let Some(ref workspace) = module_workspace { crate::push_module_workspace(workspace); }
+        let imported_globals = self.import_and_execute(&resolved_path)?;
+        if module_workspace.is_some() { crate::pop_module_workspace(); }
+        for (name, value) in imported_globals {
+            let globals_guard = self.globals.read().unwrap();
+            let should_insert = !globals_guard.contains_key(&name) || !matches!(globals_guard.get(&name), Some(Value::Class(_)));
+            drop(globals_guard);
+            if should_insert { self.globals.write().unwrap().insert(name, value); }
+        }
+        Ok(())
+    }
+
+    fn handle_import_as(&mut self, import_path: &str, alias: &str) -> SaldResult<()> {
+        let resolved_path = self.resolve_import_path(import_path)?;
+        let module_workspace = self.pending_module_workspace.take();
+        if let Some(ref workspace) = module_workspace { crate::push_module_workspace(workspace); }
+        let imported_globals = self.import_and_execute(&resolved_path)?;
+        if module_workspace.is_some() { crate::pop_module_workspace(); }
+        let mut module_fields = HashMap::new();
+        for (name, value) in imported_globals {
+            if !matches!(&value, Value::Class(c) if ["String", "Number", "Boolean", "Null", "Array"].contains(&c.name.as_str())) {
+                module_fields.insert(name, value);
+            }
+        }
+        let module_class = Arc::new(Class::new(alias));
+        let module = Instance { class_name: alias.to_string(), class: module_class, fields: module_fields };
+        self.globals.write().unwrap().insert(alias.to_string(), Value::Instance(Arc::new(Mutex::new(module))));
+        Ok(())
+    }
 
     fn resolve_import_path(&mut self, import_path: &str) -> SaldResult<String> {
-        // Check if this is a module import (no path separators, no .sald extension)
-        if Self::is_module_import(import_path) {
-            return self.resolve_module_import(import_path);
-        }
-
-        // Regular file import
+        if Self::is_module_import(import_path) { return self.resolve_module_import(import_path); }
         self.resolve_file_import(import_path)
     }
 
-    /// Check if import path is a module name (not a file path)
-    /// Module imports: "uuid", "spark" 
-    /// File imports: "./file.sald", "path/file.sald", "file.sald"
     fn is_module_import(path: &str) -> bool {
         !path.contains('/') && !path.contains('\\') && !path.ends_with(".sald") && !path.ends_with(".saldc")
     }
 
-    /// Resolve a module import from sald_modules/<name>/
     fn resolve_module_import(&mut self, module_name: &str) -> SaldResult<String> {
-        // Get project root (where sald_modules should be)
         let project_root = crate::get_project_root()
-            .ok_or_else(|| self.create_error(ErrorKind::ImportError, 
-                &format!("Cannot import module '{}': no project root set", module_name)))?;
-
-        // Look for module in sald_modules/
+            .ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Cannot import module '{}': no project root set", module_name)))?;
         let module_dir = project_root.join("sald_modules").join(module_name);
-        
-        if !module_dir.exists() {
-            return Err(self.create_error(ErrorKind::ImportError, 
-                &format!("Module '{}' not found in sald_modules/", module_name)));
-        }
-
-        // Look for salad.json config
+        if !module_dir.exists() { return Err(self.create_error(ErrorKind::ImportError, &format!("Module '{}' not found in sald_modules/", module_name))); }
         let config_path = module_dir.join("salad.json");
-        if !config_path.exists() {
-            return Err(self.create_error(ErrorKind::ImportError, 
-                &format!("Module '{}' has no salad.json config", module_name)));
-        }
-
-        // Parse salad.json to get main entry
+        if !config_path.exists() { return Err(self.create_error(ErrorKind::ImportError, &format!("Module '{}' has no salad.json config", module_name))); }
         let main_entry = self.parse_module_config(&config_path, module_name)?;
-
-        // Resolve main entry relative to module directory
         let main_path = module_dir.join(&main_entry);
-        
-        if !main_path.exists() {
-            return Err(self.create_error(ErrorKind::ImportError, 
-                &format!("Module '{}' main file '{}' not found", module_name, main_entry)));
-        }
-
-        // Store module directory for workspace push during import
+        if !main_path.exists() { return Err(self.create_error(ErrorKind::ImportError, &format!("Module '{}' main file '{}' not found", module_name, main_entry))); }
         self.pending_module_workspace = Some(module_dir);
-
-        main_path.to_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| self.create_error(ErrorKind::ImportError, 
-                &format!("Invalid module path for '{}'", module_name)))
+        main_path.to_str().map(|s| s.to_string()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid module path for '{}'", module_name)))
     }
 
-    /// Parse salad.json to get the main entry file
     fn parse_module_config(&self, config_path: &std::path::Path, module_name: &str) -> SaldResult<String> {
-        // Read and parse JSON directly
-        let content = std::fs::read_to_string(config_path)
-            .map_err(|e| self.create_error(ErrorKind::ImportError, 
-                &format!("Failed to read module '{}' config: {}", module_name, e)))?;
-
-        let json: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| self.create_error(ErrorKind::ImportError, 
-                &format!("Module '{}' config invalid JSON: {}", module_name, e)))?;
-
-        json.get("main")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| self.create_error(ErrorKind::ImportError, 
-                &format!("Module '{}' config missing 'main' field", module_name)))
+        let content = std::fs::read_to_string(config_path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Failed to read module '{}' config: {}", module_name, e)))?;
+        let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Module '{}' config invalid JSON: {}", module_name, e)))?;
+        json.get("main").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Module '{}' config missing 'main' field", module_name)))
     }
 
-    /// Resolve a file import (original behavior)
     fn resolve_file_import(&self, import_path: &str) -> SaldResult<String> {
         use std::path::PathBuf;
         use std::env;
-
-        // 1. Normalize extension: Append .sald if not present
-        let path_with_ext = if !import_path.ends_with(".sald") && !import_path.ends_with(".saldc") {
-            format!("{}.sald", import_path)
-        } else {
-            import_path.to_string()
-        };
-        
+        let path_with_ext = if !import_path.ends_with(".sald") && !import_path.ends_with(".saldc") { format!("{}.sald", import_path) } else { import_path.to_string() };
         let path_buf = PathBuf::from(&path_with_ext);
-
-        // Helper to canonicalize path (convert to absolute)
-        let canonicalize = |p: PathBuf| -> Option<String> {
-            p.canonicalize()
-                .ok()
-                .and_then(|abs| abs.to_str().map(|s| s.to_string()))
-        };
-
-        // 2. If valid absolute path, return it if it exists
-        if path_buf.is_absolute() {
-             if path_buf.exists() {
-                 return canonicalize(path_buf.clone())
-                    .ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path)));
-             }
-        }
-
-        // 3. Try relative to current file
-        let current_dir = if self.file.is_empty() {
-            PathBuf::from(".")
-        } else {
-            PathBuf::from(&self.file)
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."))
-        };
-
+        let canonicalize = |p: PathBuf| -> Option<String> { p.canonicalize().ok().and_then(|abs| abs.to_str().map(|s| s.to_string())) };
+        if path_buf.is_absolute() && path_buf.exists() { return canonicalize(path_buf.clone()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path))); }
+        let current_dir = if self.file.is_empty() { PathBuf::from(".") } else { PathBuf::from(&self.file).parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from(".")) };
         let relative_path = current_dir.join(&path_with_ext);
-        if relative_path.exists() {
-            return canonicalize(relative_path.clone())
-                .ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path)));
-        }
-
-        // 4. Try SALD_MODULE env var
+        if relative_path.exists() { return canonicalize(relative_path.clone()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path))); }
         if let Ok(module_path) = env::var("SALD_MODULE") {
             let env_path = PathBuf::from(module_path).join(&path_with_ext);
-            if env_path.exists() {
-                 return canonicalize(env_path.clone())
-                    .ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path)));
-            }
+            if env_path.exists() { return canonicalize(env_path.clone()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path))); }
         }
-
-        // 5. Fallback: Return relative path (so error message reflects local path)
-        relative_path
-            .to_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path)))
+        relative_path.to_str().map(|s| s.to_string()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path)))
     }
 
     fn import_and_execute(&mut self, path: &str) -> SaldResult<HashMap<String, Value>> {
-        // Check if this is a compiled .saldc file
         let chunk = if path.ends_with(".saldc") {
-            // Read binary file
-            let data = std::fs::read(path).map_err(|e| {
-                self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e))
-            })?;
-
-            // Deserialize bytecode
-            crate::binary::deserialize(&data).map_err(|e| {
-                self.create_error(ErrorKind::ImportError, &format!("Error deserializing import '{}': {}", path, e))
-            })?
+            let data = std::fs::read(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
+            crate::binary::deserialize(&data).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Error deserializing import '{}': {}", path, e)))?
         } else {
-            // Read source file
-            let source = std::fs::read_to_string(path).map_err(|e| {
-                self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e))
-            })?;
-
-            // Scan tokens
+            let source = std::fs::read_to_string(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
             let mut scanner = Scanner::new(&source, path);
-            let tokens = scanner.scan_tokens().map_err(|e| {
-                self.create_error(ErrorKind::SyntaxError, &format!("Error scanning import '{}': {}", path, e))
-            })?;
-
-            // Parse AST
+            let tokens = scanner.scan_tokens().map_err(|e| self.create_error(ErrorKind::SyntaxError, &format!("Error scanning import '{}': {}", path, e)))?;
             let mut parser = Parser::new(tokens, path, &source);
-            let program = parser.parse().map_err(|e| {
-                self.create_error(ErrorKind::SyntaxError, &format!("Error parsing import '{}': {}", path, e))
-            })?;
-
-            // Compile to bytecode
+            let program = parser.parse().map_err(|e| self.create_error(ErrorKind::SyntaxError, &format!("Error parsing import '{}': {}", path, e)))?;
             let mut compiler = Compiler::new(path, &source);
-            compiler.compile(&program).map_err(|e| {
-                self.create_error(ErrorKind::SyntaxError, &format!("Error compiling import '{}': {}", path, e))
-            })?
+            compiler.compile(&program).map_err(|e| self.create_error(ErrorKind::SyntaxError, &format!("Error compiling import '{}': {}", path, e)))?
         };
-
-        // Save current VM state
         let saved_stack = std::mem::take(&mut self.stack);
         let saved_frames = std::mem::take(&mut self.frames);
         let saved_file = std::mem::replace(&mut self.file, path.to_string());
         let saved_source = std::mem::replace(&mut self.source, String::new());
-        
-        // Push script directory for this imported file
         crate::push_script_dir(path);
-
-        // Create fresh globals for import (but keep built-ins) - use NEW Arc for isolation
         let import_globals = Arc::new(RwLock::new(builtins::create_builtin_classes()));
         let saved_globals = std::mem::replace(&mut self.globals, import_globals);
-
-        // Execute imported code synchronously
         let mut main_function = Function::new("<import>", 0, chunk);
         main_function.file = path.to_string();
-        let main_function = Arc::new(main_function);
         self.stack.push(Value::Null);
-        self.frames.push(CallFrame::new(main_function, 0));
-
-        // Execute until done (imports shouldn't use await at top level)
+        self.frames.push(CallFrame::new(Arc::new(main_function), 0));
         loop {
             match self.execute_until_suspend() {
                 ExecutionResult::Completed(_) => break,
                 ExecutionResult::Suspended { receiver } => {
-                    // If import uses await, block on it (rare case)
                     match futures::executor::block_on(receiver) {
-                        Ok(Ok(value)) => {
-                            let _ = self.push(value);
-                        }
-                        Ok(Err(e)) => {
-                            // Pop script_dir and restore state
-                            crate::pop_script_dir();
-                            self.stack = saved_stack;
-                            self.frames = saved_frames;
-                            self.file = saved_file;
-                            self.source = saved_source;
-                            self.globals = saved_globals;
-                            return Err(self.create_error(ErrorKind::ImportError, &format!("Import error: {}", e)));
-                        }
-                        Err(_) => {
-                            crate::pop_script_dir();
-                            self.stack = saved_stack;
-                            self.frames = saved_frames;
-                            self.file = saved_file;
-                            self.source = saved_source;
-                            self.globals = saved_globals;
-                            return Err(self.create_error(ErrorKind::ImportError, "Import future cancelled"));
-                        }
+                        Ok(Ok(value)) => { self.stack.push(value); }
+                        Ok(Err(e)) => { crate::pop_script_dir(); self.stack = saved_stack; self.frames = saved_frames; self.file = saved_file; self.source = saved_source; self.globals = saved_globals; return Err(self.create_error(ErrorKind::ImportError, &format!("Import error: {}", e))); }
+                        Err(_) => { crate::pop_script_dir(); self.stack = saved_stack; self.frames = saved_frames; self.file = saved_file; self.source = saved_source; self.globals = saved_globals; return Err(self.create_error(ErrorKind::ImportError, "Import future cancelled")); }
                     }
                 }
-                ExecutionResult::Error(e) => {
-                    // Import had a runtime error - restore state and propagate
-                    crate::pop_script_dir();
-                    self.stack = saved_stack;
-                    self.frames = saved_frames;
-                    self.file = saved_file;
-                    self.source = saved_source;
-                    self.globals = saved_globals;
-                    return Err(e);
-                }
+                ExecutionResult::Error(e) => { crate::pop_script_dir(); self.stack = saved_stack; self.frames = saved_frames; self.file = saved_file; self.source = saved_source; self.globals = saved_globals; return Err(e); }
             }
         }
-
-        // Capture imported globals - take from the RwLock, not the Arc
         let imported_globals = std::mem::take(&mut *self.globals.write().unwrap());
-
-        // Pop script directory for this import (back to caller's dir)
         crate::pop_script_dir();
-
-        // Restore VM state
         self.stack = saved_stack;
         self.frames = saved_frames;
         self.file = saved_file;
         self.source = saved_source;
         self.globals = saved_globals;
-
         Ok(imported_globals)
+    }
+
+    // ==================== Error Handling ====================
+
+    fn create_error(&self, kind: ErrorKind, message: &str) -> SaldError {
+        let (span, file) = if !self.frames.is_empty() {
+            let frame = self.current_frame();
+            let f = if frame.function.file.is_empty() { &self.file } else { &frame.function.file };
+            (frame.current_span(), f)
+        } else {
+            (Span::default(), &self.file)
+        };
+        let mut error = SaldError::new(kind, message, span, file);
+        if file == &self.file { error = error.with_source(&self.source); }
+        else if let Ok(source) = std::fs::read_to_string(file) { error = error.with_source(&source); }
+        let mut stack_trace = Vec::new();
+        for frame in self.frames.iter().rev() {
+            let frame_span = frame.current_span();
+            stack_trace.push(StackFrame::new(&frame.function.name, if frame.function.file.is_empty() { &self.file } else { &frame.function.file }, frame_span.start.line, frame_span.start.column));
+        }
+        error.with_stack_trace(stack_trace)
+    }
+
+    fn handle_native_error(&mut self, error_msg: String) -> SaldResult<()> {
+        if let Some(handler) = self.exception_handlers.pop() {
+            while self.frames.len() > handler.frame_index + 1 { self.frames.pop(); }
+            while self.stack.len() > handler.stack_size { self.stack.pop(); }
+            self.stack.push(Value::String(Arc::new(error_msg)));
+            self.current_frame_mut().ip = handler.catch_ip;
+            Ok(())
+        } else {
+            Err(self.create_error(ErrorKind::RuntimeError, &format!("Uncaught exception: {}", error_msg)))
+        }
     }
 }
 
 impl Default for VM {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
