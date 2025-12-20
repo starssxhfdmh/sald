@@ -21,6 +21,20 @@
 
 ## Installation
 
+### Quick Install
+
+**Linux:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/starssxhfdmh/sald/main/install.sh | bash
+```
+
+**Windows:**
+```powershell
+irm https://raw.githubusercontent.com/starssxhfdmh/sald/main/install.ps1 | iex
+```
+
+### Build from Source
+
 ```bash
 git clone https://github.com/starssxhfdmh/sald.git
 cd sald && cargo build --release
