@@ -87,6 +87,7 @@ pub enum ErrorKind {
     ArgumentError,
     DivisionByZero,
     ImportError,
+    AccessError,
 }
 
 impl fmt::Display for ErrorKind {
@@ -102,6 +103,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::ArgumentError => write!(f, "ArgumentError"),
             ErrorKind::DivisionByZero => write!(f, "DivisionByZero"),
             ErrorKind::ImportError => write!(f, "ImportError"),
+            ErrorKind::AccessError => write!(f, "AccessError"),
         }
     }
 }
