@@ -342,11 +342,15 @@ impl VM {
     main_function.file = file.to_string();
     let main_function = Arc::new(main_function);
 
+        // Remember current stack position BEFORE pushing placeholder
+        // This is important for REPL where VM is reused and stack may have values from previous runs
+        let slots_start = self.stack.len();
+        
         // Push a placeholder for the reserved slot 0 (like how functions have
         // their closure in slot 0). This keeps slot indices in sync.
         self.stack.push(Value::Null);
 
-        self.frames.push(CallFrame::new(main_function, 0));
+        self.frames.push(CallFrame::new(main_function, slots_start));
 
         // Run the event loop - this handles all suspend/resume
         let result = self.run_event_loop().await;
@@ -446,15 +450,13 @@ impl VM {
                     if !self.exception_handlers.is_empty() {
                         // Route through exception handler
                         if let Err(handler_err) = self.handle_native_error(e.message.clone()) {
-                            // Handler itself failed, print and return error
-                            eprintln!("{}", handler_err);
+                            // Handler itself failed, return error (caller will print)
                             return ExecutionResult::Error(handler_err);
                         }
                         // Handler set up the catch block, continue execution
                         continue;
                     } else {
-                        // No handler - print error for CLI and return Error for programmatic handling
-                        eprintln!("{}", e);
+                        // No handler - return Error for programmatic handling (caller will print)
                         return ExecutionResult::Error(e);
                     }
                 }
