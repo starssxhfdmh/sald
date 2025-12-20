@@ -1804,7 +1804,7 @@ impl Parser {
                 let mut patterns = Vec::new();
 
                 loop {
-                    let pattern = self.expression()?;
+                    let pattern = self.parse_switch_pattern()?;
                     patterns.push(pattern);
 
                     // Check for comma (multiple patterns) or arrow (end of patterns)
@@ -1855,6 +1855,187 @@ impl Parser {
                 start_span.start.column,
                 end_token.span.end.line,
                 end_token.span.end.column,
+            ),
+        })
+    }
+    
+    /// Parse a switch pattern
+    fn parse_switch_pattern(&mut self) -> SaldResult<Pattern> {
+        let start_span = self.peek().span;
+        
+        // Check for array pattern [...]
+        if self.check(&TokenKind::LeftBracket) {
+            return self.parse_switch_array_pattern();
+        }
+        
+        // Check for dict pattern {...}
+        if self.check(&TokenKind::LeftBrace) {
+            return self.parse_switch_dict_pattern();
+        }
+        
+        // Parse as literal or binding
+        // Literals: numbers, strings, true, false, null
+        match &self.peek().kind {
+            TokenKind::Number(n) => {
+                let value = *n;
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: Literal::Number(value),
+                    span: start_span,
+                })
+            }
+            TokenKind::String(s) => {
+                let value = s.clone();
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: Literal::String(value),
+                    span: start_span,
+                })
+            }
+            TokenKind::True => {
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: Literal::Boolean(true),
+                    span: start_span,
+                })
+            }
+            TokenKind::False => {
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: Literal::Boolean(false),
+                    span: start_span,
+                })
+            }
+            TokenKind::Null => {
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: Literal::Null,
+                    span: start_span,
+                })
+            }
+            TokenKind::Identifier(_) => {
+                // Variable binding: x, or x if condition
+                let name = if let TokenKind::Identifier(n) = &self.peek().kind {
+                    n.clone()
+                } else {
+                    return Err(self.error("Expected identifier"));
+                };
+                self.advance();
+                
+                // Check for guard: x if condition
+                let guard = if self.check(&TokenKind::If) {
+                    self.advance(); // consume 'if'
+                    Some(Box::new(self.expression()?))
+                } else {
+                    None
+                };
+                
+                let end_span = self.previous().span;
+                Ok(Pattern::Binding {
+                    name,
+                    guard,
+                    span: Span::from_positions(
+                        start_span.start.line,
+                        start_span.start.column,
+                        end_span.end.line,
+                        end_span.end.column,
+                    ),
+                })
+            }
+            _ => {
+                Err(self.error("Expected a pattern (literal, identifier, array, or dict)"))
+            }
+        }
+    }
+    
+    /// Parse array pattern: [], [a], [a, b], [head, ...tail]
+    fn parse_switch_array_pattern(&mut self) -> SaldResult<Pattern> {
+        let start_span = self.advance().span; // consume '['
+        
+        let mut elements = Vec::new();
+        
+        while !self.check(&TokenKind::RightBracket) && !self.is_at_end() {
+            // Check for rest element ...name
+            if self.check(&TokenKind::DotDotDot) {
+                let rest_start = self.advance().span; // consume '...'
+                let name = if let TokenKind::Identifier(n) = &self.peek().kind {
+                    n.clone()
+                } else {
+                    return Err(self.error("Expected identifier after '...'"));
+                };
+                let rest_end = self.advance().span;
+                
+                elements.push(SwitchArrayElement::Rest {
+                    name,
+                    span: Span::from_positions(
+                        rest_start.start.line,
+                        rest_start.start.column,
+                        rest_end.end.line,
+                        rest_end.end.column,
+                    ),
+                });
+            } else {
+                // Parse a pattern element
+                let pattern = self.parse_switch_pattern()?;
+                elements.push(SwitchArrayElement::Single(pattern));
+            }
+            
+            // Check for comma or end
+            if !self.check(&TokenKind::RightBracket) {
+                self.consume(&TokenKind::Comma, "Expected ',' or ']' in array pattern")?;
+            }
+        }
+        
+        let end_span = self.consume(&TokenKind::RightBracket, "Expected ']' after array pattern")?;
+        
+        Ok(Pattern::Array {
+            elements,
+            span: Span::from_positions(
+                start_span.start.line,
+                start_span.start.column,
+                end_span.span.end.line,
+                end_span.span.end.column,
+            ),
+        })
+    }
+    
+    /// Parse dict pattern: {"key": binding}
+    fn parse_switch_dict_pattern(&mut self) -> SaldResult<Pattern> {
+        let start_span = self.advance().span; // consume '{'
+        
+        let mut entries = Vec::new();
+        
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            // Parse key (must be string literal)
+            let key = if let TokenKind::String(s) = &self.peek().kind {
+                s.clone()
+            } else {
+                return Err(self.error("Dict pattern keys must be string literals"));
+            };
+            self.advance();
+            
+            self.consume(&TokenKind::Colon, "Expected ':' after dict key")?;
+            
+            // Parse binding pattern
+            let pattern = self.parse_switch_pattern()?;
+            
+            entries.push((key, pattern));
+            
+            // Check for comma or end
+            if !self.check(&TokenKind::RightBrace) {
+                self.consume(&TokenKind::Comma, "Expected ',' or '}' in dict pattern")?;
+            }
+        }
+        
+        let end_span = self.consume(&TokenKind::RightBrace, "Expected '}' after dict pattern")?;
+        
+        Ok(Pattern::Dict {
+            entries,
+            span: Span::from_positions(
+                start_span.start.line,
+                start_span.start.column,
+                end_span.span.end.line,
+                end_span.span.end.column,
             ),
         })
     }

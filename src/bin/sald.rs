@@ -1030,7 +1030,7 @@ fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald::ast::Expr) {
                 tree.begin_child(format!("arm[{}]", i));
                 tree.begin_child("patterns".to_string());
                 for p in &arm.patterns {
-                    build_expr_tree(tree, p);
+                    build_pattern_tree(tree, p);
                 }
                 tree.end_child();
                 tree.begin_child("body".to_string());
@@ -1101,6 +1101,56 @@ fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald::ast::Expr) {
         Expr::Spread { expr, .. } => {
             tree.begin_child("Spread".to_string());
             build_expr_tree(tree, expr);
+            tree.end_child();
+        }
+    }
+}
+
+fn build_pattern_tree(tree: &mut ptree::TreeBuilder, pattern: &sald::ast::Pattern) {
+    use sald::ast::{Pattern, Literal, SwitchArrayElement};
+    
+    match pattern {
+        Pattern::Literal { value, .. } => {
+            let val_str = match value {
+                Literal::Number(n) => format!("{}", n),
+                Literal::String(s) => format!("\"{}\"", s),
+                Literal::Boolean(b) => format!("{}", b),
+                Literal::Null => "null".to_string(),
+            };
+            tree.add_empty_child(format!("Literal({})", val_str));
+        }
+        Pattern::Binding { name, guard, .. } => {
+            if guard.is_some() {
+                tree.begin_child(format!("Binding '{}' if ...", name));
+                if let Some(g) = guard {
+                    build_expr_tree(tree, g);
+                }
+                tree.end_child();
+            } else {
+                tree.add_empty_child(format!("Binding '{}'", name));
+            }
+        }
+        Pattern::Array { elements, .. } => {
+            tree.begin_child("ArrayPattern".to_string());
+            for elem in elements {
+                match elem {
+                    SwitchArrayElement::Single(sub) => {
+                        build_pattern_tree(tree, sub);
+                    }
+                    SwitchArrayElement::Rest { name, .. } => {
+                        tree.add_empty_child(format!("...{}", name));
+                    }
+                }
+            }
+            tree.end_child();
+        }
+        Pattern::Dict { entries, .. } => {
+            tree.begin_child("DictPattern".to_string());
+            for (key, sub) in entries {
+                tree.begin_child(format!("'{}':", key));
+                build_pattern_tree(tree, sub);
+                tree.end_child();
+            }
             tree.end_child();
         }
     }

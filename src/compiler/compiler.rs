@@ -1644,54 +1644,55 @@ impl Compiler {
         default: Option<&Expr>,
         span: Span,
     ) -> SaldResult<()> {
-        // Use span directly
+        // First, compile the value and store it in a local for repeated access
+        self.begin_scope();
+        self.compile_expr(value)?;
+        let value_slot = self.add_local_unnamed();
+        self.emit_op(OpCode::SetLocal, span);
+        self.emit_u16(value_slot as u16, span);
+        self.emit_op(OpCode::Pop, span);
 
         // Track all end jumps (to jump to after each arm)
         let mut end_jumps = Vec::new();
-
-        // For each arm, we need to:
-        // 1. Compare value against each pattern using OR logic
-        // 2. If any matches, execute body and jump to end
-        // 3. If none match, try next arm
 
         for arm in arms {
             let mut body_jumps = Vec::new();
 
             // For each pattern in the arm (e.g., 1, 2, 3 -> ...)
-            // Check each pattern: if true, jump to body; if false, pop and try next
             for pattern in &arm.patterns {
-                // Push the value to compare
-                self.compile_expr(value)?;
-                // Push the pattern
-                self.compile_expr(pattern)?;
-                // Compare
-                self.emit_op(OpCode::Equal, span);
-
-                // If true, jump to body (with true on stack)
-                body_jumps.push(self.emit_jump(OpCode::JumpIfTrue, span));
-                // Pop false and try next pattern
-                self.emit_op(OpCode::Pop, span);
+                // Compile pattern match - returns jump offset if match fails
+                let fail_jump = self.compile_pattern_match(value_slot, pattern, span)?;
+                if fail_jump != 0 {
+                    body_jumps.push((fail_jump, true)); // needs patch to go to body on success
+                } else {
+                    // Pattern always matches (e.g. binding without guard)
+                    body_jumps.push((self.emit_jump(OpCode::Jump, span), false));
+                }
             }
 
             // All patterns failed, jump to next arm
             let next_arm_jump = self.emit_jump(OpCode::Jump, span);
 
-            // BODY: Patch all body jumps to here
-            for jump in body_jumps {
-                self.patch_jump(jump);
+            // BODY: Patch all successful pattern jumps to here
+            for (jump, was_conditional) in &body_jumps {
+                if *jump != 0 {
+                    if *was_conditional {
+                        // For conditional jumps, patch to here
+                        self.patch_jump(*jump);
+                        self.emit_op(OpCode::Pop, span); // pop the true
+                    } else {
+                        self.patch_jump(*jump);
+                    }
+                }
             }
-            // All body jumps arrive with 'true' on stack, pop it
-            self.emit_op(OpCode::Pop, span);
 
-            // Create a new scope for the arm body so each arm has its own locals
+            // Create a new scope for the arm body
             self.begin_scope();
             
             // Compile arm body
             self.compile_expr(&arm.body)?;
             
-            // End scope - but we need to keep the result value on the stack
-            // For switch expression, we must NOT pop the result value
-            // So we manually pop only the locals that were declared in this arm
+            // End scope but keep result
             self.end_scope_keep_result();
 
             // Jump to end
@@ -1701,7 +1702,7 @@ impl Compiler {
             self.patch_jump(next_arm_jump);
         }
 
-        // Compile default arm or push null (also in its own scope)
+        // Compile default arm or push null
         if let Some(default_expr) = default {
             self.begin_scope();
             self.compile_expr(default_expr)?;
@@ -1715,8 +1716,208 @@ impl Compiler {
             self.patch_jump(jump);
         }
 
+        // End outer scope (value slot)
+        self.end_scope_keep_result();
+
         Ok(())
     }
+
+    /// Helper to add an unnamed local for switch value
+    fn add_local_unnamed(&mut self) -> usize {
+        let scope = self.current_scope_mut();
+        let slot = scope.locals.len();
+        scope.locals.push(Local {
+            name: String::new(),
+            depth: scope.scope_depth,
+            initialized: true,
+            is_captured: false,
+        });
+        slot
+    }
+
+    /// Helper to add a named local for pattern binding
+    fn add_binding_local(&mut self, name: &str, span: Span) -> SaldResult<usize> {
+        self.declare_local(name, span)?;
+        self.mark_initialized();
+        Ok(self.current_scope().locals.len() - 1)
+    }
+
+    /// Compile a pattern match, returning the jump offset for failed match
+    /// Returns 0 if pattern always matches (unconditional binding)
+    fn compile_pattern_match(
+        &mut self,
+        value_slot: usize,
+        pattern: &Pattern,
+        span: Span,
+    ) -> SaldResult<usize> {
+        match pattern {
+            Pattern::Literal { value, .. } => {
+                // Push value, push literal, compare
+                self.emit_op(OpCode::GetLocal, span);
+                self.emit_u16(value_slot as u16, span);
+                self.compile_literal(value, span)?;
+                self.emit_op(OpCode::Equal, span);
+                Ok(self.emit_jump(OpCode::JumpIfTrue, span))
+            }
+            
+            Pattern::Binding { name, guard, .. } => {
+                // Bind the value to a new local
+                let bind_slot = self.add_binding_local(name, span)?;
+                self.emit_op(OpCode::GetLocal, span);
+                self.emit_u16(value_slot as u16, span);
+                self.emit_op(OpCode::SetLocal, span);
+                self.emit_u16(bind_slot as u16, span);
+                self.emit_op(OpCode::Pop, span);
+                
+                // If there's a guard, compile it
+                if let Some(guard_expr) = guard {
+                    self.compile_expr(guard_expr)?;
+                    Ok(self.emit_jump(OpCode::JumpIfTrue, span))
+                } else {
+                    // Always matches (unconditional)
+                    Ok(0)
+                }
+            }
+            
+            Pattern::Array { elements, .. } => {
+                // Check length matches (or has enough elements for rest pattern)
+                let has_rest = elements.iter().any(|e| matches!(e, SwitchArrayElement::Rest { .. }));
+                let non_rest_count = elements.iter().filter(|e| matches!(e, SwitchArrayElement::Single(_))).count();
+                
+                // Get array length: value.length()
+                self.emit_op(OpCode::GetLocal, span);
+                self.emit_u16(value_slot as u16, span);
+                // Use Invoke to call length method
+                let length_idx = self.current_chunk().add_constant(Constant::String("length".to_string()));
+                self.emit_op(OpCode::Invoke, span);
+                self.emit_u16(length_idx as u16, span);
+                self.emit_u16(0, span); // 0 args
+                
+                // Compare length
+                let expected_len = if has_rest { non_rest_count } else { elements.len() };
+                let len_const = self.current_chunk().add_constant(Constant::Number(expected_len as f64));
+                self.emit_op(OpCode::Constant, span);
+                self.emit_u16(len_const as u16, span);
+                
+                if has_rest {
+                    self.emit_op(OpCode::GreaterEqual, span);
+                } else {
+                    self.emit_op(OpCode::Equal, span);
+                }
+                
+                let length_fail = self.emit_jump(OpCode::JumpIfFalse, span);
+                self.emit_op(OpCode::Pop, span);
+                
+                // Bind each element
+                let mut idx = 0;
+                for element in elements {
+                    match element {
+                        SwitchArrayElement::Single(sub_pattern) => {
+                            // Get arr[idx]
+                            self.emit_op(OpCode::GetLocal, span);
+                            self.emit_u16(value_slot as u16, span);
+                            let idx_const = self.current_chunk().add_constant(Constant::Number(idx as f64));
+                            self.emit_op(OpCode::Constant, span);
+                            self.emit_u16(idx_const as u16, span);
+                            self.emit_op(OpCode::GetIndex, span);
+                            
+                            // Create temp slot for this element
+                            let elem_slot = self.add_local_unnamed();
+                            self.emit_op(OpCode::SetLocal, span);
+                            self.emit_u16(elem_slot as u16, span);
+                            self.emit_op(OpCode::Pop, span);
+                            
+                            // Match sub-pattern against this element
+                            let sub_fail = self.compile_pattern_match(elem_slot, sub_pattern, span)?;
+                            if sub_fail != 0 {
+                                // Sub-pattern failed
+                                self.emit_op(OpCode::Pop, span);
+                                self.patch_jump(sub_fail);
+                                return Ok(length_fail);
+                            }
+                            
+                            idx += 1;
+                        }
+                        SwitchArrayElement::Rest { name, .. } => {
+                            // Rest gets slice from idx to end: arr.slice(idx)
+                            self.emit_op(OpCode::GetLocal, span);
+                            self.emit_u16(value_slot as u16, span);
+                            let idx_const = self.current_chunk().add_constant(Constant::Number(idx as f64));
+                            self.emit_op(OpCode::Constant, span);
+                            self.emit_u16(idx_const as u16, span);
+                            let slice_idx = self.current_chunk().add_constant(Constant::String("slice".to_string()));
+                            self.emit_op(OpCode::Invoke, span);
+                            self.emit_u16(slice_idx as u16, span);
+                            self.emit_u16(1, span); // 1 arg
+                            
+                            let rest_slot = self.add_binding_local(name, span)?;
+                            self.emit_op(OpCode::SetLocal, span);
+                            self.emit_u16(rest_slot as u16, span);
+                            self.emit_op(OpCode::Pop, span);
+                        }
+                    }
+                }
+                
+                // All matched
+                self.emit_op(OpCode::True, span);
+                let success_jump = self.emit_jump(OpCode::JumpIfTrue, span);
+                
+                // Patch length fail to here
+                self.patch_jump(length_fail);
+                
+                Ok(success_jump)
+            }
+            
+            Pattern::Dict { entries, .. } => {
+                // For each entry, check if key exists and bind value
+                let mut first_fail: Option<usize> = None;
+                
+                for (key, sub_pattern) in entries {
+                    // Get dict[key]
+                    self.emit_op(OpCode::GetLocal, span);
+                    self.emit_u16(value_slot as u16, span);
+                    let key_const = self.current_chunk().add_constant(Constant::String(key.clone()));
+                    self.emit_op(OpCode::Constant, span);
+                    self.emit_u16(key_const as u16, span);
+                    self.emit_op(OpCode::GetIndex, span);
+                    
+                    // Store in temp slot
+                    let elem_slot = self.add_local_unnamed();
+                    self.emit_op(OpCode::SetLocal, span);
+                    self.emit_u16(elem_slot as u16, span);
+                    self.emit_op(OpCode::Pop, span);
+                    
+                    // Check not null (key exists)
+                    self.emit_op(OpCode::GetLocal, span);
+                    self.emit_u16(elem_slot as u16, span);
+                    self.emit_op(OpCode::Null, span);
+                    self.emit_op(OpCode::NotEqual, span);
+                    let key_fail = self.emit_jump(OpCode::JumpIfFalse, span);
+                    self.emit_op(OpCode::Pop, span);
+                    
+                    if first_fail.is_none() {
+                        first_fail = Some(key_fail);
+                    }
+                    
+                    // Match sub-pattern
+                    let sub_fail = self.compile_pattern_match(elem_slot, sub_pattern, span)?;
+                    if sub_fail != 0 {
+                        self.emit_op(OpCode::Pop, span);
+                        self.patch_jump(sub_fail);
+                        self.patch_jump(key_fail);
+                        return Ok(first_fail.unwrap_or(key_fail));
+                    }
+                    
+                    self.patch_jump(key_fail);
+                }
+                
+                // All matched
+                self.emit_op(OpCode::True, span);
+                Ok(self.emit_jump(OpCode::JumpIfTrue, span))
+            }
+        }
+    }
+
 
 
     fn compile_literal(&mut self, value: &Literal, span: Span) -> SaldResult<()> {

@@ -20,6 +20,8 @@ mod string;
 mod timer;
 mod types;
 mod system;
+mod crypto;
+mod regex;
 
 use crate::vm::value::Value;
 use std::collections::HashMap;
@@ -43,6 +45,8 @@ pub use string::create_string_class;
 pub use timer::create_timer_class;
 pub use types::create_type_class;
 pub use system::create_system_class;
+pub use crypto::create_crypto_class;
+pub use regex::create_regex_class;
 
 /// Native function signature for static methods (no receiver)
 pub type NativeStaticFn = fn(&[Value]) -> Result<Value, String>;
@@ -128,6 +132,14 @@ pub fn create_builtin_classes() -> HashMap<String, Value> {
     classes.insert(
         "System".to_string(),
         Value::Class(Arc::new(create_system_class())),
+    );
+    classes.insert(
+        "Crypto".to_string(),
+        Value::Class(Arc::new(create_crypto_class())),
+    );
+    classes.insert(
+        "Regex".to_string(),
+        Value::Class(Arc::new(create_regex_class())),
     );
 
     classes

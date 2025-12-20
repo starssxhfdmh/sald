@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
 
-use crate::ast::{Expr, Program, Stmt, FunctionDef, LambdaBody};
+use crate::ast::{Expr, Program, Stmt, FunctionDef, LambdaBody, Pattern, SwitchArrayElement};
 use crate::error::Span;
 use super::symbols::span_to_range;
 
@@ -344,6 +344,39 @@ impl SemanticAnalyzer {
         self.pop_scope();
     }
 
+    fn analyze_pattern(&mut self, pattern: &Pattern) {
+        match pattern {
+            Pattern::Literal { .. } => {
+                // Literals don't need analysis
+            }
+            Pattern::Binding { name, guard, span } => {
+                // Define the binding variable
+                self.define_var(name, span, false);
+                // Analyze guard expression if present
+                if let Some(guard_expr) = guard {
+                    self.analyze_expr(guard_expr);
+                }
+            }
+            Pattern::Array { elements, .. } => {
+                for elem in elements {
+                    match elem {
+                        SwitchArrayElement::Single(sub_pattern) => {
+                            self.analyze_pattern(sub_pattern);
+                        }
+                        SwitchArrayElement::Rest { name, span } => {
+                            self.define_var(name, span, false);
+                        }
+                    }
+                }
+            }
+            Pattern::Dict { entries, .. } => {
+                for (_, sub_pattern) in entries {
+                    self.analyze_pattern(sub_pattern);
+                }
+            }
+        }
+    }
+
     fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Identifier { name, span } => {
@@ -454,7 +487,7 @@ impl SemanticAnalyzer {
                 self.analyze_expr(value);
                 for arm in arms {
                     for pattern in &arm.patterns {
-                        self.analyze_expr(pattern);
+                        self.analyze_pattern(pattern);
                     }
                     self.analyze_expr(&arm.body);
                 }

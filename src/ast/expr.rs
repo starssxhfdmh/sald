@@ -275,11 +275,57 @@ pub enum Expr {
     Spread { expr: Box<Expr>, span: Span },
 }
 
+/// Pattern for switch expression matching
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// Literal value pattern: 1, "hello", true
+    Literal { value: Literal, span: Span },
+    
+    /// Variable binding with optional guard: n, n if n > 0
+    Binding {
+        name: String,
+        guard: Option<Box<Expr>>,
+        span: Span,
+    },
+    
+    /// Array destructuring pattern: [], [a], [a, b], [head, ...tail]
+    Array {
+        elements: Vec<SwitchArrayElement>,
+        span: Span,
+    },
+    
+    /// Dictionary destructuring pattern: {"key": binding, "key2": binding2}
+    Dict {
+        entries: Vec<(String, Pattern)>,
+        span: Span,
+    },
+}
+
+impl Pattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Literal { span, .. } => *span,
+            Pattern::Binding { span, .. } => *span,
+            Pattern::Array { span, .. } => *span,
+            Pattern::Dict { span, .. } => *span,
+        }
+    }
+}
+
+/// Element in a switch array pattern (different from ArrayPatternElement in stmt)
+#[derive(Debug, Clone)]
+pub enum SwitchArrayElement {
+    /// Single pattern element
+    Single(Pattern),
+    /// Rest pattern: ...name
+    Rest { name: String, span: Span },
+}
+
 /// A single arm of a switch expression
 #[derive(Debug, Clone)]
 pub struct SwitchArm {
     /// Patterns to match (can be multiple: 1, 2, 3 -> expr)
-    pub patterns: Vec<Expr>,
+    pub patterns: Vec<Pattern>,
     /// Body expression
     pub body: Expr,
     pub span: Span,
