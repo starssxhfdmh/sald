@@ -379,6 +379,10 @@ impl SemanticAnalyzer {
                 self.analyze_expr(start);
                 self.analyze_expr(end);
             }
+            Pattern::Expression { expr, .. } => {
+                // Analyze the expression (e.g., Enum.Member)
+                self.analyze_expr(expr);
+            }
         }
     }
 

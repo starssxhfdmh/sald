@@ -1907,6 +1907,16 @@ impl Compiler {
                 // Return the success jump offset
                 Ok(Some(second_test_jump))
             }
+            
+            Pattern::Expression { expr, .. } => {
+                // Expression pattern: evaluate expression and compare for equality
+                // Used for Enum.Member, Class.CONSTANT, etc.
+                self.emit_op(OpCode::GetLocal, span);
+                self.emit_u16(value_slot as u16, span);
+                self.compile_expr(expr)?;
+                self.emit_op(OpCode::Equal, span);
+                Ok(Some(self.emit_jump(OpCode::JumpIfTrue, span)))
+            }
         }
     }
 
@@ -1996,6 +2006,11 @@ impl Compiler {
             
             Pattern::Range { .. } => {
                 // Range patterns don't create bindings
+                Ok(())
+            }
+            
+            Pattern::Expression { .. } => {
+                // Expression patterns don't create bindings
                 Ok(())
             }
         }

@@ -1167,5 +1167,8 @@ fn build_pattern_tree(tree: &mut ptree::TreeBuilder, pattern: &sald::ast::Patter
             build_expr_tree(tree, end);
             tree.end_child();
         }
+        Pattern::Expression { .. } => {
+            tree.add_empty_child("ExpressionPattern".to_string());
+        }
     }
 }

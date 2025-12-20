@@ -315,6 +315,13 @@ pub enum Pattern {
         inclusive: bool,
         span: Span,
     },
+    
+    /// Expression pattern: Enum.Member, SomeClass.CONSTANT, etc.
+    /// Evaluated at runtime and compared for equality
+    Expression {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Pattern {
@@ -325,6 +332,7 @@ impl Pattern {
             Pattern::Array { span, .. } => *span,
             Pattern::Dict { span, .. } => *span,
             Pattern::Range { span, .. } => *span,
+            Pattern::Expression { span, .. } => *span,
         }
     }
 }

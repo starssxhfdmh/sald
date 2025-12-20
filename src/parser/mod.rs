@@ -1977,7 +1977,8 @@ impl Parser {
                 })
             }
             TokenKind::Identifier(_) => {
-                // Variable binding: x, or x if condition
+                // Check if this is an expression pattern (e.g., Enum.Member)
+                // Look ahead to see if identifier is followed by a dot
                 let name = if let TokenKind::Identifier(n) = &self.peek().kind {
                     n.clone()
                 } else {
@@ -1985,6 +1986,50 @@ impl Parser {
                 };
                 self.advance();
                 
+                // If followed by a dot, this is an expression pattern (Enum.Member, etc.)
+                if self.check(&TokenKind::Dot) {
+                    // Build expression starting with the identifier
+                    let mut expr = Expr::Identifier {
+                        name: name.clone(),
+                        span: start_span,
+                    };
+                    
+                    // Keep parsing property accesses
+                    while self.match_token(&TokenKind::Dot) {
+                        let property = if let TokenKind::Identifier(prop) = &self.peek().kind {
+                            prop.clone()
+                        } else {
+                            return Err(self.error("Expected property name after '.'"));
+                        };
+                        self.advance();
+                        
+                        let end_span = self.previous().span;
+                        expr = Expr::Get {
+                            object: Box::new(expr),
+                            property,
+                            is_optional: false,
+                            span: Span::from_positions(
+                                start_span.start.line,
+                                start_span.start.column,
+                                end_span.end.line,
+                                end_span.end.column,
+                            ),
+                        };
+                    }
+                    
+                    let end_span = self.previous().span;
+                    return Ok(Pattern::Expression {
+                        expr: Box::new(expr),
+                        span: Span::from_positions(
+                            start_span.start.line,
+                            start_span.start.column,
+                            end_span.end.line,
+                            end_span.end.column,
+                        ),
+                    });
+                }
+                
+                // Variable binding: x, or x if condition
                 // Check for guard: x if condition
                 let guard = if self.check(&TokenKind::If) {
                     self.advance(); // consume 'if'
