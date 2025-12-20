@@ -42,35 +42,95 @@ impl Parser {
     // ==================== Declarations ====================
 
     fn declaration(&mut self) -> SaldResult<Stmt> {
+        // Check for decorators first
+        let decorators = self.parse_decorators()?;
+        
         if self.check(&TokenKind::Let) {
+            if !decorators.is_empty() {
+                return Err(self.error("Decorators cannot be applied to variable declarations"));
+            }
             self.let_declaration()
         } else if self.check(&TokenKind::Const) {
+            if !decorators.is_empty() {
+                return Err(self.error("Decorators cannot be applied to constant declarations"));
+            }
             self.const_declaration()
         } else if self.check(&TokenKind::Async) {
             // async fun name() { }
             self.advance(); // consume 'async'
             if self.check(&TokenKind::Fun) {
-                self.function_declaration(false, true)
+                self.function_declaration(false, true, decorators)
             } else {
                 Err(self
                     .error("Expected 'fun' after 'async'")
                     .with_help("Use 'async fun name() { }' to declare an async function"))
             }
         } else if self.check(&TokenKind::Fun) {
-            self.function_declaration(false, false)
+            self.function_declaration(false, false, decorators)
         } else if self.check(&TokenKind::Class) {
-            self.class_declaration()
+            self.class_declaration(decorators)
         } else if self.check(&TokenKind::Namespace) {
+            if !decorators.is_empty() {
+                return Err(self.error("Decorators cannot be applied to namespace declarations"));
+            }
             self.namespace_declaration()
         } else if self.check(&TokenKind::Enum) {
+            if !decorators.is_empty() {
+                return Err(self.error("Decorators cannot be applied to enum declarations"));
+            }
             self.enum_declaration()
         } else if self.check(&TokenKind::Interface) {
+            if !decorators.is_empty() {
+                return Err(self.error("Decorators cannot be applied to interface declarations"));
+            }
             self.interface_declaration()
         } else if self.check(&TokenKind::Import) {
+            if !decorators.is_empty() {
+                return Err(self.error("Decorators cannot be applied to import statements"));
+            }
             self.import_statement()
         } else {
+            if !decorators.is_empty() {
+                return Err(self.error("Decorators can only be applied to functions and classes"));
+            }
             self.statement()
         }
+    }
+
+    /// Parse decorators: @name or @name(args)
+    fn parse_decorators(&mut self) -> SaldResult<Vec<Decorator>> {
+        let mut decorators = Vec::new();
+        
+        while self.check(&TokenKind::At) {
+            let start = self.advance().span; // consume @
+            let name_token = self.consume_identifier("Expected decorator name after '@'")?;
+            let name = name_token.lexeme.clone();
+            
+            // Optional arguments
+            let args = if self.match_token(&TokenKind::LeftParen) {
+                let mut args = Vec::new();
+                if !self.check(&TokenKind::RightParen) {
+                    loop {
+                        args.push(self.expression()?);
+                        if !self.match_token(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(&TokenKind::RightParen, "Expected ')' after decorator arguments")?;
+                args
+            } else {
+                Vec::new()
+            };
+            
+            decorators.push(Decorator {
+                name,
+                args,
+                span: start,
+            });
+        }
+        
+        Ok(decorators)
     }
 
     fn let_declaration(&mut self) -> SaldResult<Stmt> {
@@ -197,7 +257,7 @@ impl Parser {
         })
     }
 
-    fn function_declaration(&mut self, is_static: bool, is_async: bool) -> SaldResult<Stmt> {
+    fn function_declaration(&mut self, is_static: bool, is_async: bool, decorators: Vec<Decorator>) -> SaldResult<Stmt> {
         let start_span = self.advance().span; // consume 'fun'
 
         let name_token = self.consume_identifier("Expected function name")?;
@@ -220,6 +280,7 @@ impl Parser {
                 body,
                 is_static,
                 is_async,
+                decorators,
                 span: Span::from_positions(
                     start_span.start.line,
                     start_span.start.column,
@@ -289,7 +350,7 @@ impl Parser {
         Ok(params)
     }
 
-    fn class_declaration(&mut self) -> SaldResult<Stmt> {
+    fn class_declaration(&mut self, decorators: Vec<Decorator>) -> SaldResult<Stmt> {
         let start_span = self.advance().span; // consume 'class'
 
         let name_token = self.consume_identifier("Expected class name")?;
@@ -324,6 +385,9 @@ impl Parser {
         let mut methods = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            // Parse method decorators
+            let method_decorators = self.parse_decorators()?;
+            
             // Check for async fun in class methods
             let is_async = self.match_token(&TokenKind::Async);
 
@@ -333,7 +397,7 @@ impl Parser {
                     .with_help("Class body can only contain method definitions"));
             }
 
-            if let Stmt::Function { def } = self.function_declaration(false, is_async)? {
+            if let Stmt::Function { def } = self.function_declaration(false, is_async, method_decorators)? {
                 // Auto-detect static: method is static if first param is NOT 'self'
                 let is_static = def.params.first().map(|p| p.name != "self").unwrap_or(true);
                 methods.push(FunctionDef { is_static, ..def });
@@ -349,6 +413,7 @@ impl Parser {
                 superclass,
                 implements,
                 methods,
+                decorators,
                 span: Span::from_positions(
                     start_span.start.line,
                     start_span.start.column,

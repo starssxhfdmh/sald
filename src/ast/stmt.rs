@@ -12,6 +12,14 @@ pub struct FunctionParam {
     pub span: Span,
 }
 
+/// Decorator applied to functions/classes
+#[derive(Debug, Clone)]
+pub struct Decorator {
+    pub name: String,
+    pub args: Vec<Expr>,
+    pub span: Span,
+}
+
 /// Function definition (used in class methods and standalone functions)
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
@@ -20,6 +28,7 @@ pub struct FunctionDef {
     pub body: Vec<Stmt>,
     pub is_static: bool,
     pub is_async: bool,
+    pub decorators: Vec<Decorator>,
     pub span: Span,
 }
 
@@ -30,6 +39,7 @@ pub struct ClassDef {
     pub superclass: Option<String>,
     pub implements: Vec<String>,
     pub methods: Vec<FunctionDef>,
+    pub decorators: Vec<Decorator>,
     pub span: Span,
 }
 

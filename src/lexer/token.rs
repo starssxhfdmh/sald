@@ -110,6 +110,7 @@ pub enum TokenKind {
     GreaterGreater,  // >> (right shift)
 
     // Special
+    At,      // @ (decorator prefix)
     Newline,
     Eof,
 }
@@ -200,6 +201,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Tilde => write!(f, "~"),
             TokenKind::LessLess => write!(f, "<<"),
             TokenKind::GreaterGreater => write!(f, ">>"),
+            TokenKind::At => write!(f, "@"),
             TokenKind::Newline => write!(f, "\\n"),
             TokenKind::Eof => write!(f, "EOF"),
         }

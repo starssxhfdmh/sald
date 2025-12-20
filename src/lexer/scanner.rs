@@ -189,6 +189,7 @@ impl Scanner {
                 }
             }
             '^' => self.add_token(TokenKind::Caret),
+            '@' => self.add_token(TokenKind::At),
             '~' => self.add_token(TokenKind::Tilde),
 
             // Whitespace
