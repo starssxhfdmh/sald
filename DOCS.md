@@ -522,56 +522,164 @@ class Circle implements Drawable {
 
 ### Decorators
 
-Decorators are annotations that modify functions or classes:
+Decorators are functions that wrap other functions to modify their behavior. They use the `@` syntax.
+
+#### Using Built-in Decorators
 
 ```javascript
-// Simple decorator
-@test
+// @Test marks a function for the test runner
+@Test
 fun test_addition() {
     Test.assert_eq(1 + 1, 2)
 }
+```
 
-// Decorator with arguments  
-@test("Addition should work correctly")
-fun test_math() {
-    Test.assert(2 + 2 == 4)
+#### Creating User-Defined Decorators
+
+A decorator is simply a function that takes a function and returns a new function:
+
+```javascript
+// Simple logging decorator
+fun log_calls(fn) {
+    return |...args| {
+        Console.println($"[LOG] Calling with args: {args}")
+        let result = fn(...args)
+        Console.println($"[LOG] Result: {result}")
+        return result
+    }
 }
 
-// Multiple decorators
-@deprecated
-@test
-fun test_old_api() {
-    // ...
+// Apply the decorator
+@log_calls
+fun add(a, b) {
+    return a + b
+}
+
+add(5, 3)
+// Output:
+// [LOG] Calling with args: [5, 3]
+// [LOG] Result: 8
+```
+
+#### Decorators with Arguments
+
+For decorators that need arguments, use the factory pattern (a function that returns a decorator):
+
+```javascript
+// Decorator factory
+fun prefix(msg) {
+    return |fn| {
+        return |...args| {
+            Console.println($"[{msg}] Before call")
+            let result = fn(...args)
+            Console.println($"[{msg}] After call")
+            return result
+        }
+    }
+}
+
+// Apply with argument
+@prefix("MATH")
+fun multiply(a, b) {
+    return a * b
+}
+
+multiply(4, 5)
+// Output:
+// [MATH] Before call
+// [MATH] After call
+```
+
+#### Multiple Decorators
+
+Decorators are applied bottom-to-top:
+
+```javascript
+@log_calls
+@prefix("CALC")
+fun double_value(x) {
+    return x * 2
+}
+
+// Equivalent to: log_calls(prefix("CALC")(double_value))
+```
+
+#### Common Decorator Patterns
+
+```javascript
+// Memoization (caching)
+fun memoize(fn) {
+    let cache = {}
+    return |...args| {
+        let key = args.join(",")
+        if cache[key] != null {
+            return cache[key]
+        }
+        let result = fn(...args)
+        cache[key] = result
+        return result
+    }
+}
+
+// Timing decorator
+fun timed(fn) {
+    return |...args| {
+        let start = Timer.now()
+        let result = fn(...args)
+        Console.println($"Took {Timer.now() - start}ms")
+        return result
+    }
+}
+
+// Retry decorator
+fun retry(times) {
+    return |fn| {
+        return |...args| {
+            for i in 0..<times {
+                try {
+                    return fn(...args)
+                } catch e {
+                    Console.println($"Attempt {i + 1} failed")
+                }
+            }
+            throw $"Failed after {times} attempts"
+        }
+    }
+}
+
+@retry(3)
+fun unstable_operation() {
+    // May fail, will retry up to 3 times
 }
 ```
 
 ### Testing Framework
 
-Built-in testing with the `@test` decorator and `Test` class:
+Built-in testing with the `@Test` decorator and `Test` class:
 
 ```javascript
 // tests/math_test.sald
 
-@test
+@Test
 fun test_addition() {
     Test.assert_eq(1 + 1, 2)
     Test.assert_eq(10 + 5, 15)
 }
 
-@test
+@Test
 fun test_strings() {
     let s = "Hello"
     Test.assert_eq(s.length(), 5)
     Test.assert_ne(s, "World")
 }
 
-@test
+@Test
 fun test_boolean() {
     Test.assert(true)
     Test.assert(5 > 3)
 }
 
-@test
+@Test
 fun test_failure_example() {
     Test.fail("This test always fails")
 }
