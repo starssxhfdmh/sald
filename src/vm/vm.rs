@@ -36,15 +36,21 @@ struct CallFrame {
     ip: usize,
     slots_start: usize,
     init_instance: Option<Value>,
+    /// Class context for private access checking (Some if this is an instance method)
+    class_context: Option<String>,
 }
 
 impl CallFrame {
     fn new(function: Arc<Function>, slots_start: usize) -> Self {
-        Self { function, ip: 0, slots_start, init_instance: None }
+        Self { function, ip: 0, slots_start, init_instance: None, class_context: None }
     }
 
-    fn new_init(function: Arc<Function>, slots_start: usize, instance: Value) -> Self {
-        Self { function, ip: 0, slots_start, init_instance: Some(instance) }
+    fn new_with_class(function: Arc<Function>, slots_start: usize, class_name: String) -> Self {
+        Self { function, ip: 0, slots_start, init_instance: None, class_context: Some(class_name) }
+    }
+
+    fn new_init_with_class(function: Arc<Function>, slots_start: usize, instance: Value, class_name: String) -> Self {
+        Self { function, ip: 0, slots_start, init_instance: Some(instance), class_context: Some(class_name) }
     }
 
     #[inline(always)]
@@ -90,6 +96,8 @@ pub struct VM {
     gc_stats_enabled: bool,
     pending_module_workspace: Option<std::path::PathBuf>,
     args: Vec<String>,
+    /// Stack of namespace names for private access checking
+    namespace_context: Vec<String>,
 }
 
 // ==================== Dispatch Table ====================
@@ -1143,6 +1151,7 @@ impl VM {
             gc_stats_enabled: false,
             pending_module_workspace: None,
             args: Vec::new(),
+            namespace_context: Vec::new(),
         }
     }
 
@@ -1160,6 +1169,7 @@ impl VM {
             gc_stats_enabled: false,
             pending_module_workspace: None,
             args: Vec::new(),
+            namespace_context: Vec::new(),
         }
     }
 
@@ -1195,6 +1205,34 @@ impl VM {
     fn track_array(&mut self, arr: &Arc<Mutex<Vec<Value>>>) { self.gc.track_array(arr); }
     fn track_dict(&mut self, dict: &Arc<Mutex<HashMap<String, Value>>>) { self.gc.track_dict(dict); }
     fn track_instance(&mut self, inst: &Arc<Mutex<Instance>>) { self.gc.track_instance(inst); }
+
+    // ==================== Private Access Checking ====================
+
+    /// Check if identifier is private (starts with _)
+    #[inline(always)]
+    fn is_private(name: &str) -> bool {
+        name.starts_with('_') && name.len() > 1
+    }
+
+    /// Check if we're currently inside the given class (or any parent class in the call stack)
+    #[inline(always)]
+    fn is_in_class(&self, class_name: &str) -> bool {
+        // Check if any frame in the call stack has the matching class context
+        for frame in self.frames.iter().rev() {
+            if let Some(ref ctx) = frame.class_context {
+                if ctx == class_name {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if we're currently inside the given namespace
+    #[inline(always)]
+    fn is_in_namespace(&self, namespace_name: &str) -> bool {
+        self.namespace_context.last().map(|s| s == namespace_name).unwrap_or(false)
+    }
 
     /// Main entry point - async execution with event loop
     pub async fn run(&mut self, chunk: Chunk, file: &str, source: &str) -> SaldResult<Value> {
@@ -1478,6 +1516,51 @@ impl VM {
         Ok(())
     }
 
+    /// Call a user-defined function with class context for private access checking
+    fn call_function_with_class(&mut self, function: Arc<Function>, arg_count: usize, class_name: String) -> SaldResult<()> {
+        // Fast path: non-variadic functions
+        if !function.is_variadic {
+            let required_arity = function.arity.saturating_sub(function.default_count);
+            if arg_count < required_arity {
+                return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", required_arity, arg_count)));
+            }
+            if arg_count > function.arity {
+                return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at most {} arguments but got {}", function.arity, arg_count)));
+            }
+            
+            // Push null for missing default args
+            let missing = function.arity - arg_count;
+            for _ in 0..missing { self.stack.push(Value::Null); }
+            
+            if self.frames.len() >= FRAMES_MAX {
+                return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
+            }
+            
+            let slots_start = self.stack.len() - function.arity - 1;
+            if !function.file.is_empty() { crate::push_script_dir(&function.file); }
+            self.frames.push(CallFrame::new_with_class(function, slots_start, class_name));
+            return Ok(());
+        }
+        
+        // Slow path: variadic functions
+        let min_arity = function.arity.saturating_sub(1);
+        if arg_count < min_arity {
+            return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", min_arity, arg_count)));
+        }
+        let variadic_count = arg_count - min_arity;
+        let mut variadic_args = Vec::with_capacity(variadic_count);
+        for _ in 0..variadic_count { variadic_args.push(self.stack.pop().unwrap_or(Value::Null)); }
+        variadic_args.reverse();
+        self.stack.push(Value::Array(Arc::new(Mutex::new(variadic_args))));
+        let effective_arg_count = min_arity + 1;
+        if self.frames.len() >= FRAMES_MAX {
+            return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
+        }
+        let slots_start = self.stack.len() - effective_arg_count - 1;
+        if !function.file.is_empty() { crate::push_script_dir(&function.file); }
+        self.frames.push(CallFrame::new_with_class(function, slots_start, class_name));
+        Ok(())
+    }
     fn call_class(&mut self, class: Arc<Class>, arg_count: usize) -> SaldResult<()> {
         if let Some(constructor) = class.constructor {
             let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
@@ -1494,7 +1577,8 @@ impl VM {
             self.stack[stack_idx] = instance_value.clone();
             if let Some(init) = class.methods.get("init") {
                 if let Value::Function(init_fn) = init {
-                    self.call_function_init(init_fn.clone(), arg_count, instance_value)?;
+                    // Use class context for private access in constructor
+                    self.call_function_init_with_class(init_fn.clone(), arg_count, instance_value, class.name.clone())?;
                 }
             } else if arg_count > 0 {
                 return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected 0 arguments but got {}", arg_count)));
@@ -1529,7 +1613,8 @@ impl VM {
         self.call_function(method, arg_count)
     }
 
-    fn call_function_init(&mut self, function: Arc<Function>, arg_count: usize, instance: Value) -> SaldResult<()> {
+    /// Call init constructor with class context for private access checking
+    fn call_function_init_with_class(&mut self, function: Arc<Function>, arg_count: usize, instance: Value, class_name: String) -> SaldResult<()> {
         let required_arity = function.arity.saturating_sub(function.default_count);
         if arg_count < required_arity {
             return Err(self.create_error(ErrorKind::ArgumentError, &format!("Expected at least {} arguments but got {}", required_arity, arg_count)));
@@ -1543,7 +1628,7 @@ impl VM {
         }
         let slots_start = self.stack.len() - function.arity - 1;
         if !function.file.is_empty() { crate::push_script_dir(&function.file); }
-        self.frames.push(CallFrame::new_init(function, slots_start, instance));
+        self.frames.push(CallFrame::new_init_with_class(function, slots_start, instance, class_name));
         Ok(())
     }
 
@@ -1553,15 +1638,25 @@ impl VM {
         let receiver = self.stack.get(self.stack.len() - arg_count - 1).cloned().unwrap_or(Value::Null);
         match receiver {
             Value::Instance(ref instance) => {
+                let class = instance.lock().unwrap().class.clone();
+                
+                // Check private access BEFORE calling the method
+                if Self::is_private(name) && !self.is_in_class(&class.name) {
+                    return Err(self.create_error(
+                        ErrorKind::AccessError,
+                        &format!("Cannot access private method '{}' from outside class '{}'", name, class.name)
+                    ));
+                }
+                
                 if let Some(field) = instance.lock().unwrap().fields.get(name).cloned() {
                     let stack_idx = self.stack.len() - arg_count - 1;
                     self.stack[stack_idx] = field;
                     return self.call_value(arg_count);
                 }
-                let class = instance.lock().unwrap().class.clone();
                 if let Some(method) = class.methods.get(name).cloned() {
                     if let Value::Function(func) = method {
-                        return self.call_function(func, arg_count);
+                        // Use class context for private access checking
+                        return self.call_function_with_class(func, arg_count, class.name.clone());
                     }
                 }
                 if let Some(callable_method) = class.callable_native_instance_methods.get(name).copied() {
@@ -1583,11 +1678,19 @@ impl VM {
                 Err(self.create_error(ErrorKind::AttributeError, &format!("Undefined method '{}' on instance", name)))
             }
             Value::Class(class) => {
+                // Check private access for static methods
+                if Self::is_private(name) && !self.is_in_class(&class.name) {
+                    return Err(self.create_error(
+                        ErrorKind::AccessError,
+                        &format!("Cannot access private static method '{}' from outside class '{}'", name, class.name)
+                    ));
+                }
+                
                 if let Some(method) = class.user_static_methods.get(name).cloned() {
                     let stack_idx = self.stack.len() - arg_count - 1;
                     self.stack[stack_idx] = Value::Null;
                     if let Value::Function(func) = method {
-                        return self.call_function(func, arg_count);
+                        return self.call_function_with_class(func, arg_count, class.name.clone());
                     }
                 }
                 if let Some(native_fn) = class.native_static_methods.get(name).copied() {
@@ -1624,6 +1727,14 @@ impl VM {
                 }
             }
             Value::Namespace { members, name: ns_name } => {
+                // Check private access for namespace members
+                if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
+                    return Err(self.create_error(
+                        ErrorKind::AccessError,
+                        &format!("Cannot access private member '{}' from outside namespace '{}'", name, ns_name)
+                    ));
+                }
+                
                 if let Ok(m) = members.lock() {
                     if let Some(member) = m.get(name).cloned() {
                         drop(m);
@@ -1645,16 +1756,38 @@ impl VM {
         let obj = self.stack.pop().unwrap_or(Value::Null);
         match obj {
             Value::Instance(instance) => {
-                if let Some(value) = instance.lock().unwrap().fields.get(name).cloned() {
+                let inst_guard = instance.lock().unwrap();
+                let class_name = inst_guard.class.name.clone();
+                
+                // Check private access for fields and methods
+                if Self::is_private(name) && !self.is_in_class(&class_name) {
+                    return Err(self.create_error(
+                        ErrorKind::AccessError,
+                        &format!("Cannot access private member '{}' from outside class '{}'", name, class_name)
+                    ));
+                }
+                
+                if let Some(value) = inst_guard.fields.get(name).cloned() {
+                    drop(inst_guard);
                     self.stack.push(value);
-                } else if let Some(method) = instance.lock().unwrap().class.methods.get(name).cloned() {
+                } else if let Some(method) = inst_guard.class.methods.get(name).cloned() {
+                    drop(inst_guard);
                     self.stack.push(Value::Instance(instance.clone()));
                     self.stack.push(method);
                 } else {
+                    drop(inst_guard);
                     return Err(self.create_error(ErrorKind::AttributeError, &format!("Undefined property '{}'", name)));
                 }
             }
             Value::Class(class) => {
+                // Check private access for static members
+                if Self::is_private(name) && !self.is_in_class(&class.name) {
+                    return Err(self.create_error(
+                        ErrorKind::AccessError,
+                        &format!("Cannot access private member '{}' from outside class '{}'", name, class.name)
+                    ));
+                }
+                
                 if let Some(value) = class.native_static_fields.get(name) {
                     self.stack.push(value.clone());
                 } else if let Some(method) = class.user_static_methods.get(name).cloned() {
@@ -1683,6 +1816,14 @@ impl VM {
                 }
             }
             Value::Namespace { members, name: ns_name } => {
+                // Check private access for namespace members
+                if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
+                    return Err(self.create_error(
+                        ErrorKind::AccessError,
+                        &format!("Cannot access private member '{}' from outside namespace '{}'", name, ns_name)
+                    ));
+                }
+                
                 if let Ok(m) = members.lock() {
                     if let Some(value) = m.get(name) {
                         self.stack.push(value.clone());
@@ -1707,6 +1848,16 @@ impl VM {
         let value = self.stack.pop().unwrap_or(Value::Null);
         let obj = self.stack.pop().unwrap_or(Value::Null);
         if let Value::Instance(instance) = obj {
+            let class_name = instance.lock().unwrap().class.name.clone();
+            
+            // Check private access
+            if Self::is_private(name) && !self.is_in_class(&class_name) {
+                return Err(self.create_error(
+                    ErrorKind::AccessError,
+                    &format!("Cannot access private member '{}' from outside class '{}'", name, class_name)
+                ));
+            }
+            
             instance.lock().unwrap().fields.insert(name.to_string(), value.clone());
             self.stack.push(value);
             Ok(())
