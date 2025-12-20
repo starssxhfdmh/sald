@@ -763,6 +763,78 @@ Crypto.base64Decode("aGVsbG8=")     // "hello"
 
 ---
 
+### Channel
+
+Go-style channels for async communication:
+
+```javascript
+let ch = Channel()        // buffered (default 16)
+let ch = Channel(100)     // custom buffer size
+
+// Async send/receive
+await ch.send(value)
+let msg = await ch.receive()
+
+// Non-blocking
+let msg = ch.tryReceive() // value or null
+
+// Close
+ch.close()
+ch.isClosed()             // true/false
+```
+
+Example producer/consumer:
+
+```javascript
+let ch = Channel()
+
+async fun producer() {
+    for i in 0..5 {
+        await ch.send(i)
+    }
+    ch.close()
+}
+
+async fun consumer() {
+    while !ch.isClosed() {
+        let msg = await ch.receive()
+        if msg != null {
+            Console.println($"Got: {msg}")
+        }
+    }
+}
+
+await Promise.all([producer(), consumer()])
+```
+
+---
+
+### Promise
+
+Parallel async execution:
+
+```javascript
+// Wait for all futures
+let results = await Promise.all([
+    fetchUser(1),
+    fetchUser(2),
+    fetchUser(3)
+])
+// results = [user1, user2, user3]
+
+// First to complete wins
+let fastest = await Promise.race([
+    Timer.sleep(100),
+    Timer.sleep(50)   // wins
+])
+
+// Create resolved/rejected futures
+let resolved = Promise.resolve(42)
+let rejected = Promise.reject("error")
+```
+
+---
+
 ### File (Async)
 
 ```javascript
