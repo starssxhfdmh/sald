@@ -64,12 +64,14 @@ impl CallFrame {
         }
     }
 
+    #[inline(always)]
     fn read_byte(&mut self) -> u8 {
         let byte = self.function.chunk.code[self.ip];
         self.ip += 1;
         byte
     }
 
+    #[inline(always)]
     fn read_u16(&mut self) -> u16 {
         let high = self.function.chunk.code[self.ip] as u16;
         let low = self.function.chunk.code[self.ip + 1] as u16;
@@ -1496,6 +1498,7 @@ impl VM {
 
     // ==================== Helper Methods ====================
 
+    #[inline(always)]
     fn push(&mut self, value: Value) -> SaldResult<()> {
         if self.stack.len() >= STACK_MAX {
             return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow"));
@@ -1504,12 +1507,14 @@ impl VM {
         Ok(())
     }
 
+    #[inline(always)]
     fn pop(&mut self) -> SaldResult<Value> {
         self.stack
             .pop()
             .ok_or_else(|| self.create_error(ErrorKind::RuntimeError, "Stack underflow"))
     }
 
+    #[inline(always)]
     fn peek(&self, distance: usize) -> SaldResult<&Value> {
         let idx = self
             .stack
@@ -1553,18 +1558,22 @@ impl VM {
         });
     }
 
+    #[inline(always)]
     fn current_frame(&self) -> &CallFrame {
         self.frames.last().unwrap()
     }
 
+    #[inline(always)]
     fn current_frame_mut(&mut self) -> &mut CallFrame {
         self.frames.last_mut().unwrap()
     }
 
+    #[inline(always)]
     fn read_byte(&mut self) -> u8 {
         self.current_frame_mut().read_byte()
     }
 
+    #[inline(always)]
     fn read_u16(&mut self) -> u16 {
         self.current_frame_mut().read_u16()
     }

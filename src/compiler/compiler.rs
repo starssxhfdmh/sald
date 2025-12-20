@@ -6,6 +6,14 @@ use super::opcode::OpCode;
 use crate::ast::*;
 use crate::error::{SaldError, SaldResult, Span};
 
+/// Result type for constant folding at compile time
+#[derive(Debug, Clone)]
+enum FoldedValue {
+    Number(f64),
+    Boolean(bool),
+    String(String),
+}
+
 /// Local variable information
 #[derive(Debug, Clone)]
 struct Local {
@@ -1800,6 +1808,28 @@ impl Compiler {
             _ => {}
         }
 
+        // ===== CONSTANT FOLDING =====
+        // Try to evaluate constant expressions at compile time
+        if let Some(result) = self.try_fold_binary(left, op, right) {
+            // Emit the folded constant
+            match result {
+                FoldedValue::Number(n) => {
+                    let const_idx = self.current_chunk().add_constant(Constant::Number(n));
+                    self.emit_op(OpCode::Constant, span);
+                    self.emit_u16(const_idx as u16, span);
+                }
+                FoldedValue::Boolean(b) => {
+                    self.emit_op(if b { OpCode::True } else { OpCode::False }, span);
+                }
+                FoldedValue::String(s) => {
+                    let const_idx = self.current_chunk().add_constant(Constant::String(s));
+                    self.emit_op(OpCode::Constant, span);
+                    self.emit_u16(const_idx as u16, span);
+                }
+            }
+            return Ok(());
+        }
+
         self.compile_expr(left)?;
         self.compile_expr(right)?;
 
@@ -1829,6 +1859,27 @@ impl Compiler {
 
     fn compile_unary(&mut self, op: &UnaryOp, operand: &Expr, span: Span) -> SaldResult<()> {
         // Use span directly
+
+        // ===== CONSTANT FOLDING =====
+        // Try to evaluate constant expressions at compile time
+        if let Some(result) = self.try_fold_unary(op, operand) {
+            match result {
+                FoldedValue::Number(n) => {
+                    let const_idx = self.current_chunk().add_constant(Constant::Number(n));
+                    self.emit_op(OpCode::Constant, span);
+                    self.emit_u16(const_idx as u16, span);
+                }
+                FoldedValue::Boolean(b) => {
+                    self.emit_op(if b { OpCode::True } else { OpCode::False }, span);
+                }
+                FoldedValue::String(s) => {
+                    let const_idx = self.current_chunk().add_constant(Constant::String(s));
+                    self.emit_op(OpCode::Constant, span);
+                    self.emit_u16(const_idx as u16, span);
+                }
+            }
+            return Ok(());
+        }
 
         self.compile_expr(operand)?;
 
@@ -2408,5 +2459,92 @@ impl Compiler {
         self.emit_op(OpCode::Loop, span);
         let offset = self.current_chunk().current_offset() - loop_start + 2;
         self.emit_u16(offset as u16, span);
+    }
+
+    // ==================== Constant Folding ====================
+
+    /// Try to evaluate a binary expression at compile time if both operands are literals
+    fn try_fold_binary(&self, left: &Expr, op: &BinaryOp, right: &Expr) -> Option<FoldedValue> {
+        // Extract literal values from expressions
+        let left_lit = self.extract_literal(left)?;
+        let right_lit = self.extract_literal(right)?;
+
+        match (left_lit, right_lit) {
+            // Number operations
+            (FoldedValue::Number(a), FoldedValue::Number(b)) => {
+                match op {
+                    BinaryOp::Add => Some(FoldedValue::Number(a + b)),
+                    BinaryOp::Sub => Some(FoldedValue::Number(a - b)),
+                    BinaryOp::Mul => Some(FoldedValue::Number(a * b)),
+                    BinaryOp::Div if b != 0.0 => Some(FoldedValue::Number(a / b)),
+                    BinaryOp::Mod if b != 0.0 => Some(FoldedValue::Number(a % b)),
+                    // Comparison
+                    BinaryOp::Less => Some(FoldedValue::Boolean(a < b)),
+                    BinaryOp::LessEqual => Some(FoldedValue::Boolean(a <= b)),
+                    BinaryOp::Greater => Some(FoldedValue::Boolean(a > b)),
+                    BinaryOp::GreaterEqual => Some(FoldedValue::Boolean(a >= b)),
+                    BinaryOp::Equal => Some(FoldedValue::Boolean(a == b)),
+                    BinaryOp::NotEqual => Some(FoldedValue::Boolean(a != b)),
+                    // Bitwise (convert to integers)
+                    BinaryOp::BitAnd => Some(FoldedValue::Number((a as i64 & b as i64) as f64)),
+                    BinaryOp::BitOr => Some(FoldedValue::Number((a as i64 | b as i64) as f64)),
+                    BinaryOp::BitXor => Some(FoldedValue::Number((a as i64 ^ b as i64) as f64)),
+                    BinaryOp::LeftShift => Some(FoldedValue::Number(((a as i64) << (b as u32)) as f64)),
+                    BinaryOp::RightShift => Some(FoldedValue::Number(((a as i64) >> (b as u32)) as f64)),
+                    _ => None,
+                }
+            }
+            // String concatenation
+            (FoldedValue::String(a), FoldedValue::String(b)) if matches!(op, BinaryOp::Add) => {
+                Some(FoldedValue::String(format!("{}{}", a, b)))
+            }
+            // Boolean comparisons
+            (FoldedValue::Boolean(a), FoldedValue::Boolean(b)) => {
+                match op {
+                    BinaryOp::Equal => Some(FoldedValue::Boolean(a == b)),
+                    BinaryOp::NotEqual => Some(FoldedValue::Boolean(a != b)),
+                    _ => None,
+                }
+            }
+            // String equality
+            (FoldedValue::String(a), FoldedValue::String(b)) => {
+                match op {
+                    BinaryOp::Equal => Some(FoldedValue::Boolean(a == b)),
+                    BinaryOp::NotEqual => Some(FoldedValue::Boolean(a != b)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Try to evaluate a unary expression at compile time
+    fn try_fold_unary(&self, op: &UnaryOp, operand: &Expr) -> Option<FoldedValue> {
+        let value = self.extract_literal(operand)?;
+
+        match (op, value) {
+            (UnaryOp::Negate, FoldedValue::Number(n)) => Some(FoldedValue::Number(-n)),
+            (UnaryOp::Not, FoldedValue::Boolean(b)) => Some(FoldedValue::Boolean(!b)),
+            (UnaryOp::BitNot, FoldedValue::Number(n)) => Some(FoldedValue::Number(!(n as i64) as f64)),
+            _ => None,
+        }
+    }
+
+    /// Extract a compile-time constant from an expression
+    fn extract_literal(&self, expr: &Expr) -> Option<FoldedValue> {
+        match expr {
+            Expr::Literal { value, .. } => {
+                match value {
+                    Literal::Number(n) => Some(FoldedValue::Number(*n)),
+                    Literal::Boolean(b) => Some(FoldedValue::Boolean(*b)),
+                    Literal::String(s) => Some(FoldedValue::String(s.clone())),
+                    Literal::Null => None, // Don't fold null
+                }
+            }
+            Expr::Grouping { expr, .. } => self.extract_literal(expr),
+            Expr::Unary { op, operand, .. } => self.try_fold_unary(op, operand),
+            Expr::Binary { left, op, right, .. } => self.try_fold_binary(left, op, right),
+            _ => None,
+        }
     }
 }
