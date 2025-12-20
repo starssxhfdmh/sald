@@ -266,6 +266,10 @@ pub struct Function {
     pub default_count: usize,
     /// Decorator names applied to this function
     pub decorators: Vec<String>,
+    /// Namespace this function was defined in (for private access)
+    pub namespace_context: Option<String>,
+    /// Class this function was defined in (for private access from closures)
+    pub class_context: Option<String>,
 }
 
 impl Function {
@@ -281,6 +285,8 @@ impl Function {
             param_names: Vec::new(),
             default_count: 0,
             decorators: Vec::new(),
+            namespace_context: None,
+            class_context: None,
         }
     }
 
@@ -301,6 +307,8 @@ impl Function {
             param_names: Vec::new(),
             default_count: 0,
             decorators: Vec::new(),
+            namespace_context: None,
+            class_context: None,
         }
     }
 
@@ -322,6 +330,8 @@ impl Function {
             param_names: Vec::new(),
             default_count: 0,
             decorators: Vec::new(),
+            namespace_context: None,
+            class_context: None,
         }
     }
 
@@ -338,6 +348,8 @@ impl Function {
             param_names: fc.param_names.clone(),
             default_count: fc.default_count,
             decorators: fc.decorators.clone(),
+            namespace_context: fc.namespace_context.clone(),
+            class_context: fc.class_context.clone(),
         }
     }
 }

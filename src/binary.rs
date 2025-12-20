@@ -5,7 +5,7 @@ use crate::compiler::chunk::{Chunk, ClassConstant, Constant, FunctionConstant, U
 use crate::error::{Position, Span};
 
 const MAGIC: &[u8; 4] = b"SALD";
-const VERSION: u8 = 3; // Removed is_test field, now using decorators only
+const VERSION: u8 = 4; // Added namespace_context and class_context for private access from closures
 
 /// Serialize a chunk to binary format
 pub fn serialize(chunk: &Chunk) -> Vec<u8> {
@@ -131,6 +131,31 @@ fn write_string(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(bytes);
 }
 
+fn write_optional_string(out: &mut Vec<u8>, s: &Option<String>) {
+    match s {
+        Some(str) => {
+            out.push(1);
+            write_string(out, str);
+        }
+        None => {
+            out.push(0);
+        }
+    }
+}
+
+fn read_optional_string(data: &[u8], cursor: &mut usize) -> Result<Option<String>, String> {
+    if *cursor >= data.len() {
+        return Err("Unexpected end of file".to_string());
+    }
+    let has_value = data[*cursor] != 0;
+    *cursor += 1;
+    if has_value {
+        Ok(Some(read_string(data, cursor)?))
+    } else {
+        Ok(None)
+    }
+}
+
 fn read_string(data: &[u8], cursor: &mut usize) -> Result<String, String> {
     let len = read_u32(data, cursor)? as usize;
     if *cursor + len > data.len() {
@@ -175,6 +200,9 @@ fn serialize_constant(out: &mut Vec<u8>, constant: &Constant) {
             for decorator in &f.decorators {
                 write_string(out, decorator);
             }
+            // v4: Write namespace_context and class_context for private access
+            write_optional_string(out, &f.namespace_context);
+            write_optional_string(out, &f.class_context);
             let chunk_bytes = serialize(&f.chunk);
             write_u32(out, chunk_bytes.len() as u32);
             out.extend_from_slice(&chunk_bytes);
@@ -271,6 +299,14 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize, version: u8) -> Result<
             for _ in 0..decorator_count {
                 decorators.push(read_string(data, cursor)?);
             }
+            // v4+: Read namespace_context and class_context
+            let (namespace_context, class_context) = if version >= 4 {
+                let ns = read_optional_string(data, cursor)?;
+                let cls = read_optional_string(data, cursor)?;
+                (ns, cls)
+            } else {
+                (None, None)
+            };
             let chunk_len = read_u32(data, cursor)? as usize;
             if *cursor + chunk_len > data.len() {
                 return Err("Unexpected end of file".to_string());
@@ -289,6 +325,8 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize, version: u8) -> Result<
                 param_names,
                 default_count,
                 decorators,
+                namespace_context,
+                class_context,
             }))
         }
         3 => {

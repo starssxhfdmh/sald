@@ -1215,9 +1215,10 @@ impl VM {
     }
 
     /// Check if we're currently inside the given class (or any parent class in the call stack)
+    /// Also checks the function's compile-time class_context for closures defined inside methods
     #[inline(always)]
     fn is_in_class(&self, class_name: &str) -> bool {
-        // Check if any frame in the call stack has the matching class context
+        // Check if any frame in the call stack has the matching class context (runtime)
         for frame in self.frames.iter().rev() {
             if let Some(ref ctx) = frame.class_context {
                 if ctx == class_name {
@@ -1225,13 +1226,49 @@ impl VM {
                 }
             }
         }
+        
+        // Check if current function was defined in this class (compile-time context)
+        // This handles closures/lambdas defined inside class methods
+        if let Some(frame) = self.frames.last() {
+            if let Some(ref class_ctx) = frame.function.class_context {
+                if class_ctx == class_name {
+                    return true;
+                }
+            }
+        }
+        
         false
     }
 
     /// Check if we're currently inside the given namespace
+    /// Checks both the runtime namespace context stack AND the current function's
+    /// compile-time namespace context (for functions defined inside namespaces)
     #[inline(always)]
     fn is_in_namespace(&self, namespace_name: &str) -> bool {
-        self.namespace_context.last().map(|s| s == namespace_name).unwrap_or(false)
+        // Check runtime namespace context stack
+        if self.namespace_context.last().map(|s| s == namespace_name).unwrap_or(false) {
+            return true;
+        }
+        
+        // Check if current function was defined in this namespace
+        // This handles the case when a namespace function is called from outside
+        if let Some(frame) = self.frames.last() {
+            if let Some(ref ns_ctx) = frame.function.namespace_context {
+                // The ns_ctx is fully qualified (e.g., "Spark.Template")
+                // The namespace_name might be just "Template" (runtime name)
+                // Check various matching conditions:
+                // 1. Exact match (e.g., "Template" == "Template")
+                // 2. Ends with the namespace (e.g., "Spark.Template" ends with ".Template" or is "Template")
+                // 3. Starts with namespace (for child access, e.g., "Template.Inner" can access "Template")
+                if ns_ctx == namespace_name 
+                    || ns_ctx.ends_with(&format!(".{}", namespace_name))
+                    || ns_ctx.starts_with(&format!("{}.", namespace_name)) {
+                    return true;
+                }
+            }
+        }
+        
+        false
     }
 
     /// Main entry point - async execution with event loop

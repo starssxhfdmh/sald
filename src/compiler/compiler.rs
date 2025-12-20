@@ -86,6 +86,8 @@ pub struct Compiler {
     had_error: bool,
     class_depth: usize,
     interfaces: HashMap<String, InterfaceDef>,
+    current_namespace: Option<String>,
+    current_class: Option<String>,
 }
 
 impl Compiler {
@@ -97,6 +99,8 @@ impl Compiler {
             had_error: false,
             class_depth: 0,
             interfaces: HashMap::new(),
+            current_namespace: None,
+            current_class: None,
         }
     }
 
@@ -756,6 +760,8 @@ impl Compiler {
             param_names: def.params.iter().map(|p| p.name.clone()).collect(),
             default_count: def.params.iter().filter(|p| p.default_value.is_some()).count(),
             decorators: def.decorators.iter().map(|d| d.name.clone()).collect(),
+            namespace_context: self.current_namespace.clone(),
+            class_context: self.current_class.clone(),
         });
 
         let const_idx = self.current_chunk().add_constant(func_const);
@@ -834,6 +840,10 @@ impl Compiler {
     fn compile_class(&mut self, def: &ClassDef) -> SaldResult<()> {
         let class_span = def.span;
         self.class_depth += 1;
+        
+        // Track current class for private access from closures
+        let previous_class = self.current_class.clone();
+        self.current_class = Some(def.name.clone());
 
         // Validate interface implementations BEFORE compiling
         for interface_name in &def.implements {
@@ -884,6 +894,9 @@ impl Compiler {
         self.emit_u16(name_const2 as u16, class_span);
 
         self.class_depth -= 1;
+        
+        // Restore previous class context
+        self.current_class = previous_class;
 
         Ok(())
     }
@@ -1050,6 +1063,14 @@ impl Compiler {
         
         let func_name = format!("<namespace {}>", name);
         
+        // Track the previous namespace context and build the fully qualified name
+        let previous_namespace = self.current_namespace.clone();
+        let full_namespace_name = match &previous_namespace {
+            Some(parent) => format!("{}.{}", parent, name),
+            None => name.to_string(),
+        };
+        self.current_namespace = Some(full_namespace_name.clone());
+        
         // Push new function scope
         self.scopes.push(FunctionScope::new(false));
         self.begin_scope();
@@ -1175,6 +1196,8 @@ impl Compiler {
             param_names: Vec::new(),
             default_count: 0,
             decorators: Vec::new(),
+            namespace_context: None,
+            class_context: None,
         });
         
         // Emit closure and immediately call it (IIFE pattern)
@@ -1190,6 +1213,9 @@ impl Compiler {
         let name_idx = self.current_chunk().add_constant(Constant::String(name.to_string()));
         self.emit_op(OpCode::DefineGlobal, span);
         self.emit_u16(name_idx as u16, span);
+        
+        // Restore previous namespace context
+        self.current_namespace = previous_namespace;
 
         Ok(())
     }
@@ -1198,6 +1224,14 @@ impl Compiler {
     fn compile_namespace_inner(&mut self, name: &str, body: &[Stmt], span: Span) -> SaldResult<()> {
         // Same IIFE pattern as compile_namespace, but doesn't define as global
         let func_name = format!("<namespace {}>", name);
+        
+        // Track the previous namespace context and build the fully qualified name
+        let previous_namespace = self.current_namespace.clone();
+        let full_namespace_name = match &previous_namespace {
+            Some(parent) => format!("{}.{}", parent, name),
+            None => name.to_string(),
+        };
+        self.current_namespace = Some(full_namespace_name.clone());
         
         // Push new function scope
         self.scopes.push(FunctionScope::new(false));
@@ -1314,6 +1348,8 @@ impl Compiler {
             param_names: Vec::new(),
             default_count: 0,
             decorators: Vec::new(),
+            namespace_context: None,
+            class_context: None,
         });
         
         // Emit closure and immediately call it (IIFE pattern)
@@ -1324,6 +1360,9 @@ impl Compiler {
         // Call with 0 arguments - result stays on stack for parent namespace
         self.emit_op(OpCode::Call, span);
         self.emit_u16(0, span);
+        
+        // Restore previous namespace context
+        self.current_namespace = previous_namespace;
 
         Ok(())
     }
@@ -1411,6 +1450,8 @@ impl Compiler {
             param_names: def.params.iter().map(|p| p.name.clone()).collect(),
             default_count: def.params.iter().filter(|p| p.default_value.is_some()).count(),
             decorators: def.decorators.iter().map(|d| d.name.clone()).collect(),
+            namespace_context: self.current_namespace.clone(),
+            class_context: self.current_class.clone(),
         });
 
         let const_idx = self.current_chunk().add_constant(func_const);
@@ -1424,6 +1465,10 @@ impl Compiler {
     fn compile_namespace_class(&mut self, def: &ClassDef) -> SaldResult<()> {
         let class_span = def.span;
         self.class_depth += 1;
+        
+        // Track current class for private access from closures
+        let previous_class = self.current_class.clone();
+        self.current_class = Some(def.name.clone());
 
         let name_const = self.current_chunk().add_constant(Constant::String(def.name.clone()));
         self.emit_op(OpCode::Class, class_span);
@@ -1442,6 +1487,9 @@ impl Compiler {
         }
 
         self.class_depth -= 1;
+        
+        // Restore previous class context
+        self.current_class = previous_class;
 
         // Don't define as global - leave class on stack
         Ok(())
@@ -2838,6 +2886,8 @@ impl Compiler {
             param_names: params.iter().map(|p| p.name.clone()).collect(),
             default_count: params.iter().filter(|p| p.default_value.is_some()).count(),
             decorators: Vec::new(),
+            namespace_context: self.current_namespace.clone(),
+            class_context: self.current_class.clone(),
         });
 
         let const_idx = self.current_chunk().add_constant(func_const);

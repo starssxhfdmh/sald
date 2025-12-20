@@ -34,6 +34,8 @@ pub struct FunctionConstant {
     pub param_names: Vec<String>,   // Parameter names for named arguments
     pub default_count: usize,       // Number of parameters with defaults (from end)
     pub decorators: Vec<String>,    // Decorator names applied to this function
+    pub namespace_context: Option<String>, // Namespace this function was defined in 
+    pub class_context: Option<String>, // Class this function was defined in (for private access)
 }
 
 /// Class constant for the constant pool
