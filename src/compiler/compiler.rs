@@ -1656,50 +1656,63 @@ impl Compiler {
         let mut end_jumps = Vec::new();
 
         for arm in arms {
-            let mut body_jumps = Vec::new();
-
-            // For each pattern in the arm (e.g., 1, 2, 3 -> ...)
-            for pattern in &arm.patterns {
-                // Compile pattern match - returns jump offset if match fails
+            // For multi-pattern arms (e.g., 1, 2, 3 -> ...), we try each pattern sequentially.
+            // Each pattern attempt has its own scope for bindings.
+            // When a pattern matches, we execute the body; when all fail, we try next arm.
+            
+            let mut arm_end_jumps = Vec::new();
+            let mut try_next_pattern_jumps = Vec::new();
+            
+            for (pattern_idx, pattern) in arm.patterns.iter().enumerate() {
+                // Patch any "try next pattern" jumps from previous pattern to here
+                for jump in try_next_pattern_jumps.drain(..) {
+                    self.patch_jump(jump);
+                }
+                
+                // Begin a scope for this pattern attempt (bindings will be local to here)
+                self.begin_scope();
+                
+                // Compile pattern match - returns jump offset for failure
                 let fail_jump = self.compile_pattern_match(value_slot, pattern, span)?;
+                
                 if fail_jump != 0 {
-                    body_jumps.push((fail_jump, true)); // needs patch to go to body on success
-                } else {
-                    // Pattern always matches (e.g. binding without guard)
-                    body_jumps.push((self.emit_jump(OpCode::Jump, span), false));
-                }
-            }
-
-            // All patterns failed, jump to next arm
-            let next_arm_jump = self.emit_jump(OpCode::Jump, span);
-
-            // BODY: Patch all successful pattern jumps to here
-            for (jump, was_conditional) in &body_jumps {
-                if *jump != 0 {
-                    if *was_conditional {
-                        // For conditional jumps, patch to here
-                        self.patch_jump(*jump);
-                        self.emit_op(OpCode::Pop, span); // pop the true
-                    } else {
-                        self.patch_jump(*jump);
+                    // Pattern has a condition - if it fails, try next pattern or next arm
+                    // First, pop the false value
+                    let success_jump = fail_jump; // JumpIfTrue - jumps to here on success
+                    
+                    // On failure (condition was false, didn't jump), cleanup scope and try next
+                    self.emit_op(OpCode::Pop, span); // pop false
+                    self.end_scope(); // cleanup bindings from failed pattern
+                    
+                    if pattern_idx + 1 < arm.patterns.len() {
+                        // More patterns to try in this arm
+                        try_next_pattern_jumps.push(self.emit_jump(OpCode::Jump, span));
                     }
+                    // else: fall through to next arm jump
+                    
+                    // Patch success jump to here
+                    self.patch_jump(success_jump);
+                    self.emit_op(OpCode::Pop, span); // pop true
                 }
+                // else: unconditional match (binding without guard), just continue
+                
+                // Pattern matched! Execute body
+                self.compile_expr(&arm.body)?;
+                
+                // End scope, keep result
+                self.end_scope_keep_result();
+                
+                // Jump to switch end
+                arm_end_jumps.push(self.emit_jump(OpCode::Jump, span));
             }
-
-            // Create a new scope for the arm body
-            self.begin_scope();
             
-            // Compile arm body
-            self.compile_expr(&arm.body)?;
+            // If we get here, all patterns in this arm failed - continue to next arm
+            // Patch remaining "try next pattern" jumps to fallthrough to next arm
+            for jump in try_next_pattern_jumps {
+                self.patch_jump(jump);
+            }
             
-            // End scope but keep result
-            self.end_scope_keep_result();
-
-            // Jump to end
-            end_jumps.push(self.emit_jump(OpCode::Jump, span));
-
-            // Patch next arm jump
-            self.patch_jump(next_arm_jump);
+            end_jumps.extend(arm_end_jumps);
         }
 
         // Compile default arm or push null
