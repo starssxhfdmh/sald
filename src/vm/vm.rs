@@ -1945,10 +1945,24 @@ impl VM {
         let count = self.read_u16() as usize;
         let mut members = HashMap::new();
         for _ in 0..count {
-            let value = self.stack.pop().unwrap_or(Value::Null);
+            let mut value = self.stack.pop().unwrap_or(Value::Null);
             let key = self.stack.pop().unwrap_or(Value::Null);
-            if let Value::String(s) = key { members.insert(s.to_string(), value); }
-            else { return Err(self.create_error(ErrorKind::TypeError, "Namespace member keys must be strings")); }
+            if let Value::String(s) = key {
+                let key_str = s.to_string();
+                // Set the name for nested namespaces/enums
+                match &mut value {
+                    Value::Namespace { name, .. } if name.is_empty() => {
+                        *name = key_str.clone();
+                    }
+                    Value::Enum { name, .. } if name.is_empty() => {
+                        *name = key_str.clone();
+                    }
+                    _ => {}
+                }
+                members.insert(key_str, value);
+            } else {
+                return Err(self.create_error(ErrorKind::TypeError, "Namespace member keys must be strings"));
+            }
         }
         self.stack.push(Value::Namespace { name: String::new(), members: Arc::new(Mutex::new(members)) });
         Ok(())
