@@ -13,12 +13,8 @@ pub enum TokenKind {
     FormatStringStart(String), // Start of format string (text before first {)
     FormatStringPart(String), // Middle part (text between } and next {)
     FormatStringEnd(String),  // End part (text after last })
-    /// Raw string literal: """ or ''' - no escape processing
+    /// Raw string literal: r"..." or r"""...""" - no escape processing
     RawString(String),
-    /// Raw format string: $""" or $''' with interpolation
-    RawFormatStringStart(String),
-    RawFormatStringPart(String),
-    RawFormatStringEnd(String),
     True,
     False,
     Null,
@@ -124,10 +120,7 @@ impl fmt::Display for TokenKind {
             TokenKind::FormatStringStart(s) => write!(f, "$\"{{{}", s),
             TokenKind::FormatStringPart(s) => write!(f, "}}{{{}", s),
             TokenKind::FormatStringEnd(s) => write!(f, "}}{}\"", s),
-            TokenKind::RawString(s) => write!(f, "\"\"\"{}\"\"\"", s),
-            TokenKind::RawFormatStringStart(s) => write!(f, "$\"\"\"{{{}", s),
-            TokenKind::RawFormatStringPart(s) => write!(f, "}}{{{}", s),
-            TokenKind::RawFormatStringEnd(s) => write!(f, "}}{}\"\"\"", s),
+            TokenKind::RawString(s) => write!(f, "r\"{}\"", s),
             TokenKind::True => write!(f, "true"),
             TokenKind::False => write!(f, "false"),
             TokenKind::Null => write!(f, "null"),

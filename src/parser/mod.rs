@@ -1351,8 +1351,6 @@ impl Parser {
                     span: token.span,
                 })
             }
-            // Raw format string with interpolation
-            TokenKind::RawFormatStringStart(s) => self.parse_raw_format_string(s.clone(), token.span),
             TokenKind::True => {
                 self.advance();
                 Ok(Expr::Literal {
@@ -2316,120 +2314,6 @@ impl Parser {
         Ok(result)
     }
 
-    /// Parse raw format string $"""...""" with {expr} interpolation
-    /// Same as parse_format_string but uses RawFormatStringPart/End tokens
-    fn parse_raw_format_string(&mut self, first_part: String, start_span: Span) -> SaldResult<Expr> {
-        self.advance(); // consume RawFormatStringStart
-
-        // Start with the first part as a string
-        let mut result = if !first_part.is_empty() {
-            Expr::Literal {
-                value: Literal::String(first_part),
-                span: start_span,
-            }
-        } else {
-            // Empty first part - start with the expression
-            let expr = self.expression()?;
-            expr
-        };
-
-        // If first part was a literal, we need to parse the expression and concat
-        if !matches!(&result, Expr::Binary { .. }) {
-            // Check if next token is an expression (not FormatStringPart/End)
-            let next = self.peek();
-            if !matches!(
-                next.kind,
-                TokenKind::RawFormatStringPart(_) | TokenKind::RawFormatStringEnd(_)
-            ) {
-                let expr = self.expression()?;
-                let concat_span = Span::from_positions(
-                    result.span().start.line,
-                    result.span().start.column,
-                    expr.span().end.line,
-                    expr.span().end.column,
-                );
-                result = Expr::Binary {
-                    left: Box::new(result),
-                    op: BinaryOp::Add,
-                    right: Box::new(expr),
-                    span: concat_span,
-                };
-            }
-        }
-
-        // Continue parsing parts
-        loop {
-            let next_token = self.peek().clone();
-            match &next_token.kind {
-                TokenKind::RawFormatStringPart(s) => {
-                    let s = s.clone();
-                    self.advance();
-
-                    let str_expr = Expr::Literal {
-                        value: Literal::String(s),
-                        span: next_token.span,
-                    };
-                    let concat_span = Span::from_positions(
-                        result.span().start.line,
-                        result.span().start.column,
-                        next_token.span.end.line,
-                        next_token.span.end.column,
-                    );
-                    result = Expr::Binary {
-                        left: Box::new(result),
-                        op: BinaryOp::Add,
-                        right: Box::new(str_expr),
-                        span: concat_span,
-                    };
-                    // Parse next expression
-                    let expr = self.expression()?;
-                    let concat_span2 = Span::from_positions(
-                        result.span().start.line,
-                        result.span().start.column,
-                        expr.span().end.line,
-                        expr.span().end.column,
-                    );
-                    result = Expr::Binary {
-                        left: Box::new(result),
-                        op: BinaryOp::Add,
-                        right: Box::new(expr),
-                        span: concat_span2,
-                    };
-                }
-                TokenKind::RawFormatStringEnd(s) => {
-                    let s = s.clone();
-                    self.advance();
-
-                    if !s.is_empty() {
-                        let str_expr = Expr::Literal {
-                            value: Literal::String(s),
-                            span: next_token.span,
-                        };
-                        let concat_span = Span::from_positions(
-                            result.span().start.line,
-                            result.span().start.column,
-                            next_token.span.end.line,
-                            next_token.span.end.column,
-                        );
-                        result = Expr::Binary {
-                            left: Box::new(result),
-                            op: BinaryOp::Add,
-                            right: Box::new(str_expr),
-                            span: concat_span,
-                        };
-                    }
-                    break;
-                }
-                _ => {
-                    return Err(self
-                        .error("Expected raw format string part or end")
-                        .with_help("Raw format strings should end with closing '\"\"\"'"));
-                }
-            }
-        }
-
-        Ok(result)
-    }
 
     fn is_at_end(&self) -> bool {
         self.peek().kind == TokenKind::Eof

@@ -201,33 +201,33 @@ impl Scanner {
             // String literals (double or single quotes) - check for triple quotes first
             '"' => {
                 if self.peek() == '"' && self.peek_next() == '"' {
-                    // Triple double-quote raw string """..."""
+                    // Triple double-quote multiline string """..."""
                     self.advance(); // consume second "
                     self.advance(); // consume third "
-                    self.raw_string('"')?;
+                    self.multiline_string('"')?;
                 } else {
                     self.string('"')?;
                 }
             }
             '\'' => {
                 if self.peek() == '\'' && self.peek_next() == '\'' {
-                    // Triple single-quote raw string '''...'''
+                    // Triple single-quote multiline string '''...'''
                     self.advance(); // consume second '
                     self.advance(); // consume third '
-                    self.raw_string('\'')?;
+                    self.multiline_string('\'')?;
                 } else {
                     self.string('\'')?;
                 }
             }
 
-            // Format string $"..." or $'...' or raw format $"""...""" or $'''...'''
+            // Format string $"..." or $'...' or format multiline $"""...""" or $'''...'''
             '$' => {
                 if self.peek() == '"' && self.peek_next() == '"' {
                     self.advance(); // consume first "
                     if self.peek() == '"' {
                         self.advance(); // consume second "
                         self.advance(); // consume third "
-                        self.raw_format_string('"')?;
+                        self.format_multiline_string('"')?;
                     } else {
                         // Just $" - regular format string, but we already consumed one "
                         self.format_string('"')?;
@@ -237,7 +237,7 @@ impl Scanner {
                     if self.peek() == '\'' {
                         self.advance(); // consume second '
                         self.advance(); // consume third '
-                        self.raw_format_string('\'')?;
+                        self.format_multiline_string('\'')?;
                     } else {
                         self.format_string('\'')?;
                     }
@@ -254,7 +254,23 @@ impl Scanner {
 
             // Number literals or identifiers
             c if c.is_ascii_digit() => self.number()?,
-            c if c.is_alphabetic() || c == '_' => self.identifier(),
+            c if c.is_alphabetic() || c == '_' => {
+                // Check for raw string prefix: r"..." or r'...'
+                if c == 'r' && (self.peek() == '"' || self.peek() == '\'') {
+                    let quote_char = self.advance(); // consume the quote
+                    if self.peek() == quote_char && self.peek_next() == quote_char {
+                        // r"""...""" or r'''...''' - raw multiline
+                        self.advance(); // consume second quote
+                        self.advance(); // consume third quote
+                        self.raw_string(quote_char)?;
+                    } else {
+                        // r"..." or r'...' - raw single-line
+                        self.raw_string_single(quote_char)?;
+                    }
+                } else {
+                    self.identifier();
+                }
+            }
 
             // Unknown character
             _ => {
@@ -438,7 +454,7 @@ impl Scanner {
         )))
     }
 
-    /// Parse raw string """...""" or '''...''' - no escape processing
+    /// Parse raw string r"""...""" or r'''...''' - no escape processing (multiline)
     fn raw_string(&mut self, quote_char: char) -> SaldResult<()> {
         let start_line = self.line;
         let start_col = self.start_column;
@@ -477,8 +493,99 @@ impl Scanner {
         .with_help(&format!("Add {} to close the raw string", quote)))
     }
 
-    /// Parse raw format string $"""...""" or $'''...''' with interpolation
-    fn raw_format_string(&mut self, quote_char: char) -> SaldResult<()> {
+    /// Parse raw string r"..." or r'...' - no escape processing (single line)
+    fn raw_string_single(&mut self, quote_char: char) -> SaldResult<()> {
+        let start_line = self.line;
+        let start_col = self.start_column;
+
+        let mut value = String::new();
+
+        while !self.is_at_end() && self.peek() != quote_char {
+            let c = self.peek();
+            if c == '\n' {
+                // Single-line raw string cannot contain newlines
+                return Err(SaldError::syntax_error(
+                    "Unterminated raw string",
+                    Span::from_positions(start_line, start_col, self.line, self.column),
+                    &self.file,
+                )
+                .with_help("Use r\"\"\"...\"\"\" for multiline raw strings"));
+            }
+            value.push(self.advance());
+        }
+
+        if self.is_at_end() {
+            let quote_name = if quote_char == '"' { "double" } else { "single" };
+            return Err(SaldError::syntax_error(
+                "Unterminated raw string",
+                Span::from_positions(start_line, start_col, self.line, self.column),
+                &self.file,
+            )
+            .with_help(&format!("Add a closing {} quote to terminate the raw string", quote_name)));
+        }
+
+        // Consume closing quote
+        self.advance();
+        self.add_token(TokenKind::RawString(value));
+        Ok(())
+    }
+
+    /// Parse multiline string """...""" or '''...''' WITH escape processing
+    fn multiline_string(&mut self, quote_char: char) -> SaldResult<()> {
+        let start_line = self.line;
+        let start_col = self.start_column;
+
+        let mut value = String::new();
+
+        while !self.is_at_end() {
+            let c = self.peek();
+
+            // Check for closing triple quotes
+            if c == quote_char && self.peek_next() == quote_char {
+                // Check third char
+                if self.current + 2 < self.source.len() && self.source[self.current + 2] == quote_char {
+                    // Found closing triple quotes
+                    self.advance(); // consume first quote
+                    self.advance(); // consume second quote 
+                    self.advance(); // consume third quote
+                    
+                    // Process escape sequences
+                    let processed = self.process_escapes(&value, quote_char)?;
+                    self.add_token(TokenKind::String(processed));
+                    return Ok(());
+                }
+            }
+
+            if c == '\\' {
+                // Handle escape sequences - consume backslash and next char together
+                value.push(self.advance()); // push '\'
+                if !self.is_at_end() {
+                    if self.peek() == '\n' {
+                        self.line += 1;
+                        self.column = 1;
+                    }
+                    value.push(self.advance()); // push escaped char
+                }
+            } else if c == '\n' {
+                self.line += 1;
+                self.column = 1;
+                value.push(self.advance());
+            } else {
+                value.push(self.advance());
+            }
+        }
+
+        let quote = if quote_char == '"' { "\"\"\"" } else { "'''" };
+        Err(SaldError::syntax_error(
+            "Unterminated multiline string",
+            Span::from_positions(start_line, start_col, self.line, self.column),
+            &self.file,
+        )
+        .with_help(&format!("Add {} to close the multiline string", quote)))
+    }
+
+    /// Parse format multiline string $"""...""" or $'''...''' with interpolation AND escape processing
+    fn format_multiline_string(&mut self, quote_char: char) -> SaldResult<()> {
         let start_line = self.line;
         let start_col = self.start_column;
 
@@ -496,12 +603,13 @@ impl Scanner {
                     self.advance();
                     self.advance();
 
-                    // Emit final part (no escape processing for raw strings)
+                    // Emit final part WITH escape processing
+                    let processed = self.process_escapes(&current_text, quote_char)?;
                     if is_first {
-                        // Entire string has no interpolation
-                        self.add_token(TokenKind::RawString(current_text));
+                        // Entire string has no interpolation - emit as regular string
+                        self.add_token(TokenKind::String(processed));
                     } else {
-                        self.add_token(TokenKind::RawFormatStringEnd(current_text));
+                        self.add_token(TokenKind::FormatStringEnd(processed));
                     }
                     return Ok(());
                 }
@@ -514,12 +622,13 @@ impl Scanner {
                     self.advance();
                     current_text.push('{');
                 } else {
-                    // Start of expression - emit current text (no escape processing)
+                    // Start of expression - emit current text WITH escape processing
+                    let processed = self.process_escapes(&current_text, quote_char)?;
                     if is_first {
-                        self.add_token(TokenKind::RawFormatStringStart(current_text.clone()));
+                        self.add_token(TokenKind::FormatStringStart(processed));
                         is_first = false;
                     } else {
-                        self.add_token(TokenKind::RawFormatStringPart(current_text.clone()));
+                        self.add_token(TokenKind::FormatStringPart(processed));
                     }
                     current_text.clear();
 
@@ -542,7 +651,7 @@ impl Scanner {
 
                     if brace_depth > 0 {
                         return Err(SaldError::syntax_error(
-                            "Unterminated expression in raw format string",
+                            "Unterminated expression in format string",
                             Span::from_positions(start_line, start_col, self.line, self.column),
                             &self.file,
                         )
@@ -557,8 +666,18 @@ impl Scanner {
                     current_text.push('}');
                 } else {
                     return Err(self
-                        .error("Unexpected '}' in raw format string")
+                        .error("Unexpected '}' in format string")
                         .with_help("Use '}}' to include a literal '}'"));
+                }
+            } else if c == '\\' {
+                // Handle escape sequences - consume backslash and next char together
+                current_text.push(self.advance()); // push '\'
+                if !self.is_at_end() {
+                    if self.peek() == '\n' {
+                        self.line += 1;
+                        self.column = 1;
+                    }
+                    current_text.push(self.advance()); // push escaped char
                 }
             } else if c == '\n' {
                 self.line += 1;
@@ -571,11 +690,11 @@ impl Scanner {
 
         let quote = if quote_char == '"' { "\"\"\"" } else { "'''" };
         Err(SaldError::syntax_error(
-            "Unterminated raw format string",
+            "Unterminated format string",
             Span::from_positions(start_line, start_col, self.line, self.column),
             &self.file,
         )
-        .with_help(&format!("Add {} to close the raw format string", quote)))
+        .with_help(&format!("Add {} to close the format string", quote)))
     }
 
     fn process_escapes(&self, s: &str, quote_char: char) -> SaldResult<String> {
