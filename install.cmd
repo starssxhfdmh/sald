@@ -16,6 +16,7 @@ mkdir "%TEMP_DIR%" 2>nul
 echo.
 echo [32msald[0m installer
 echo.
+echo   [90mPlatform: windows-x86_64[0m
 
 REM Get latest version using PowerShell
 echo   [90mFetching latest version...[0m

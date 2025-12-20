@@ -38,6 +38,7 @@ function Main {
     Write-Host "sald" -ForegroundColor Green -NoNewline
     Write-Host " installer"
     Write-Host ""
+    Write-Host "  Platform: windows-x86_64" -ForegroundColor DarkGray
 
     # Get latest version
     Write-Host "  Fetching latest version..." -ForegroundColor DarkGray
