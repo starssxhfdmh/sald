@@ -6,6 +6,7 @@ pub mod binary;
 pub mod builtins;
 pub mod compiler;
 pub mod error;
+pub mod jit;
 pub mod lexer;
 pub mod lsp;
 pub mod parser;
