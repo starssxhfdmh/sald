@@ -30,13 +30,13 @@ namespace ApiRoutes {
     
     // Simple session check for API using Spark.Session
     fun getSession(req) {
-        return Spark.Session.start(req)
+        return Spark.Session.get(req)
     }
     
     // Auth middleware for API
     fun requireApiAuth() {
         return |req, next| {
-            let session = Spark.Session.start(req)
+            let session = Spark.Session.get(req)
             if session == null {
                 return Spark.Response.unauthorized("Please log in to continue")
             }

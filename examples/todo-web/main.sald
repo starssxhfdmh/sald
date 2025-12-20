@@ -17,12 +17,13 @@ app.use(Spark.Middleware.helmet(null))
 
 // ==================== Session Configuration ====================
 
-// Configure file-based sessions (persists across server restarts)
-// Options: "memory" (default) or "file"
-await Spark.Session.configure({
-    "driver": "file",
-    "filePath": "./data/sessions.json",
-    "maxAge": 86400 * 7  // 7 days
+// Configure signed cookie sessions (client-side, secure)
+// Secret should be a strong random string (min 32 chars)
+Spark.Session.configure({
+    "secret": "todo-app-super-secret-key-change-in-production-32chars",
+    "maxAge": 86400 * 7,  // 7 days
+    "httpOnly": true,
+    "sameSite": "Lax"
 })
 
 // ==================== Static Files ====================

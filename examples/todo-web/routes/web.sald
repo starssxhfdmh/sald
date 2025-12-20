@@ -6,28 +6,17 @@ import "spark"
 
 namespace WebRoutes {
     
-    // ==================== Session Helpers (using Spark.Session) ====================
+    // ==================== Session Helpers (using Spark.Session v0.2.0) ====================
+    // Sessions are now stored in signed cookies (client-side)
     
     fun getSession(req) {
-        return Spark.Session.start(req)
-    }
-    
-    async fun createSession(userId, username) {
-        return await Spark.Session.create({
-            "userId": userId,
-            "username": username
-        })
-    }
-    
-    async fun destroySession(req) {
-        let sessionId = Spark.Session.id(req)
-        await Spark.Session.destroy(sessionId)
+        return Spark.Session.get(req)
     }
     
     // Auth middleware
     fun requireAuth() {
         return |req, next| {
-            let session = WebRoutes.getSession(req)
+            let session = Spark.Session.get(req)
             if session == null {
                 return Spark.Response.redirect("/login", null)
             }
@@ -39,7 +28,7 @@ namespace WebRoutes {
     // Guest middleware (redirect if logged in)
     fun requireGuest() {
         return |req, next| {
-            let session = WebRoutes.getSession(req)
+            let session = Spark.Session.get(req)
             if session != null {
                 return Spark.Response.redirect("/dashboard", null)
             }
@@ -269,11 +258,12 @@ namespace WebRoutes {
                 return Spark.Response.redirect("/login?error=Invalid username or password", null)
             }
             
-            // Create session
-            let sessionId = await WebRoutes.createSession(user["id"], user["username"])
-            
+            // Create session cookie with user data
             let response = Spark.Response.redirect("/dashboard", null)
-            return Spark.Session.setCookie(response, sessionId, null)
+            return Spark.Session.set(response, {
+                "userId": user["id"],
+                "username": user["username"]
+            })
         })
         
         // -------------------- Register --------------------
@@ -370,20 +360,19 @@ namespace WebRoutes {
             users.push(newUser)
             await WebRoutes.saveUsers(users)
             
-            // Create session and redirect
-            let sessionId = await WebRoutes.createSession(userId, username)
-            
+            // Create session cookie and redirect
             let response = Spark.Response.redirect("/dashboard", null)
-            return Spark.Session.setCookie(response, sessionId, null)
+            return Spark.Session.set(response, {
+                "userId": userId,
+                "username": username
+            })
         })
         
         // -------------------- Logout --------------------
         
-        router.get("/logout", async |req| {
-            await WebRoutes.destroySession(req)
-            
+        router.get("/logout", |req| {
             let response = Spark.Response.redirect("/", null)
-            return Spark.Session.clearCookie(response)
+            return Spark.Session.clear(response)
         })
         
         // -------------------- Dashboard --------------------
@@ -463,7 +452,7 @@ namespace WebRoutes {
                     </div>
                     
                     <div class="add-todo-form">
-                        <form id="addTodoForm" onsubmit="addTodo(event)">
+                        <form id="addTodoForm">
                             <div class="form-row">
                                 <input type="text" id="todoText" placeholder="What needs to be done?" required>
                                 <select id="todoPriority">
