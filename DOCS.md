@@ -712,6 +712,57 @@ let pretty = Json.stringify(obj, 2)  // 2-space indent
 
 ---
 
+### Regex
+
+```javascript
+// Create regex with optional flags
+let r = Regex.new("\\d+")           // digits
+let r2 = Regex.new("hello", "i")    // case-insensitive
+
+// Flags: i (case-insensitive), m (multiline), s (dot matches newline)
+```
+
+Instance methods:
+
+```javascript
+let r = Regex.new("(\\w+)@(\\w+)")
+
+r.test("test@example")              // true
+r.match("test@example")             // ["test@example", "test", "example"]
+r.matchAll("a@b and c@d")           // [["a@b", "a", "b"], ["c@d", "c", "d"]]
+r.replace("test@a", "$1@new")       // "test@new" (first match)
+r.replaceAll("a@b c@d", "X")        // "X X"
+r.split("a1b2c")                    // ["a", "b", "c"] (with Regex.new("\\d"))
+r.pattern()                         // "(\\w+)@(\\w+)"
+r.flags()                           // "" or "i", "m", "s", etc.
+```
+
+---
+
+### Crypto
+
+```javascript
+// Hashing (sha256, sha512, md5, sha1)
+Crypto.hash("sha256", "hello")      // "2cf24dba5fb0a30e..."
+Crypto.hash("md5", "hello")         // "5d41402abc4b2a76..."
+
+// HMAC signing (sha256, sha512)
+Crypto.hmac("sha256", "secret", "message")
+
+// UUID v4
+Crypto.uuid()                       // "550e8400-e29b-41d4-..."
+
+// Random
+Crypto.randomBytes(16)              // [23, 45, 128, ...] (16 bytes)
+Crypto.randomInt(1, 100)            // random int between 1-100
+
+// Base64
+Crypto.base64Encode("hello")        // "aGVsbG8="
+Crypto.base64Decode("aGVsbG8=")     // "hello"
+```
+
+---
+
 ### File (Async)
 
 ```javascript
