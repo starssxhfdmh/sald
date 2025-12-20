@@ -52,6 +52,39 @@ pub fn encode_bool(b: bool) -> u64 {
     if b { TAG_TRUE } else { TAG_FALSE }
 }
 
+/// Convert Value to tagged representation for JIT
+#[inline(always)]
+pub fn value_to_tagged(value: &crate::vm::value::Value) -> u64 {
+    use crate::vm::value::Value;
+    match value {
+        Value::Number(n) => encode_number(*n),
+        Value::Null => TAG_NULL,
+        Value::Boolean(true) => TAG_TRUE,
+        Value::Boolean(false) => TAG_FALSE,
+        // For complex types, we can't handle them in JIT yet
+        // Return null as fallback
+        _ => TAG_NULL,
+    }
+}
+
+/// Convert tagged representation back to Value
+#[inline(always)]
+pub fn tagged_to_value(tagged: u64) -> crate::vm::value::Value {
+    use crate::vm::value::Value;
+    if is_number(tagged) {
+        Value::Number(decode_number(tagged))
+    } else if tagged == TAG_NULL {
+        Value::Null
+    } else if tagged == TAG_TRUE {
+        Value::Boolean(true)
+    } else if tagged == TAG_FALSE {
+        Value::Boolean(false)
+    } else {
+        // Unknown tag, return null
+        Value::Null
+    }
+}
+
 /// Runtime helper: print value (for debugging)
 #[no_mangle]
 pub extern "C" fn jit_runtime_print(value: u64) {
