@@ -25,12 +25,12 @@
 
 **Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/starssxhfdmh/sald/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.sh | bash
 ```
 
 **Windows:**
 ```powershell
-irm https://raw.githubusercontent.com/starssxhfdmh/sald/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.ps1 | iex
 ```
 
 ### Build from Source
