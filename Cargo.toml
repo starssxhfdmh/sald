@@ -1,6 +1,6 @@
 [package]
 name = "sald"
-version = "0.1.13"
+version = "0.1.14"
 edition = "2021"
 description = "Sald Programming Language - A fast, class-based interpreter"
 authors = ["starssxproject"]
@@ -59,4 +59,3 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 debug = false
-strip = true         
