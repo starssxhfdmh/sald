@@ -39,7 +39,7 @@ struct Cli {
     #[arg(long = "check")]
     check: bool,
 
-    /// Run tests (functions with @test decorator)
+    /// Run tests (functions with @Test decorator)
     #[arg(short = 't', long = "test")]
     test: bool,
 
@@ -70,7 +70,7 @@ async fn main() {
             // Compile mode
             handle_compile(&path, debug, cli.output)
         } else if cli.test {
-            // Test mode - run @test functions
+            // Test mode - run @Test functions
             handle_test(&path, debug, cli.filter.as_deref()).await
         } else {
             // Run mode
@@ -284,7 +284,7 @@ async fn handle_run(path: &PathBuf, debug: DebugFlags) -> Result<(), String> {
     Ok(())
 }
 
-/// Run tests - collect and execute @test functions
+/// Run tests - collect and execute @Test functions
 async fn handle_test(path: &PathBuf, debug: DebugFlags, filter: Option<&str>) -> Result<(), String> {
     use std::time::Instant;
     
@@ -303,11 +303,11 @@ async fn handle_test(path: &PathBuf, debug: DebugFlags, filter: Option<&str>) ->
     let mut parser = parser::Parser::new(tokens, &file_name, &source);
     let program = parser.parse().map_err(|e| e.to_string())?;
     
-    // Collect @test functions
+    // Collect @Test functions 
     let mut test_names: Vec<String> = Vec::new();
     for stmt in &program.statements {
         if let sald::ast::Stmt::Function { def } = stmt {
-            if def.decorators.iter().any(|d| d.name == "test") {
+            if def.decorators.iter().any(|d| d.name == "Test") {
                 // Apply filter if provided
                 if let Some(f) = filter {
                     if !def.name.contains(f) {

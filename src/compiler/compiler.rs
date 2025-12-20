@@ -755,7 +755,6 @@ impl Compiler {
             file: self.file.clone(),
             param_names: def.params.iter().map(|p| p.name.clone()).collect(),
             default_count: def.params.iter().filter(|p| p.default_value.is_some()).count(),
-            is_test: def.decorators.iter().any(|d| d.name == "test"),
             decorators: def.decorators.iter().map(|d| d.name.clone()).collect(),
         });
 
@@ -770,10 +769,8 @@ impl Compiler {
             }
             self.emit_u16(const_idx as u16, func_span);
         } else {
-            // Collect user-defined decorators (skip builtin 'test')
-            let user_decorators: Vec<_> = def.decorators.iter()
-                .filter(|d| d.name != "test")
-                .collect();
+            // Collect all decorators (including Test)
+            let user_decorators: Vec<_> = def.decorators.iter().collect();
             
             // Step 1: Emit all decorator lookups FIRST (in order)
             // This puts decorators on stack in order: d1, d2, d3, ...
@@ -1177,7 +1174,6 @@ impl Compiler {
             file: self.file.clone(),
             param_names: Vec::new(),
             default_count: 0,
-            is_test: false,
             decorators: Vec::new(),
         });
         
@@ -1317,7 +1313,6 @@ impl Compiler {
             file: self.file.clone(),
             param_names: Vec::new(),
             default_count: 0,
-            is_test: false,
             decorators: Vec::new(),
         });
         
@@ -1415,7 +1410,6 @@ impl Compiler {
             file: self.file.clone(),
             param_names: def.params.iter().map(|p| p.name.clone()).collect(),
             default_count: def.params.iter().filter(|p| p.default_value.is_some()).count(),
-            is_test: def.decorators.iter().any(|d| d.name == "test"),
             decorators: def.decorators.iter().map(|d| d.name.clone()).collect(),
         });
 
@@ -2843,7 +2837,6 @@ impl Compiler {
             file: self.file.clone(),
             param_names: params.iter().map(|p| p.name.clone()).collect(),
             default_count: params.iter().filter(|p| p.default_value.is_some()).count(),
-            is_test: false,
             decorators: Vec::new(),
         });
 

@@ -5,7 +5,7 @@ use crate::compiler::chunk::{Chunk, ClassConstant, Constant, FunctionConstant, U
 use crate::error::{Position, Span};
 
 const MAGIC: &[u8; 4] = b"SALD";
-const VERSION: u8 = 2; // Bumped version for span support
+const VERSION: u8 = 3; // Removed is_test field, now using decorators only
 
 /// Serialize a chunk to binary format
 pub fn serialize(chunk: &Chunk) -> Vec<u8> {
@@ -54,7 +54,7 @@ pub fn deserialize(data: &[u8]) -> Result<Chunk, String> {
 
     // Check version
     let version = data[cursor];
-    if version != VERSION && version != 1 {
+    if version != VERSION && version != 1 && version != 2 {
         return Err(format!("Unsupported version: {}", version));
     }
     cursor += 1;
@@ -63,7 +63,7 @@ pub fn deserialize(data: &[u8]) -> Result<Chunk, String> {
     let constant_count = read_u32(data, &mut cursor)? as usize;
     let mut constants = Vec::with_capacity(constant_count);
     for _ in 0..constant_count {
-        constants.push(deserialize_constant(data, &mut cursor)?);
+        constants.push(deserialize_constant(data, &mut cursor, version)?);
     }
 
     // Code
@@ -170,8 +170,7 @@ fn serialize_constant(out: &mut Vec<u8>, constant: &Constant) {
                 write_string(out, name);
             }
             write_u32(out, f.default_count as u32);
-            // Write is_test and decorators
-            out.push(if f.is_test { 1 } else { 0 });
+            // Write decorators (is_test removed in v3, use decorators instead)
             write_u32(out, f.decorators.len() as u32);
             for decorator in &f.decorators {
                 write_string(out, decorator);
@@ -193,7 +192,7 @@ fn serialize_constant(out: &mut Vec<u8>, constant: &Constant) {
     }
 }
 
-fn deserialize_constant(data: &[u8], cursor: &mut usize) -> Result<Constant, String> {
+fn deserialize_constant(data: &[u8], cursor: &mut usize, version: u8) -> Result<Constant, String> {
     if *cursor >= data.len() {
         return Err("Unexpected end of file".to_string());
     }
@@ -259,12 +258,14 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize) -> Result<Constant, Str
                 param_names.push(read_string(data, cursor)?);
             }
             let default_count = read_u32(data, cursor)? as usize;
-            // Read is_test and decorators
-            if *cursor >= data.len() {
-                return Err("Unexpected end of file".to_string());
+            // Read decorators (skip is_test byte if version 2 for backward compat)
+            if version == 2 {
+                if *cursor >= data.len() {
+                    return Err("Unexpected end of file".to_string());
+                }
+                // Skip the is_test byte from old format
+                *cursor += 1;
             }
-            let is_test = data[*cursor] != 0;
-            *cursor += 1;
             let decorator_count = read_u32(data, cursor)? as usize;
             let mut decorators = Vec::with_capacity(decorator_count);
             for _ in 0..decorator_count {
@@ -287,7 +288,6 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize) -> Result<Constant, Str
                 file: String::new(),
                 param_names,
                 default_count,
-                is_test,
                 decorators,
             }))
         }

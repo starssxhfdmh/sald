@@ -264,8 +264,6 @@ pub struct Function {
     pub param_names: Vec<String>,
     /// Number of parameters with default values (from end)
     pub default_count: usize,
-    /// Whether this function is marked with @test decorator
-    pub is_test: bool,
     /// Decorator names applied to this function
     pub decorators: Vec<String>,
 }
@@ -282,7 +280,6 @@ impl Function {
             upvalues: Vec::new(),
             param_names: Vec::new(),
             default_count: 0,
-            is_test: false,
             decorators: Vec::new(),
         }
     }
@@ -303,7 +300,6 @@ impl Function {
             upvalues: Vec::new(),
             param_names: Vec::new(),
             default_count: 0,
-            is_test: false,
             decorators: Vec::new(),
         }
     }
@@ -325,7 +321,6 @@ impl Function {
             upvalues: Vec::with_capacity(upvalue_count),
             param_names: Vec::new(),
             default_count: 0,
-            is_test: false,
             decorators: Vec::new(),
         }
     }
@@ -342,11 +337,11 @@ impl Function {
             upvalues: Vec::with_capacity(fc.upvalue_count),
             param_names: fc.param_names.clone(),
             default_count: fc.default_count,
-            is_test: fc.is_test,
             decorators: fc.decorators.clone(),
         }
     }
 }
+
 
 /// Class object
 #[derive(Clone)]

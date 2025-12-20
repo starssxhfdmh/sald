@@ -88,13 +88,13 @@ jobs:
 
       - name: Package extension
         working-directory: lsp
-        run: vsce package --out sald-vscode-extension.vsix
+        run: vsce package --out sald-language-support.vsix
 
       - name: Upload VSCode extension
         uses: actions/upload-artifact@v4
         with:
-          name: sald-vscode-extension
-          path: lsp/sald-vscode-extension.vsix
+          name: sald-language-support
+          path: lsp/sald-language-support.vsix
 
   release:
     needs: [build, build-vscode-extension]

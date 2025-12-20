@@ -1,6 +1,8 @@
 // Test built-in class
 // Provides assertion functions for testing: Test.assert, Test.assert_eq, etc.
+// Also serves as a decorator: @Test marks a function as a test
 
+use super::check_arity;
 use super::check_arity_min;
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use std::collections::HashMap;
@@ -13,7 +15,20 @@ pub fn create_test_class() -> Class {
     static_methods.insert("assert_ne".to_string(), test_assert_ne);
     static_methods.insert("fail".to_string(), test_fail);
 
-    Class::new_with_static("Test", static_methods)
+    let mut class = Class::new_with_static("Test", static_methods);
+    
+    // Add constructor that acts as identity decorator
+    // When used as @Test, it receives the function and returns it unchanged
+    class.constructor = Some(test_decorator);
+    
+    class
+}
+
+/// Test decorator - identity function for marking test functions
+/// When used as @Test, this receives the decorated function and returns it unchanged
+fn test_decorator(args: &[Value]) -> Result<Value, String> {
+    check_arity(1, args.len())?;
+    Ok(args[0].clone())
 }
 
 /// Test.assert(condition, ?message)
