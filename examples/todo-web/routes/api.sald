@@ -49,7 +49,7 @@ namespace ApiRoutes {
     
     // ==================== Route Factory ====================
     
-    fun create() {
+    fun create(_) {
         let router = Spark.createRouter()
         
         // Rate limiting for API
