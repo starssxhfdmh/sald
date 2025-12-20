@@ -9,3 +9,4 @@ node_modules
 out
 *.vsix
 package-lock.json
+commit.js
