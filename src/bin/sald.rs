@@ -6,12 +6,12 @@ use colored::*;
 use std::fs;
 use std::path::PathBuf;
 
-use sald::binary;
-use sald::compiler::Compiler;
-use sald::error::SaldResult;
-use sald::lexer::Scanner;
-use sald::parser;
-use sald::vm::VM;
+use sald_core::binary;
+use sald_core::compiler::Compiler;
+use sald_core::error::SaldResult;
+use sald_core::lexer::Scanner;
+use sald_core::parser;
+use sald_core::vm::VM;
 
 /// Sald - A fast, class-based interpreted language
 #[derive(Parser)]
@@ -214,7 +214,7 @@ fn find_project_root() -> Option<PathBuf> {
 async fn handle_run(path: &PathBuf, debug: DebugFlags) -> Result<(), String> {
     // Auto-detect project root if salad.json exists (enables module imports)
     if let Some(project_root) = find_project_root() {
-        sald::set_project_root(&project_root);
+        sald_core::set_project_root(&project_root);
     }
     
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
@@ -290,7 +290,7 @@ async fn handle_test(path: &PathBuf, debug: DebugFlags, filter: Option<&str>) ->
     
     // Auto-detect project root
     if let Some(project_root) = find_project_root() {
-        sald::set_project_root(&project_root);
+        sald_core::set_project_root(&project_root);
     }
     
     let source = fs::read_to_string(path)
@@ -306,7 +306,7 @@ async fn handle_test(path: &PathBuf, debug: DebugFlags, filter: Option<&str>) ->
     // Collect @Test functions 
     let mut test_names: Vec<String> = Vec::new();
     for stmt in &program.statements {
-        if let sald::ast::Stmt::Function { def } = stmt {
+        if let sald_core::ast::Stmt::Function { def } = stmt {
             if def.decorators.iter().any(|d| d.name == "Test") {
                 // Apply filter if provided
                 if let Some(f) = filter {
@@ -723,7 +723,7 @@ fn print_repl_help() {
 }
 
 /// Format and print REPL result with colors (Node.js style)
-fn print_repl_result(value: &sald::vm::Value, _line: u32) {
+fn print_repl_result(value: &sald_core::vm::Value, _line: u32) {
     let formatted = format_value(value, 0);
     if !formatted.is_empty() && formatted != "null" {
         println!("{}", formatted);
@@ -731,8 +731,8 @@ fn print_repl_result(value: &sald::vm::Value, _line: u32) {
 }
 
 /// Format a value with syntax highlighting
-fn format_value(value: &sald::vm::Value, depth: usize) -> String {
-    use sald::vm::Value;
+fn format_value(value: &sald_core::vm::Value, depth: usize) -> String {
+    use sald_core::vm::Value;
     
     match value {
         Value::Null => "null".bright_black().to_string(),
@@ -817,7 +817,7 @@ fn format_value(value: &sald::vm::Value, depth: usize) -> String {
     }
 }
 
-async fn run_repl_line(vm: &mut VM, source: &str) -> SaldResult<sald::vm::Value> {
+async fn run_repl_line(vm: &mut VM, source: &str) -> SaldResult<sald_core::vm::Value> {
     let mut scanner = Scanner::new(source, "<repl>");
     let tokens = scanner.scan_tokens()?;
 
@@ -834,8 +834,8 @@ async fn run_repl_line(vm: &mut VM, source: &str) -> SaldResult<sald::vm::Value>
 }
 
 // Build statement tree using ptree TreeBuilder
-fn build_stmt_tree(tree: &mut ptree::TreeBuilder, stmt: &sald::ast::Stmt) {
-    use sald::ast::Stmt;
+fn build_stmt_tree(tree: &mut ptree::TreeBuilder, stmt: &sald_core::ast::Stmt) {
+    use sald_core::ast::Stmt;
 
     match stmt {
         Stmt::Let {
@@ -850,9 +850,9 @@ fn build_stmt_tree(tree: &mut ptree::TreeBuilder, stmt: &sald::ast::Stmt) {
         Stmt::LetDestructure { pattern, initializer, .. } => {
             let vars: Vec<String> = pattern.elements.iter().map(|e| {
                 match e {
-                    sald::ast::ArrayPatternElement::Variable { name, .. } => name.clone(),
-                    sald::ast::ArrayPatternElement::Rest { name, .. } => format!("...{}", name),
-                    sald::ast::ArrayPatternElement::Hole => "_".to_string(),
+                    sald_core::ast::ArrayPatternElement::Variable { name, .. } => name.clone(),
+                    sald_core::ast::ArrayPatternElement::Rest { name, .. } => format!("...{}", name),
+                    sald_core::ast::ArrayPatternElement::Hole => "_".to_string(),
                 }
             }).collect();
             tree.begin_child(format!("LetDestructure [{}]", vars.join(", ")));
@@ -1022,8 +1022,8 @@ fn build_stmt_tree(tree: &mut ptree::TreeBuilder, stmt: &sald::ast::Stmt) {
     }
 }
 
-fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald::ast::Expr) {
-    use sald::ast::{BinaryOp, Expr, Literal, UnaryOp};
+fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald_core::ast::Expr) {
+    use sald_core::ast::{BinaryOp, Expr, Literal, UnaryOp};
 
     match expr {
         Expr::Literal { value, .. } => {
@@ -1270,8 +1270,8 @@ fn build_expr_tree(tree: &mut ptree::TreeBuilder, expr: &sald::ast::Expr) {
     }
 }
 
-fn build_pattern_tree(tree: &mut ptree::TreeBuilder, pattern: &sald::ast::Pattern) {
-    use sald::ast::{Pattern, Literal, SwitchArrayElement};
+fn build_pattern_tree(tree: &mut ptree::TreeBuilder, pattern: &sald_core::ast::Pattern) {
+    use sald_core::ast::{Pattern, Literal, SwitchArrayElement};
     
     match pattern {
         Pattern::Literal { value, .. } => {

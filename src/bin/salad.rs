@@ -6,10 +6,10 @@ use colored::Colorize;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server, StatusCode};
 use reqwest::multipart;
-use sald::compiler::Compiler;
-use sald::lexer::Scanner;
-use sald::parser::Parser as SaldParser;
-use sald::vm::VM;
+use sald_core::compiler::Compiler;
+use sald_core::lexer::Scanner;
+use sald_core::parser::Parser as SaldParser;
+use sald_core::vm::VM;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -992,7 +992,7 @@ async fn cmd_run(args: &[String]) {
         }
     };
     
-    sald::set_project_root(&project_root);
+    sald_core::set_project_root(&project_root);
     
     if let Ok(result) = check_modules(&project_root) {
         if !result.is_ok() {

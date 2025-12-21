@@ -6,7 +6,7 @@ description = "Sald Programming Language - A fast, class-based interpreter"
 authors = ["starssxproject"]
 
 [lib]
-name = "sald"
+name = "sald_core"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 

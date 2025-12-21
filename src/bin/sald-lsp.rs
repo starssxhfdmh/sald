@@ -1,7 +1,7 @@
 // Sald Language Server Protocol (LSP) Binary
 // Provides IDE features like autocomplete, diagnostics, go-to-definition
 
-use sald::lsp::SaldLanguageServer;
+use sald_core::lsp::SaldLanguageServer;
 use tower_lsp::{LspService, Server};
 
 #[tokio::main]
