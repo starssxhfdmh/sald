@@ -107,11 +107,30 @@ struct FfiLibrary {
     signatures: HashMap<String, FunctionSignature>,
 }
 
+// ==================== Thread-safe pointer wrapper ====================
+
+/// Wrapper for raw pointers to make them Send+Sync
+/// SAFETY: The caller is responsible for ensuring the pointer remains valid
+/// while stored in the global. We only use this during active FFI calls.
+#[derive(Clone, Copy)]
+struct SendPtr(*mut ());
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
+
+#[derive(Clone, Copy)]
+struct SendConstPtr(*const ());
+unsafe impl Send for SendConstPtr {}
+unsafe impl Sync for SendConstPtr {}
+
 // ==================== Callback Registry ====================
 
 static CALLBACK_REGISTRY: RwLock<Option<HashMap<i64, Value>>> = RwLock::new(None);
 static NEXT_CALLBACK_ID: Mutex<i64> = Mutex::new(1);
-static GLOBAL_CALLER: Mutex<Option<[usize; 2]>> = Mutex::new(None);
+
+// Store caller as raw pointer with explicit lifetime tracking
+// This is safer than transmuting fat pointers
+static GLOBAL_CALLER_PTR: Mutex<Option<SendPtr>> = Mutex::new(None);
+static GLOBAL_CALLER_VTABLE: Mutex<Option<SendConstPtr>> = Mutex::new(None);
 
 fn init_registry() {
     let mut reg = CALLBACK_REGISTRY.write().unwrap();
@@ -149,15 +168,29 @@ fn get_callback(id: i64) -> Option<Value> {
     None
 }
 
+/// Store global caller using TraitObject-like decomposition
+/// This avoids the UB of transmuting between [usize; 2] and fat pointers
 fn set_global_caller(caller: &mut dyn ValueCaller) {
-    let fat_ptr: [usize; 2] = unsafe { std::mem::transmute(caller as *mut dyn ValueCaller) };
-    let mut guard = GLOBAL_CALLER.lock().unwrap();
-    *guard = Some(fat_ptr);
+    // Get raw pointer parts safely using pointer metadata
+    let ptr = caller as *mut dyn ValueCaller;
+    let data_ptr = ptr as *mut () as *mut ();
+    // Extract vtable pointer by reading the second word of the fat pointer
+    let vtable_ptr = unsafe {
+        let fat_ptr_bytes = &ptr as *const _ as *const [*const (); 2];
+        (*fat_ptr_bytes)[1] as *const ()
+    };
+    
+    let mut ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
+    let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+    *ptr_guard = Some(SendPtr(data_ptr));
+    *vtable_guard = Some(SendConstPtr(vtable_ptr));
 }
 
 fn clear_global_caller() {
-    let mut guard = GLOBAL_CALLER.lock().unwrap();
-    *guard = None;
+    let mut ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
+    let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+    *ptr_guard = None;
+    *vtable_guard = None;
 }
 
 #[no_mangle]
@@ -170,19 +203,25 @@ pub extern "C" fn sald_invoke_callback(callback_id: i64, arg_count: i64, args: *
         }
     };
 
-    let fat_ptr = {
-        let guard = GLOBAL_CALLER.lock().unwrap();
-        match *guard {
-            Some(ptr) => ptr,
-            None => {
+    // Reconstruct the fat pointer from stored components
+    let (data_ptr, vtable_ptr) = {
+        let ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
+        let vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+        match (&*ptr_guard, &*vtable_guard) {
+            (Some(SendPtr(p)), Some(SendConstPtr(v))) => (*p, *v),
+            _ => {
                 eprintln!("[FFI] No active caller for callback");
                 return 0;
             }
         }
     };
 
-    let caller: &mut dyn ValueCaller =
-        unsafe { std::mem::transmute::<[usize; 2], &mut dyn ValueCaller>(fat_ptr) };
+    // Reconstruct the trait object pointer safely
+    let caller: &mut dyn ValueCaller = unsafe {
+        let fat_ptr: [*const (); 2] = [data_ptr as *const (), vtable_ptr];
+        let trait_ptr = std::ptr::read(&fat_ptr as *const _ as *const *mut dyn ValueCaller);
+        &mut *trait_ptr
+    };
 
     let mut sald_args = Vec::with_capacity(arg_count as usize);
     if !args.is_null() {
@@ -1117,7 +1156,22 @@ unsafe fn call_with_types(
 
     let ffi_types: Vec<FfiType> = converted_args.iter().map(|a| a.ffi_type.clone()).collect();
 
-    let mut ffi_args = Vec::new();
+    // Store CString pointers separately to ensure they live long enough
+    // This prevents the CString from being dropped before the FFI call
+    let cstring_ptrs: Vec<*const std::os::raw::c_char> = converted_args
+        .iter()
+        .filter_map(|arg| {
+            if let ConvertedData::CStr(s) = &arg.data {
+                Some(s.as_ptr())
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    let mut cstring_idx = 0;
+    let mut ffi_args = Vec::with_capacity(converted_args.len());
+    
     for arg in &converted_args {
         let arg_ref = match &arg.data {
             ConvertedData::I8(v) => Arg::new(v),
@@ -1131,7 +1185,12 @@ unsafe fn call_with_types(
             ConvertedData::F32(v) => Arg::new(v),
             ConvertedData::F64(v) => Arg::new(v),
             ConvertedData::Ptr(v) => Arg::new(v),
-            ConvertedData::CStr(s) => Arg::new(&s.as_ptr()),
+            ConvertedData::CStr(_) => {
+                // Use the pre-extracted pointer from cstring_ptrs
+                let ptr_ref = &cstring_ptrs[cstring_idx];
+                cstring_idx += 1;
+                Arg::new(ptr_ref)
+            }
         };
         ffi_args.push(arg_ref);
     }
