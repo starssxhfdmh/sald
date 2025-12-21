@@ -699,27 +699,7 @@ fn ffi_open(args: &[Value]) -> Result<Value, String> {
         _ => return Err(format!("Path must be a string, got {}", args[0].type_name())),
     };
 
-    let path_with_ext = if cfg!(target_os = "windows") {
-        if !path.ends_with(".dll") && !path.contains('.') {
-            format!("{}.dll", path)
-        } else {
-            path.clone()
-        }
-    } else if cfg!(target_os = "macos") {
-        if !path.ends_with(".dylib") && !path.contains('.') {
-            format!("{}.dylib", path)
-        } else {
-            path.clone()
-        }
-    } else {
-        if !path.ends_with(".so") && !path.contains('.') {
-            format!("{}.so", path)
-        } else {
-            path.clone()
-        }
-    };
-
-    let resolved_path = crate::resolve_script_path(&path_with_ext);
+    let resolved_path = crate::resolve_script_path(&path);
     let full_path = resolved_path.to_string_lossy().to_string();
 
     let library = unsafe {
