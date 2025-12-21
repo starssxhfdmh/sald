@@ -57,5 +57,5 @@ path = "src/lib.rs"
 opt-level = 3       
 lto = "fat"          
 codegen-units = 1
-panic = "abort"
+# panic = abort // avoid segfaults during release builds
 debug = false
