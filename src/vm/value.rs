@@ -58,9 +58,12 @@ pub enum Value {
     /// Future value for async operations
     Future(Arc<Mutex<Option<SaldFuture>>>),
     /// Namespace value: holds members as a HashMap
+    /// For imported modules with alias, module_globals stores the original globals context
     Namespace {
         name: String,
         members: Arc<Mutex<HashMap<String, Value>>>,
+        /// Optional: for imported modules, stores the module's globals for proper function scoping
+        module_globals: Option<Arc<std::sync::RwLock<HashMap<String, Value>>>>,
     },
     /// Enum value: holds variants as a HashMap
     Enum {

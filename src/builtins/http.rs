@@ -60,6 +60,7 @@ pub fn create_http_namespace() -> Value {
     Value::Namespace {
         name: "Http".to_string(),
         members: Arc::new(Mutex::new(members)),
+        module_globals: None,
     }
 }
 

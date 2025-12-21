@@ -452,6 +452,7 @@ pub fn create_ffi_namespace() -> Value {
     Value::Namespace {
         name: "Ffi".to_string(),
         members: Arc::new(Mutex::new(members)),
+        module_globals: None,
     }
 }
 
@@ -845,11 +846,8 @@ fn library_call(
         None => (Vec::new(), Vec::new()),
     };
 
-    // Check for callback values and set global caller
-    let has_callback = call_values.iter().any(|v| matches!(v, Value::Instance(_)));
-    if has_callback {
-        set_global_caller(caller);
-    }
+    // Always set global caller for ALL FFI calls - C code can invoke callbacks at any time
+    set_global_caller(caller);
 
     let result = if let Value::Instance(inst) = recv {
         let inst_guard = inst.lock().unwrap();
@@ -882,9 +880,7 @@ fn library_call(
         Err("Invalid library instance".to_string())
     };
 
-    if has_callback {
-        clear_global_caller();
-    }
+    clear_global_caller();
 
     result
 }

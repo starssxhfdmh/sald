@@ -38,19 +38,21 @@ struct CallFrame {
     init_instance: Option<Value>,
     /// Class context for private access checking (Some if this is an instance method)
     class_context: Option<String>,
+    /// Saved globals for module function calls - restore when this frame pops
+    saved_globals: Option<Arc<RwLock<HashMap<String, Value>>>>,
 }
 
 impl CallFrame {
     fn new(function: Arc<Function>, slots_start: usize) -> Self {
-        Self { function, ip: 0, slots_start, init_instance: None, class_context: None }
+        Self { function, ip: 0, slots_start, init_instance: None, class_context: None, saved_globals: None }
     }
 
     fn new_with_class(function: Arc<Function>, slots_start: usize, class_name: String) -> Self {
-        Self { function, ip: 0, slots_start, init_instance: None, class_context: Some(class_name) }
+        Self { function, ip: 0, slots_start, init_instance: None, class_context: Some(class_name), saved_globals: None }
     }
 
     fn new_init_with_class(function: Arc<Function>, slots_start: usize, instance: Value, class_name: String) -> Self {
-        Self { function, ip: 0, slots_start, init_instance: Some(instance), class_context: Some(class_name) }
+        Self { function, ip: 0, slots_start, init_instance: Some(instance), class_context: Some(class_name), saved_globals: None }
     }
 
     #[inline(always)]
@@ -589,6 +591,11 @@ fn op_return(vm: &mut VM) -> ControlFlow {
     };
     let returning_frame_index = vm.frames.len() - 1;
     let frame = unsafe { vm.frames.pop().unwrap_unchecked() };
+
+    // Restore saved globals if this frame had them (module function call)
+    if let Some(saved_globals) = frame.saved_globals {
+        vm.globals = saved_globals;
+    }
 
     if !frame.function.file.is_empty() {
         crate::pop_script_dir();
@@ -1763,7 +1770,7 @@ impl VM {
                     Err(self.create_error(ErrorKind::AttributeError, &format!("'{}' has no method '{}'", class_name, name)))
                 }
             }
-            Value::Namespace { members, name: ns_name } => {
+            Value::Namespace { members, name: ns_name, module_globals } => {
                 // Check private access for namespace members
                 if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
                     return Err(self.create_error(
@@ -1776,7 +1783,21 @@ impl VM {
                     if let Some(member) = m.get(name).cloned() {
                         drop(m);
                         let stack_idx = self.stack.len() - arg_count - 1;
-                        self.stack[stack_idx] = member;
+                        self.stack[stack_idx] = member.clone();
+                        
+                        // If this namespace has stored module globals, swap to them for function execution
+                        if let Some(ref module_globals_arc) = module_globals {
+                            if matches!(member, Value::Function(_)) {
+                                let saved_globals = std::mem::replace(&mut self.globals, module_globals_arc.clone());
+                                let result = self.call_value(arg_count);
+                                // Store saved_globals in the just-pushed frame so Return can restore
+                                if result.is_ok() && !self.frames.is_empty() {
+                                    self.frames.last_mut().unwrap().saved_globals = Some(saved_globals);
+                                }
+                                return result;
+                            }
+                        }
+                        
                         return self.call_value(arg_count);
                     }
                     return Err(self.create_error(ErrorKind::AttributeError, &format!("Namespace '{}' has no member '{}'", ns_name, name)));
@@ -1852,7 +1873,7 @@ impl VM {
                     Err(msg) => return Err(self.create_error(ErrorKind::RuntimeError, &msg)),
                 }
             }
-            Value::Namespace { members, name: ns_name } => {
+            Value::Namespace { members, name: ns_name, .. } => {
                 // Check private access for namespace members
                 if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
                     return Err(self.create_error(
@@ -2001,7 +2022,7 @@ impl VM {
                 return Err(self.create_error(ErrorKind::TypeError, "Namespace member keys must be strings"));
             }
         }
-        self.stack.push(Value::Namespace { name: String::new(), members: Arc::new(Mutex::new(members)) });
+        self.stack.push(Value::Namespace { name: String::new(), members: Arc::new(Mutex::new(members)), module_globals: None });
         Ok(())
     }
 
@@ -2099,7 +2120,10 @@ impl VM {
         let resolved_path = self.resolve_import_path(import_path)?;
         let module_workspace = self.pending_module_workspace.take();
         if let Some(ref workspace) = module_workspace { crate::push_module_workspace(workspace); }
-        let imported_globals = self.import_and_execute(&resolved_path)?;
+        
+        // Use the Arc version to preserve module globals for function scoping
+        let (imported_globals, module_globals_arc) = self.import_and_execute_with_globals(&resolved_path)?;
+        
         if module_workspace.is_some() { crate::pop_module_workspace(); }
         let mut module_fields = HashMap::new();
         for (name, value) in imported_globals {
@@ -2107,9 +2131,15 @@ impl VM {
                 module_fields.insert(name, value);
             }
         }
-        let module_class = Arc::new(Class::new(alias));
-        let module = Instance { class_name: alias.to_string(), class: module_class, fields: module_fields };
-        self.globals.write().unwrap().insert(alias.to_string(), Value::Instance(Arc::new(Mutex::new(module))));
+        // Use Namespace with stored module_globals so functions can access their original scope
+        self.globals.write().unwrap().insert(
+            alias.to_string(),
+            Value::Namespace {
+                name: alias.to_string(),
+                members: Arc::new(Mutex::new(module_fields)),
+                module_globals: Some(module_globals_arc),
+            }
+        );
         Ok(())
     }
 
@@ -2206,7 +2236,57 @@ impl VM {
         Ok(imported_globals)
     }
 
-    // ==================== Error Handling ====================
+    /// Import and execute a module, returning both the globals HashMap AND the Arc
+    /// This preserves the module's globals context for proper function scoping in import-as
+    fn import_and_execute_with_globals(&mut self, path: &str) -> SaldResult<(HashMap<String, Value>, Arc<RwLock<HashMap<String, Value>>>)> {
+        let chunk = if path.ends_with(".saldc") {
+            let data = std::fs::read(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
+            crate::binary::deserialize(&data).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Error deserializing import '{}': {}", path, e)))?
+        } else {
+            let source = std::fs::read_to_string(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
+            let mut scanner = Scanner::new(&source, path);
+            let tokens = scanner.scan_tokens().map_err(|e| self.create_error(ErrorKind::SyntaxError, &format!("Error scanning import '{}': {}", path, e)))?;
+            let mut parser = Parser::new(tokens, path, &source);
+            let program = parser.parse().map_err(|e| self.create_error(ErrorKind::SyntaxError, &format!("Error parsing import '{}': {}", path, e)))?;
+            let mut compiler = Compiler::new(path, &source);
+            compiler.compile(&program).map_err(|e| self.create_error(ErrorKind::SyntaxError, &format!("Error compiling import '{}': {}", path, e)))?
+        };
+        let saved_stack = std::mem::take(&mut self.stack);
+        let saved_frames = std::mem::take(&mut self.frames);
+        let saved_file = std::mem::replace(&mut self.file, path.to_string());
+        let saved_source = std::mem::replace(&mut self.source, String::new());
+        crate::push_script_dir(path);
+        let import_globals = Arc::new(RwLock::new(builtins::create_builtin_classes()));
+        let module_globals_arc = import_globals.clone(); // Keep a clone of the Arc
+        let saved_globals = std::mem::replace(&mut self.globals, import_globals);
+        let mut main_function = Function::new("<import>", 0, chunk);
+        main_function.file = path.to_string();
+        self.stack.push(Value::Null);
+        self.frames.push(CallFrame::new(Arc::new(main_function), 0));
+        loop {
+            match self.execute_until_suspend() {
+                ExecutionResult::Completed(_) => break,
+                ExecutionResult::Suspended { receiver } => {
+                    match futures::executor::block_on(receiver) {
+                        Ok(Ok(value)) => { self.stack.push(value); }
+                        Ok(Err(e)) => { crate::pop_script_dir(); self.stack = saved_stack; self.frames = saved_frames; self.file = saved_file; self.source = saved_source; self.globals = saved_globals; return Err(self.create_error(ErrorKind::ImportError, &format!("Import error: {}", e))); }
+                        Err(_) => { crate::pop_script_dir(); self.stack = saved_stack; self.frames = saved_frames; self.file = saved_file; self.source = saved_source; self.globals = saved_globals; return Err(self.create_error(ErrorKind::ImportError, "Import future cancelled")); }
+                    }
+                }
+                ExecutionResult::Error(e) => { crate::pop_script_dir(); self.stack = saved_stack; self.frames = saved_frames; self.file = saved_file; self.source = saved_source; self.globals = saved_globals; return Err(e); }
+            }
+        }
+        // Clone the globals content but keep the Arc alive
+        let imported_globals = self.globals.read().unwrap().clone();
+        crate::pop_script_dir();
+        self.stack = saved_stack;
+        self.frames = saved_frames;
+        self.file = saved_file;
+        self.source = saved_source;
+        self.globals = saved_globals;
+        Ok((imported_globals, module_globals_arc))
+    }
+
 
     fn create_error(&self, kind: ErrorKind, message: &str) -> SaldError {
         let (span, file) = if !self.frames.is_empty() {
