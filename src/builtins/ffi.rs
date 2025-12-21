@@ -1091,7 +1091,21 @@ unsafe fn call_with_types(
         ));
     }
 
-    // Convert values, handling callback instances specially
+    // FIRST: Pre-allocate all CStrings to ensure they live long enough
+    // This vector owns all the CStrings for the duration of the call
+    let mut cstrings: Vec<CString> = Vec::new();
+    for (val, typ) in values.iter().zip(arg_types.iter()) {
+        if *typ == CType::CString {
+            if let Value::String(s) = val {
+                let c_str = CString::new(s.as_str())
+                    .map_err(|_| "Invalid C string (contains null byte)")?;
+                cstrings.push(c_str);
+            }
+        }
+    }
+
+    // Convert values, using pre-allocated CStrings
+    let mut cstring_idx = 0;
     let mut converted_args: Vec<ConvertedArg> = Vec::new();
     for (idx, (val, typ)) in values.iter().zip(arg_types.iter()).enumerate() {
         let converted = match val {
@@ -1107,6 +1121,15 @@ unsafe fn call_with_types(
                     return Err(format!("args[{}]: Invalid callback instance", idx));
                 }
             }
+            Value::String(_) if *typ == CType::CString => {
+                // Use pointer to pre-allocated CString
+                let ptr = cstrings[cstring_idx].as_ptr() as usize;
+                cstring_idx += 1;
+                ConvertedArg {
+                    ffi_type: typ.to_ffi_type(),
+                    data: ConvertedData::Ptr(ptr),
+                }
+            }
             _ => convert_value_to_arg(val, typ)?,
         };
         converted_args.push(converted);
@@ -1114,19 +1137,6 @@ unsafe fn call_with_types(
 
     let ffi_types: Vec<FfiType> = converted_args.iter().map(|a| a.ffi_type.clone()).collect();
 
-    // Store CString pointers separately to ensure they live long enough
-    let cstring_ptrs: Vec<*const std::os::raw::c_char> = converted_args
-        .iter()
-        .filter_map(|arg| {
-            if let ConvertedData::CStr(s) = &arg.data {
-                Some(s.as_ptr())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut cstring_idx = 0;
     let mut ffi_args = Vec::with_capacity(converted_args.len());
 
     for arg in &converted_args {
@@ -1142,10 +1152,12 @@ unsafe fn call_with_types(
             ConvertedData::F32(v) => Arg::new(v),
             ConvertedData::F64(v) => Arg::new(v),
             ConvertedData::Ptr(v) => Arg::new(v),
-            ConvertedData::CStr(_) => {
-                let ptr_ref = &cstring_ptrs[cstring_idx];
-                cstring_idx += 1;
-                Arg::new(ptr_ref)
+            ConvertedData::CStr(s) => {
+                // This path is no longer used for cstr, but keep for compatibility
+                let ptr = s.as_ptr() as usize;
+                // We need to pass the pointer value, but Arg::new expects a reference
+                // So we store it as usize and pass reference to that
+                Arg::new(&ptr)
             }
         };
         ffi_args.push(arg_ref);

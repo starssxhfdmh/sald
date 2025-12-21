@@ -1,6 +1,4 @@
 target
-modules
-salad-web
 sald-programming-language
 .cargo
 .vscode
