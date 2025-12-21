@@ -1,9 +1,11 @@
 {
   "name": "pong",
   "version": "1.0.0",
-  "description": "A Sald package",
+  "description": "Classic Pong game using Macrosald",
   "author": "starssxproject",
   "license": "MIT",
   "main": "main.sald",
-  "modules": {}
+  "modules": {
+    "macrosald": "1.0.3"
+  }
 }

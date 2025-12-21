@@ -751,12 +751,14 @@ s.endsWith("World")     // true
 s.indexOf("o")          // 4 (first occurrence)
 s.indexOf("o", 5)       // 7 (from index 5)
 s.lastIndexOf("o")      // 7 (last occurrence)
+
 s.replace("World", "Sald")  // "Hello Sald"
 s.replaceAll("o", "0")  // "Hell0 W0rld"
 s.split(" ")            // ["Hello", "World"]
 s.substring(0, 5)       // "Hello"
 s.slice(-5)             // "World" (negative index)
 s.charAt(0)             // "H"
+s.charCodeAt(0)         // 72
 s.isDigit()             // false
 s.padStart(15, "*")     // "****Hello World"
 s.padEnd(15, "*")       // "Hello World****"
@@ -1254,15 +1256,30 @@ server.listen(8080)
 // Load native library
 let lib = Ffi.load("./path/to/library")  // .dll/.so/.dylib
 
-// Call function
-let result = lib.call("add", 10, 20)
+// Method 1: Explicit Types (Recommended)
+// Types: "void", "i8".."i64", "u8".."u64", "f32", "f64", "string", "ptr"
+lib.define("add", ["i32", "i32"], "i32")
+let result = lib.callTyped("add", [10, 20])
 
-// Read C string from pointer
-let str = Ffi.readString(ptr)
+// Method 2: Auto-inferred (Defaults to i64 arguments and return)
+// WARNING: Do NOT use for float/double return types!
+let result = lib.call("simple_func", 10, 20)
+
+// Memory Operations
+let ptr = Ffi.malloc(1024)
+Ffi.writeI32(ptr, 42)
+Ffi.writeF64(ptr, 3.14)
+
+let val = Ffi.readI32(ptr)
+let pi = Ffi.readF64(ptr)
+let str = Ffi.readString(ptr) // Read C-string
+let sub = Ffi.offset(ptr, 4)  // Pointer arithmetic
+
+Ffi.free(ptr)
 
 // Callbacks (Sald -> C)
 let cb = Ffi.callback(|a, b| a + b)
-lib.call("register_callback", cb.id, cb.invoker)
+lib.callTyped("register_callback", [cb.id, cb.invoker])
 Ffi.removeCallback(cb.id)
 
 // Cleanup

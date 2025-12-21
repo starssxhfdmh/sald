@@ -1,3 +1,178 @@
+// Classic Pong Game using Macrosald
 // Run with: salad run
 
-Console.println("Hello from Sald!")
+import "macrosald"
+
+// Game constants
+const SCREEN_WIDTH = 800
+const SCREEN_HEIGHT = 600
+const PADDLE_WIDTH = 20
+const PADDLE_HEIGHT = 100
+const BALL_SIZE = 15
+const PADDLE_SPEED = 400
+const BALL_SPEED = 300
+
+// Game state
+let ballPos = Vec2(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+let ballVel = Vec2(BALL_SPEED, BALL_SPEED * 0.7)
+
+let leftPaddleY = SCREEN_HEIGHT / 2 - PADDLE_HEIGHT / 2
+let rightPaddleY = SCREEN_HEIGHT / 2 - PADDLE_HEIGHT / 2
+
+let leftScore = 0
+let rightScore = 0
+
+enum State {
+  Playing,
+  Scored
+}
+
+let gameState = State.Playing
+
+let scoreTimer = 0
+
+// ==================== Main Game Loop ====================
+
+let frameCount = 0
+
+fun main() {
+    // Initialize window
+    Window.init(SCREEN_WIDTH, SCREEN_HEIGHT, "Pong")
+    
+    // Main game loop
+    while !Window.shouldClose() {
+        frameCount = frameCount + 1
+        let dt = Time.delta()
+        
+        // Update
+        update(dt)
+        
+        // Draw
+        Window.beginDrawing()
+        Window.clearBackground(Color.BLACK())
+        draw()
+        Window.endDrawing()
+    }
+    
+    // Cleanup
+    Window.close()
+}
+
+fun update(dt) {
+    if gameState == State.Scored {
+        scoreTimer -= dt
+        if scoreTimer <= 0 {
+            resetBall()
+            gameState = State.Playing
+        }
+        return
+    }
+    
+    // Left paddle (W/S keys)
+    if Keyboard.isDown(Keyboard.W) {
+        leftPaddleY -= PADDLE_SPEED * dt
+    }
+    if Keyboard.isDown(Keyboard.S) {
+        leftPaddleY += PADDLE_SPEED * dt
+    }
+    
+    // Right paddle (Arrow keys)
+    if Keyboard.isDown(Keyboard.UP) {
+        rightPaddleY -= PADDLE_SPEED * dt
+    }
+    if Keyboard.isDown(Keyboard.DOWN) {
+        rightPaddleY += PADDLE_SPEED * dt
+    }
+    
+    // Clamp paddles
+    leftPaddleY = Math.max(0, Math.min(SCREEN_HEIGHT - PADDLE_HEIGHT, leftPaddleY))
+    rightPaddleY = Math.max(0, Math.min(SCREEN_HEIGHT - PADDLE_HEIGHT, rightPaddleY))
+    
+    // Update ball
+    ballPos = ballPos.add(ballVel.mul(dt))
+    
+    // Ball collision with top/bottom
+    if ballPos.y - BALL_SIZE / 2 < 0 || ballPos.y + BALL_SIZE / 2 > SCREEN_HEIGHT {
+        ballVel.y = -ballVel.y
+        ballPos.y = Math.max(BALL_SIZE / 2, Math.min(SCREEN_HEIGHT - BALL_SIZE / 2, ballPos.y))
+    }
+    
+    // Ball collision with left paddle
+    if ballPos.x - BALL_SIZE / 2 < PADDLE_WIDTH &&
+       ballPos.y > leftPaddleY &&
+       ballPos.y < leftPaddleY + PADDLE_HEIGHT {
+        ballVel.x = Math.abs(ballVel.x)
+        ballPos.x = PADDLE_WIDTH + BALL_SIZE / 2
+        
+        // Add spin based on where ball hits paddle
+        let hitPos = (ballPos.y - leftPaddleY) / PADDLE_HEIGHT - 0.5
+        ballVel.y = hitPos * BALL_SPEED * 2
+    }
+    
+    // Ball collision with right paddle
+    if ballPos.x + BALL_SIZE / 2 > SCREEN_WIDTH - PADDLE_WIDTH &&
+       ballPos.y > rightPaddleY &&
+       ballPos.y < rightPaddleY + PADDLE_HEIGHT {
+        ballVel.x = -Math.abs(ballVel.x)
+        ballPos.x = SCREEN_WIDTH - PADDLE_WIDTH - BALL_SIZE / 2
+        
+        // Add spin
+        let hitPos = (ballPos.y - rightPaddleY) / PADDLE_HEIGHT - 0.5
+        ballVel.y = hitPos * BALL_SPEED * 2
+    }
+    
+    // Score points
+    if ballPos.x < 0 {
+        rightScore += 1
+        gameState = State.Scored
+        scoreTimer = 2.0
+    }
+    if ballPos.x > SCREEN_WIDTH {
+        leftScore += 1
+        gameState = State.Scored
+        scoreTimer = 2.0
+    }
+}
+
+fun draw() {
+    // Draw middle line
+    for i in 0..20 {
+        let y = i * 30
+        Draw.rectangle(SCREEN_WIDTH / 2 - 2, y, 4, 20, Color.GRAY())
+    }
+    
+    // Draw paddles
+    Draw.rectangle(0, leftPaddleY, PADDLE_WIDTH, PADDLE_HEIGHT, Color.WHITE())
+    Draw.rectangle(SCREEN_WIDTH - PADDLE_WIDTH, rightPaddleY, PADDLE_WIDTH, PADDLE_HEIGHT, Color.WHITE())
+    
+    // Draw ball
+    Draw.circle(ballPos.x, ballPos.y, BALL_SIZE / 2, Color.WHITE())
+    
+    // Draw scores
+    Draw.text($"{leftScore}", SCREEN_WIDTH / 4, 50, 64, Color.WHITE())
+    Draw.text($"{rightScore}", SCREEN_WIDTH * 3 / 4 - 30, 50, 64, Color.WHITE())
+    
+    // Draw "SCORE!" message
+    if gameState == State.Scored {
+        let msg = "SCORE!"
+        let msgWidth = Draw.measureText(msg, 48)
+        Draw.text(msg, SCREEN_WIDTH / 2 - msgWidth / 2, SCREEN_HEIGHT / 2, 48, Color.YELLOW())
+    }
+}
+
+fun resetBall() {
+    ballPos = Vec2(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+    
+    // Random direction
+    let dirX = 1
+    if Math.random() > 0.5 {
+        dirX = 1
+    } else {
+        dirX = -1
+    }
+    let dirY = (Math.random() - 0.5) * 2
+    
+    ballVel = Vec2(BALL_SPEED * dirX, BALL_SPEED * dirY * 0.7)
+}
+
+main()

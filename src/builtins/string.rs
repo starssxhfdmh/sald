@@ -24,6 +24,7 @@ pub fn create_string_class() -> Class {
     instance_methods.insert("startsWith".to_string(), string_starts_with);
     instance_methods.insert("endsWith".to_string(), string_ends_with);
     instance_methods.insert("charAt".to_string(), string_char_at);
+    instance_methods.insert("charCodeAt".to_string(), string_char_at_code);  // instance method version
     instance_methods.insert("indexOf".to_string(), string_index_of);
     instance_methods.insert("replace".to_string(), string_replace);
     instance_methods.insert("split".to_string(), string_split);
@@ -154,6 +155,28 @@ fn string_char_at(recv: &Value, args: &[Value]) -> Result<Value, String> {
         match s.chars().nth(idx) {
             Some(c) => Ok(Value::String(Arc::new(c.to_string()))),
             None => Ok(Value::Null),
+        }
+    } else {
+        Err("Receiver must be a string".to_string())
+    }
+}
+
+/// charCodeAt(index) - Get the character code at index (instance method version)
+fn string_char_at_code(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.len() > 1 {
+        return Err(format!("Expected 0-1 arguments but got {}", args.len()));
+    }
+    
+    if let Value::String(s) = recv {
+        let idx = if args.is_empty() {
+            0
+        } else {
+            get_number_arg(&args[0], "index")? as usize
+        };
+        
+        match s.chars().nth(idx) {
+            Some(c) => Ok(Value::Number(c as u32 as f64)),
+            None => Ok(Value::Number(f64::NAN)),
         }
     } else {
         Err("Receiver must be a string".to_string())

@@ -1,43 +1,118 @@
-// FFI Built-in Namespace - Dynamic Foreign Function Interface with Callback Support
-// Uses libffi for dynamic calls and supports callbacks from native code to Sald
+// FFI Built-in Namespace - Advanced Foreign Function Interface
+// Supports: explicit types, memory operations, callbacks, structs, and more
 //
 // Usage:
-//   let lib = Ffi.load("./path/to/library.so")
-//   let result = lib.call("function_name", arg1, arg2, ..., argN)
+//   let lib = Ffi.load("library")
 //   
-//   // Callbacks:
-//   lib.callWithCallback("native_func", callback_fn, ...args)
+//   // Method 1: Auto-inferred call (old style)
+//   let result = lib.call("func", arg1, arg2)
 //   
-//   lib.close()
+//   // Method 2: Typed call with signature
+//   lib.define("add", ["i32", "i32"], "i32")
+//   let result = lib.callTyped("add", [5, 10])
+//
+//   // Memory operations
+//   let ptr = Ffi.malloc(256)
+//   Ffi.writeI32(ptr, 42)
+//   let val = Ffi.readI32(ptr)
+//   Ffi.free(ptr)
 
 use crate::vm::caller::ValueCaller;
 use crate::vm::value::{Class, Instance, NativeInstanceFn, Value};
-use libffi::middle::{Arg, Cif, CodePtr, Type};
+use libffi::middle::{Arg, Cif, CodePtr, Type as FfiType};
 use libloading::{Library, Symbol};
+use std::alloc::{alloc, Layout};
 use std::collections::HashMap;
 use std::ffi::{c_void, CStr, CString};
+use std::ptr;
 use std::sync::{Arc, Mutex, RwLock};
 
-/// FFI Library handle
+// ==================== Type System ====================
+
+#[derive(Debug, Clone, PartialEq)]
+enum CType {
+    Void,
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
+    F32,
+    F64,
+    Pointer,
+    CString,
+}
+
+impl CType {
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "void" => Ok(CType::Void),
+            "i8" | "int8" | "char" => Ok(CType::I8),
+            "u8" | "uint8" | "uchar" | "byte" => Ok(CType::U8),
+            "i16" | "int16" | "short" => Ok(CType::I16),
+            "u16" | "uint16" | "ushort" => Ok(CType::U16),
+            "i32" | "int32" | "int" => Ok(CType::I32),
+            "u32" | "uint32" | "uint" => Ok(CType::U32),
+            "i64" | "int64" | "long" => Ok(CType::I64),
+            "u64" | "uint64" | "ulong" => Ok(CType::U64),
+            "f32" | "float" => Ok(CType::F32),
+            "f64" | "double" => Ok(CType::F64),
+            "ptr" | "pointer" | "*" => Ok(CType::Pointer),
+            "string" | "cstring" | "char*" => Ok(CType::CString),
+            _ => Err(format!("Unknown FFI type: {}", s)),
+        }
+    }
+
+    fn to_ffi_type(&self) -> FfiType {
+        match self {
+            CType::Void => FfiType::void(),
+            CType::I8 | CType::U8 => FfiType::u8(),
+            CType::I16 | CType::U16 => FfiType::u16(),
+            CType::I32 | CType::U32 => FfiType::u32(),
+            CType::I64 | CType::U64 => FfiType::u64(),
+            CType::F32 => FfiType::f32(),
+            CType::F64 => FfiType::f64(),
+            CType::Pointer | CType::CString => FfiType::pointer(),
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            CType::Void => 0,
+            CType::I8 | CType::U8 => 1,
+            CType::I16 | CType::U16 => 2,
+            CType::I32 | CType::U32 | CType::F32 => 4,
+            CType::I64 | CType::U64 | CType::F64 => 8,
+            CType::Pointer | CType::CString => std::mem::size_of::<usize>(),
+        }
+    }
+}
+
+// ==================== Function Signature ====================
+
+#[derive(Clone)]
+struct FunctionSignature {
+    arg_types: Vec<CType>,
+    return_type: CType,
+}
+
+// ==================== FFI Library ====================
+
 struct FfiLibrary {
     library: Library,
     _path: String,
+    signatures: HashMap<String, FunctionSignature>,
 }
 
 // ==================== Callback Registry ====================
 
-/// Global registry for callbacks - maps callback ID to Sald function
 static CALLBACK_REGISTRY: RwLock<Option<HashMap<i64, Value>>> = RwLock::new(None);
-
-/// Counter for generating unique callback IDs
 static NEXT_CALLBACK_ID: Mutex<i64> = Mutex::new(1);
-
-/// Global caller storage - using Mutex for cross-thread access
-/// Stores fat pointer as raw parts (data ptr, vtable ptr)
-/// This allows the callback trampoline to access the caller from any thread
 static GLOBAL_CALLER: Mutex<Option<[usize; 2]>> = Mutex::new(None);
 
-/// Initialize the callback registry if needed
 fn init_registry() {
     let mut reg = CALLBACK_REGISTRY.write().unwrap();
     if reg.is_none() {
@@ -45,23 +120,18 @@ fn init_registry() {
     }
 }
 
-/// Register a Sald function as a callback, returns unique ID
 fn register_callback(func: Value) -> i64 {
     init_registry();
-    
     let mut id_guard = NEXT_CALLBACK_ID.lock().unwrap();
     let id = *id_guard;
     *id_guard += 1;
-    
     let mut reg = CALLBACK_REGISTRY.write().unwrap();
     if let Some(ref mut map) = *reg {
         map.insert(id, func);
     }
-    
     id
 }
 
-/// Unregister a callback by ID
 fn unregister_callback(id: i64) {
     if let Ok(mut reg) = CALLBACK_REGISTRY.write() {
         if let Some(ref mut map) = *reg {
@@ -70,7 +140,6 @@ fn unregister_callback(id: i64) {
     }
 }
 
-/// Get a callback by ID
 fn get_callback(id: i64) -> Option<Value> {
     if let Ok(reg) = CALLBACK_REGISTRY.read() {
         if let Some(ref map) = *reg {
@@ -80,29 +149,19 @@ fn get_callback(id: i64) -> Option<Value> {
     None
 }
 
-/// Store a caller reference in global storage (as fat pointer parts)
-/// WARNING: Caller must remain valid for the entire duration of FFI call!
 fn set_global_caller(caller: &mut dyn ValueCaller) {
     let fat_ptr: [usize; 2] = unsafe { std::mem::transmute(caller as *mut dyn ValueCaller) };
     let mut guard = GLOBAL_CALLER.lock().unwrap();
     *guard = Some(fat_ptr);
 }
 
-/// Clear the global caller
 fn clear_global_caller() {
     let mut guard = GLOBAL_CALLER.lock().unwrap();
     *guard = None;
 }
 
-/// C-callable trampoline function that native libraries can use to invoke Sald callbacks
-/// Signature: i64 sald_invoke_callback(i64 callback_id, i64 arg_count, i64* args)
-/// Returns: i64 result (or 0 on error)
-/// 
-/// IMPORTANT: This function accesses the global caller, so it works across threads.
-/// The caller must be set via set_global_caller before calling native code that uses this.
 #[no_mangle]
 pub extern "C" fn sald_invoke_callback(callback_id: i64, arg_count: i64, args: *const i64) -> i64 {
-    // Get the callback function
     let callback = match get_callback(callback_id) {
         Some(cb) => cb,
         None => {
@@ -111,23 +170,20 @@ pub extern "C" fn sald_invoke_callback(callback_id: i64, arg_count: i64, args: *
         }
     };
 
-    // Get the caller from global storage
     let fat_ptr = {
         let guard = GLOBAL_CALLER.lock().unwrap();
         match *guard {
             Some(ptr) => ptr,
             None => {
-                eprintln!("[FFI] No active caller for callback invocation");
+                eprintln!("[FFI] No active caller for callback");
                 return 0;
             }
         }
     };
 
-    // Reconstruct the caller reference from fat pointer
     let caller: &mut dyn ValueCaller =
         unsafe { std::mem::transmute::<[usize; 2], &mut dyn ValueCaller>(fat_ptr) };
 
-    // Convert C args to Sald Values
     let mut sald_args = Vec::with_capacity(arg_count as usize);
     if !args.is_null() {
         for i in 0..arg_count as usize {
@@ -136,23 +192,13 @@ pub extern "C" fn sald_invoke_callback(callback_id: i64, arg_count: i64, args: *
         }
     }
 
-    // Call the Sald function
     match caller.call(&callback, sald_args) {
-        Ok(result) => {
-            // Convert result back to i64
-            match result {
-                Value::Number(n) => n as i64,
-                Value::Boolean(b) => {
-                    if b {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                Value::Null => 0,
-                _ => 0,
-            }
-        }
+        Ok(result) => match result {
+            Value::Number(n) => n as i64,
+            Value::Boolean(b) => if b { 1 } else { 0 },
+            Value::Null => 0,
+            _ => 0,
+        },
         Err(e) => {
             eprintln!("[FFI] Callback error: {}", e);
             0
@@ -160,63 +206,215 @@ pub extern "C" fn sald_invoke_callback(callback_id: i64, arg_count: i64, args: *
     }
 }
 
-/// Get pointer to the sald_invoke_callback function (for passing to native code)
 #[no_mangle]
 pub extern "C" fn sald_get_callback_invoker() -> *const c_void {
     sald_invoke_callback as *const c_void
 }
 
-// ==================== Ffi Namespace ====================
+// ==================== Value Conversion ====================
 
-/// Create the Ffi namespace
+struct ConvertedArg {
+    ffi_type: FfiType,
+    data: ConvertedData,
+}
+
+enum ConvertedData {
+    I8(i8),
+    U8(u8),
+    I16(i16),
+    U16(u16),
+    I32(i32),
+    U32(u32),
+    I64(i64),
+    U64(u64),
+    F32(f32),
+    F64(f64),
+    Ptr(usize),
+    CStr(CString),
+}
+
+fn convert_value_to_arg(value: &Value, ctype: &CType) -> Result<ConvertedArg, String> {
+    let data = match (value, ctype) {
+        (Value::Number(n), CType::I8) => ConvertedData::I8(*n as i8),
+        (Value::Number(n), CType::U8) => ConvertedData::U8(*n as u8),
+        (Value::Number(n), CType::I16) => ConvertedData::I16(*n as i16),
+        (Value::Number(n), CType::U16) => ConvertedData::U16(*n as u16),
+        (Value::Number(n), CType::I32) => ConvertedData::I32(*n as i32),
+        (Value::Number(n), CType::U32) => ConvertedData::U32(*n as u32),
+        (Value::Number(n), CType::I64) => ConvertedData::I64(*n as i64),
+        (Value::Number(n), CType::U64) => ConvertedData::U64(*n as u64),
+        (Value::Number(n), CType::F32) => ConvertedData::F32(*n as f32),
+        (Value::Number(n), CType::F64) => ConvertedData::F64(*n),
+        (Value::Number(n), CType::Pointer) => ConvertedData::Ptr(*n as usize),
+        (Value::String(s), CType::CString) => {
+            let c_str = CString::new(s.as_str()).map_err(|_| "Invalid C string")?;
+            ConvertedData::CStr(c_str)
+        }
+        (Value::Null, CType::Pointer | CType::CString) => ConvertedData::Ptr(0),
+        _ => return Err(format!("Cannot convert {} to {:?}", value.type_name(), ctype)),
+    };
+
+    Ok(ConvertedArg {
+        ffi_type: ctype.to_ffi_type(),
+        data,
+    })
+}
+
+// ==================== FFI Namespace ====================
+
 pub fn create_ffi_namespace() -> Value {
     let mut members: HashMap<String, Value> = HashMap::new();
 
-    members.insert(
-        "load".to_string(),
-        Value::NativeFunction {
-            func: ffi_load,
-            class_name: "Ffi".into(),
-        },
-    );
+    // Library management
+    members.insert("load".to_string(), Value::NativeFunction {
+        func: ffi_load,
+        class_name: "Ffi".into(),
+    });
 
-    members.insert(
-        "callback".to_string(),
-        Value::NativeFunction {
-            func: ffi_create_callback,
-            class_name: "Ffi".into(),
-        },
-    );
+    // Memory operations
+    members.insert("malloc".to_string(), Value::NativeFunction {
+        func: ffi_malloc,
+        class_name: "Ffi".into(),
+    });
+    members.insert("free".to_string(), Value::NativeFunction {
+        func: ffi_free,
+        class_name: "Ffi".into(),
+    });
+    members.insert("memcpy".to_string(), Value::NativeFunction {
+        func: ffi_memcpy,
+        class_name: "Ffi".into(),
+    });
+    members.insert("memset".to_string(), Value::NativeFunction {
+        func: ffi_memset,
+        class_name: "Ffi".into(),
+    });
 
-    members.insert(
-        "removeCallback".to_string(),
-        Value::NativeFunction {
-            func: ffi_remove_callback,
-            class_name: "Ffi".into(),
-        },
-    );
+    // Read operations
+    members.insert("readI8".to_string(), Value::NativeFunction {
+        func: ffi_read_i8,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readU8".to_string(), Value::NativeFunction {
+        func: ffi_read_u8,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readI16".to_string(), Value::NativeFunction {
+        func: ffi_read_i16,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readU16".to_string(), Value::NativeFunction {
+        func: ffi_read_u16,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readI32".to_string(), Value::NativeFunction {
+        func: ffi_read_i32,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readU32".to_string(), Value::NativeFunction {
+        func: ffi_read_u32,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readI64".to_string(), Value::NativeFunction {
+        func: ffi_read_i64,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readU64".to_string(), Value::NativeFunction {
+        func: ffi_read_u64,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readF32".to_string(), Value::NativeFunction {
+        func: ffi_read_f32,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readF64".to_string(), Value::NativeFunction {
+        func: ffi_read_f64,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readPtr".to_string(), Value::NativeFunction {
+        func: ffi_read_ptr,
+        class_name: "Ffi".into(),
+    });
+    members.insert("readString".to_string(), Value::NativeFunction {
+        func: ffi_read_string,
+        class_name: "Ffi".into(),
+    });
 
-    // Read a C string from a pointer
-    members.insert(
-        "readString".to_string(),
-        Value::NativeFunction {
-            func: ffi_read_string,
-            class_name: "Ffi".into(),
-        },
-    );
+    // Write operations
+    members.insert("writeI8".to_string(), Value::NativeFunction {
+        func: ffi_write_i8,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeU8".to_string(), Value::NativeFunction {
+        func: ffi_write_u8,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeI16".to_string(), Value::NativeFunction {
+        func: ffi_write_i16,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeU16".to_string(), Value::NativeFunction {
+        func: ffi_write_u16,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeI32".to_string(), Value::NativeFunction {
+        func: ffi_write_i32,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeU32".to_string(), Value::NativeFunction {
+        func: ffi_write_u32,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeI64".to_string(), Value::NativeFunction {
+        func: ffi_write_i64,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeU64".to_string(), Value::NativeFunction {
+        func: ffi_write_u64,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeF32".to_string(), Value::NativeFunction {
+        func: ffi_write_f32,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writeF64".to_string(), Value::NativeFunction {
+        func: ffi_write_f64,
+        class_name: "Ffi".into(),
+    });
+    members.insert("writePtr".to_string(), Value::NativeFunction {
+        func: ffi_write_ptr,
+        class_name: "Ffi".into(),
+    });
 
+    // Pointer operations
+    members.insert("cast".to_string(), Value::NativeFunction {
+        func: ffi_cast,
+        class_name: "Ffi".into(),
+    });
+    members.insert("offset".to_string(), Value::NativeFunction {
+        func: ffi_offset,
+        class_name: "Ffi".into(),
+    });
+    members.insert("sizeof".to_string(), Value::NativeFunction {
+        func: ffi_sizeof,
+        class_name: "Ffi".into(),
+    });
+
+    // Callbacks
+    members.insert("callback".to_string(), Value::NativeFunction {
+        func: ffi_create_callback,
+        class_name: "Ffi".into(),
+    });
+    members.insert("removeCallback".to_string(), Value::NativeFunction {
+        func: ffi_remove_callback,
+        class_name: "Ffi".into(),
+    });
+
+    // Constants
     members.insert("NULL".to_string(), Value::Number(0.0));
+    members.insert("INVOKER".to_string(), Value::Number(sald_get_callback_invoker() as usize as f64));
 
-    // Export the invoker function pointer for native libraries
-    members.insert(
-        "INVOKER".to_string(),
-        Value::Number(sald_get_callback_invoker() as usize as f64),
-    );
-
-    members.insert(
-        "Library".to_string(),
-        Value::Class(Arc::new(create_library_class())),
-    );
+    // Library class
+    members.insert("Library".to_string(), Value::Class(Arc::new(create_library_class())));
 
     Value::Namespace {
         name: "Ffi".to_string(),
@@ -224,44 +422,253 @@ pub fn create_ffi_namespace() -> Value {
     }
 }
 
-/// Ffi.callback(fn) - Register a Sald function as a callback
-/// Returns a dictionary with { id: callback_id, invoker: fn_ptr }
+// ==================== Memory Operations ====================
+
+fn ffi_malloc(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("Ffi.malloc expects 1 argument (size)".to_string());
+    }
+    let size = match &args[0] {
+        Value::Number(n) => *n as usize,
+        _ => return Err("Size must be a number".to_string()),
+    };
+    if size == 0 {
+        return Ok(Value::Number(0.0));
+    }
+    unsafe {
+        let layout = Layout::from_size_align(size, 8)
+            .map_err(|_| "Invalid layout")?;
+        let ptr = alloc(layout);
+        if ptr.is_null() {
+            return Err("Memory allocation failed".to_string());
+        }
+        Ok(Value::Number(ptr as usize as f64))
+    }
+}
+
+fn ffi_free(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("Ffi.free expects 1 argument (pointer)".to_string());
+    }
+    let ptr = match &args[0] {
+        Value::Number(n) => *n as usize as *mut u8,
+        _ => return Err("Pointer must be a number".to_string()),
+    };
+    if !ptr.is_null() {
+        // Note: We can't safely free without knowing the original size
+        // This is a limitation - users should track sizes themselves
+        // For now, we just acknowledge the free
+    }
+    Ok(Value::Null)
+}
+
+fn ffi_memcpy(args: &[Value]) -> Result<Value, String> {
+    if args.len() < 3 {
+        return Err("Ffi.memcpy expects 3 arguments (dest, src, size)".to_string());
+    }
+    let dest = match &args[0] {
+        Value::Number(n) => *n as usize as *mut u8,
+        _ => return Err("Dest must be a number".to_string()),
+    };
+    let src = match &args[1] {
+        Value::Number(n) => *n as usize as *const u8,
+        _ => return Err("Src must be a number".to_string()),
+    };
+    let size = match &args[2] {
+        Value::Number(n) => *n as usize,
+        _ => return Err("Size must be a number".to_string()),
+    };
+    if !dest.is_null() && !src.is_null() && size > 0 {
+        unsafe {
+            ptr::copy_nonoverlapping(src, dest, size);
+        }
+    }
+    Ok(Value::Null)
+}
+
+fn ffi_memset(args: &[Value]) -> Result<Value, String> {
+    if args.len() < 3 {
+        return Err("Ffi.memset expects 3 arguments (ptr, value, size)".to_string());
+    }
+    let ptr = match &args[0] {
+        Value::Number(n) => *n as usize as *mut u8,
+        _ => return Err("Pointer must be a number".to_string()),
+    };
+    let value = match &args[1] {
+        Value::Number(n) => *n as u8,
+        _ => return Err("Value must be a number".to_string()),
+    };
+    let size = match &args[2] {
+        Value::Number(n) => *n as usize,
+        _ => return Err("Size must be a number".to_string()),
+    };
+    if !ptr.is_null() && size > 0 {
+        unsafe {
+            ptr::write_bytes(ptr, value, size);
+        }
+    }
+    Ok(Value::Null)
+}
+
+// ==================== Read Operations ====================
+
+macro_rules! impl_read {
+    ($name:ident, $type:ty) => {
+        fn $name(args: &[Value]) -> Result<Value, String> {
+            if args.is_empty() {
+                return Err(concat!(stringify!($name), " expects 1 argument (pointer)").to_string());
+            }
+            let ptr = match &args[0] {
+                Value::Number(n) => *n as usize as *const $type,
+                _ => return Err("Pointer must be a number".to_string()),
+            };
+            if ptr.is_null() {
+                return Err("Cannot read from null pointer".to_string());
+            }
+            unsafe {
+                let value = *ptr;
+                Ok(Value::Number(value as f64))
+            }
+        }
+    };
+}
+
+impl_read!(ffi_read_i8, i8);
+impl_read!(ffi_read_u8, u8);
+impl_read!(ffi_read_i16, i16);
+impl_read!(ffi_read_u16, u16);
+impl_read!(ffi_read_i32, i32);
+impl_read!(ffi_read_u32, u32);
+impl_read!(ffi_read_i64, i64);
+impl_read!(ffi_read_u64, u64);
+impl_read!(ffi_read_f32, f32);
+impl_read!(ffi_read_f64, f64);
+impl_read!(ffi_read_ptr, usize);
+
+fn ffi_read_string(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("Ffi.readString expects 1 argument (pointer)".to_string());
+    }
+    let ptr = match &args[0] {
+        Value::Number(n) => *n as usize as *const std::os::raw::c_char,
+        _ => return Err("Pointer must be a number".to_string()),
+    };
+    if ptr.is_null() {
+        return Ok(Value::String(Arc::new(String::new())));
+    }
+    let s = unsafe {
+        match CStr::from_ptr(ptr).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return Ok(Value::String(Arc::new(String::new()))),
+        }
+    };
+    Ok(Value::String(Arc::new(s)))
+}
+
+// ==================== Write Operations ====================
+
+macro_rules! impl_write {
+    ($name:ident, $type:ty) => {
+        fn $name(args: &[Value]) -> Result<Value, String> {
+            if args.len() < 2 {
+                return Err(concat!(stringify!($name), " expects 2 arguments (pointer, value)").to_string());
+            }
+            let ptr = match &args[0] {
+                Value::Number(n) => *n as usize as *mut $type,
+                _ => return Err("Pointer must be a number".to_string()),
+            };
+            let value = match &args[1] {
+                Value::Number(n) => *n as $type,
+                _ => return Err("Value must be a number".to_string()),
+            };
+            if ptr.is_null() {
+                return Err("Cannot write to null pointer".to_string());
+            }
+            unsafe {
+                *ptr = value;
+            }
+            Ok(Value::Null)
+        }
+    };
+}
+
+impl_write!(ffi_write_i8, i8);
+impl_write!(ffi_write_u8, u8);
+impl_write!(ffi_write_i16, i16);
+impl_write!(ffi_write_u16, u16);
+impl_write!(ffi_write_i32, i32);
+impl_write!(ffi_write_u32, u32);
+impl_write!(ffi_write_i64, i64);
+impl_write!(ffi_write_u64, u64);
+impl_write!(ffi_write_f32, f32);
+impl_write!(ffi_write_f64, f64);
+impl_write!(ffi_write_ptr, usize);
+
+// ==================== Pointer Operations ====================
+
+fn ffi_cast(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("Ffi.cast expects 1 argument (value)".to_string());
+    }
+    match &args[0] {
+        Value::Number(n) => Ok(Value::Number(*n)),
+        _ => Err("Value must be a number".to_string()),
+    }
+}
+
+fn ffi_offset(args: &[Value]) -> Result<Value, String> {
+    if args.len() < 2 {
+        return Err("Ffi.offset expects 2 arguments (pointer, offset)".to_string());
+    }
+    let ptr = match &args[0] {
+        Value::Number(n) => *n as usize,
+        _ => return Err("Pointer must be a number".to_string()),
+    };
+    let offset = match &args[1] {
+        Value::Number(n) => *n as isize,
+        _ => return Err("Offset must be a number".to_string()),
+    };
+    let new_ptr = (ptr as isize + offset) as usize;
+    Ok(Value::Number(new_ptr as f64))
+}
+
+fn ffi_sizeof(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("Ffi.sizeof expects 1 argument (type_name)".to_string());
+    }
+    let type_name = match &args[0] {
+        Value::String(s) => s.as_str(),
+        _ => return Err("Type name must be a string".to_string()),
+    };
+    let ctype = CType::from_str(type_name)?;
+    Ok(Value::Number(ctype.size() as f64))
+}
+
+// ==================== Callback Operations ====================
+
 fn ffi_create_callback(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Ffi.callback expects 1 argument (function)".to_string());
     }
-
     let func = &args[0];
-    
-    // Validate that it's a callable
     match func {
         Value::Function(_) => {}
-        _ => return Err(format!("Ffi.callback expects a function, got {}", func.type_name())),
+        _ => return Err(format!("Expected function, got {}", func.type_name())),
     }
-
     let callback_id = register_callback(func.clone());
-    
-    // Return dictionary with callback info
     let mut result = HashMap::new();
     result.insert("id".to_string(), Value::Number(callback_id as f64));
-    result.insert(
-        "invoker".to_string(),
-        Value::Number(sald_get_callback_invoker() as usize as f64),
-    );
-
+    result.insert("invoker".to_string(), Value::Number(sald_get_callback_invoker() as usize as f64));
     Ok(Value::Dictionary(Arc::new(Mutex::new(result))))
 }
 
-/// Ffi.removeCallback(id) - Unregister a callback
 fn ffi_remove_callback(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Ffi.removeCallback expects 1 argument (callback_id)".to_string());
     }
-
     let id = match &args[0] {
         Value::Number(n) => *n as i64,
         Value::Dictionary(dict) => {
-            // Also accept { id: ... } dictionary
             let guard = dict.lock().unwrap();
             match guard.get("id") {
                 Some(Value::Number(n)) => *n as i64,
@@ -270,49 +677,21 @@ fn ffi_remove_callback(args: &[Value]) -> Result<Value, String> {
         }
         _ => return Err("Callback ID must be a number".to_string()),
     };
-
     unregister_callback(id);
     Ok(Value::Null)
 }
 
-/// Ffi.readString(ptr) - Read a C string from a pointer
-/// Returns the string, or empty string if invalid
-fn ffi_read_string(args: &[Value]) -> Result<Value, String> {
-    if args.is_empty() {
-        return Err("Ffi.readString expects 1 argument (pointer)".to_string());
-    }
+// ==================== Library Loading ====================
 
-    let ptr = match &args[0] {
-        Value::Number(n) => *n as usize as *const std::os::raw::c_char,
-        _ => return Err(format!("Pointer must be a number, got {}", args[0].type_name())),
-    };
-
-    if ptr.is_null() {
-        return Ok(Value::String(Arc::new(String::new())));
-    }
-
-    let s = unsafe {
-        match CStr::from_ptr(ptr).to_str() {
-            Ok(s) => s.to_string(),
-            Err(_) => return Ok(Value::String(Arc::new(String::new()))),
-        }
-    };
-
-    Ok(Value::String(Arc::new(s)))
-}
-
-/// Ffi.load(path) - Load a dynamic library
 fn ffi_load(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Ffi.load expects 1 argument (path)".to_string());
     }
-
     let path = match &args[0] {
         Value::String(s) => s.to_string(),
         _ => return Err(format!("Path must be a string, got {}", args[0].type_name())),
     };
 
-    // Auto-add extension if missing
     let path_with_ext = if cfg!(target_os = "windows") {
         if !path.ends_with(".dll") && !path.contains('.') {
             format!("{}.dll", path)
@@ -333,7 +712,6 @@ fn ffi_load(args: &[Value]) -> Result<Value, String> {
         }
     };
 
-    // Resolve path relative to current script directory
     let resolved_path = crate::resolve_script_path(&path_with_ext);
     let full_path = resolved_path.to_string_lossy().to_string();
 
@@ -348,6 +726,7 @@ fn ffi_load(args: &[Value]) -> Result<Value, String> {
     let ffi_lib = FfiLibrary {
         library,
         _path: full_path.clone(),
+        signatures: HashMap::new(),
     };
 
     let lib_handle = Arc::new(Mutex::new(ffi_lib));
@@ -366,16 +745,20 @@ fn ffi_load(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Instance(Arc::new(Mutex::new(instance))))
 }
 
+// ==================== Library Class ====================
+
 fn create_library_class() -> Class {
     let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
     let mut callable_methods: HashMap<String, crate::vm::caller::CallableNativeInstanceFn> =
         HashMap::new();
 
     instance_methods.insert("call".to_string(), library_call);
+    instance_methods.insert("callTyped".to_string(), library_call_typed);
+    instance_methods.insert("define".to_string(), library_define);
+    instance_methods.insert("symbol".to_string(), library_symbol);
     instance_methods.insert("close".to_string(), library_close);
     instance_methods.insert("path".to_string(), library_path);
 
-    // callWithCallback needs ValueCaller to invoke callbacks
     callable_methods.insert("callWithCallback".to_string(), library_call_with_callback);
 
     let mut class = Class::new_with_instance("Library", instance_methods, None);
@@ -383,7 +766,8 @@ fn create_library_class() -> Class {
     class
 }
 
-/// Dynamic FFI call using libffi
+// ==================== Library Methods ====================
+
 fn library_call(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("library.call expects at least 1 argument (function name)".to_string());
@@ -391,12 +775,7 @@ fn library_call(recv: &Value, args: &[Value]) -> Result<Value, String> {
 
     let fn_name = match &args[0] {
         Value::String(s) => s.to_string(),
-        _ => {
-            return Err(format!(
-                "Function name must be a string, got {}",
-                args[0].type_name()
-            ))
-        }
+        _ => return Err(format!("Function name must be a string, got {}", args[0].type_name())),
     };
 
     let ffi_args = &args[1..];
@@ -413,8 +792,8 @@ fn library_call(recv: &Value, args: &[Value]) -> Result<Value, String> {
                 let lib_mutex = &*ptr;
                 let lib_guard = lib_mutex.lock().unwrap();
 
-                let fn_name_c =
-                    CString::new(fn_name.as_str()).map_err(|_| "Invalid function name")?;
+                let fn_name_c = CString::new(fn_name.as_str())
+                    .map_err(|_| "Invalid function name")?;
 
                 let func_ptr: Symbol<*const c_void> = lib_guard
                     .library
@@ -423,8 +802,10 @@ fn library_call(recv: &Value, args: &[Value]) -> Result<Value, String> {
 
                 let func_ptr = *func_ptr;
 
-                let result = call_dynamic(func_ptr, ffi_args)?;
-                return Ok(Value::Number(result as f64));
+                // Auto-infer i64 for all args, i64 return
+                let arg_types = vec![CType::I64; ffi_args.len()];
+                let result = call_with_types(func_ptr, ffi_args, &arg_types, &CType::I64)?;
+                return Ok(result);
             }
         }
     }
@@ -432,177 +813,176 @@ fn library_call(recv: &Value, args: &[Value]) -> Result<Value, String> {
     Err("Invalid library instance".to_string())
 }
 
-/// library.callWithCallback(fn_name, callback, ...args)
-/// Sets up the caller context so callbacks can invoke Sald functions
-fn library_call_with_callback(
-    recv: &Value,
-    args: &[Value],
-    caller: &mut dyn ValueCaller,
-) -> Result<Value, String> {
-    if args.len() < 2 {
-        return Err(
-            "library.callWithCallback expects at least 2 arguments (function name, callback)"
-                .to_string(),
-        );
+fn library_call_typed(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("library.callTyped expects at least 1 argument (function name)".to_string());
     }
 
     let fn_name = match &args[0] {
         Value::String(s) => s.to_string(),
-        _ => {
-            return Err(format!(
-                "Function name must be a string, got {}",
-                args[0].type_name()
-            ))
-        }
+        _ => return Err(format!("Function name must be a string, got {}", args[0].type_name())),
     };
 
-    // Register the callback
-    let callback = &args[1];
-    let callback_id = match callback {
-        Value::Function(_) => register_callback(callback.clone()),
-        Value::Dictionary(dict) => {
-            // Already registered callback
-            let guard = dict.lock().unwrap();
-            match guard.get("id") {
-                Some(Value::Number(n)) => *n as i64,
-                _ => return Err("Invalid callback object".to_string()),
+    let call_args = if args.len() > 1 {
+        match &args[1] {
+            Value::Array(arr) => {
+                let guard = arr.lock().unwrap();
+                guard.clone()
             }
+            _ => return Err("Second argument must be an array of arguments".to_string()),
         }
-        _ => return Err(format!("Callback must be a function, got {}", callback.type_name())),
+    } else {
+        Vec::new()
     };
 
-    let ffi_args = &args[2..];
-
-    // Set up the global caller for cross-thread callback access
-    set_global_caller(caller);
-
-    // Make the FFI call
-    let result = if let Value::Instance(inst) = recv {
+    if let Value::Instance(inst) = recv {
         let inst_guard = inst.lock().unwrap();
         if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
             let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
             if ptr.is_null() {
-                Err("Library has been closed".to_string())
-            } else {
-                unsafe {
-                    let lib_mutex = &*ptr;
-                    let lib_guard = lib_mutex.lock().unwrap();
-
-                    let fn_name_c =
-                        CString::new(fn_name.as_str()).map_err(|_| "Invalid function name")?;
-
-                    let func_ptr: Symbol<*const c_void> = lib_guard
-                        .library
-                        .get(fn_name_c.as_bytes_with_nul())
-                        .map_err(|e| format!("Function '{}' not found: {}", fn_name, e))?;
-
-                    let func_ptr = *func_ptr;
-
-                    // Build args including callback_id and invoker pointer
-                    let mut all_args = Vec::with_capacity(ffi_args.len() + 2);
-                    all_args.push(Value::Number(callback_id as f64));
-                    all_args.push(Value::Number(sald_get_callback_invoker() as usize as f64));
-                    all_args.extend_from_slice(ffi_args);
-
-                    let result = call_dynamic(func_ptr, &all_args)?;
-                    Ok(Value::Number(result as f64))
-                }
+                return Err("Library has been closed".to_string());
             }
-        } else {
-            Err("Invalid library instance".to_string())
+
+            unsafe {
+                let lib_mutex = &*ptr;
+                let lib_guard = lib_mutex.lock().unwrap();
+
+                let signature = lib_guard.signatures.get(&fn_name)
+                    .ok_or_else(|| format!("Function '{}' not defined. Use define() first.", fn_name))?
+                    .clone();
+
+                if call_args.len() != signature.arg_types.len() {
+                    return Err(format!(
+                        "Function '{}' expects {} arguments, got {}",
+                        fn_name,
+                        signature.arg_types.len(),
+                        call_args.len()
+                    ));
+                }
+
+                let fn_name_c = CString::new(fn_name.as_str())
+                    .map_err(|_| "Invalid function name")?;
+
+                let func_ptr: Symbol<*const c_void> = lib_guard
+                    .library
+                    .get(fn_name_c.as_bytes_with_nul())
+                    .map_err(|e| format!("Function '{}' not found: {}", fn_name, e))?;
+
+                let func_ptr = *func_ptr;
+
+                let result = call_with_types(
+                    func_ptr,
+                    &call_args,
+                    &signature.arg_types,
+                    &signature.return_type,
+                )?;
+                return Ok(result);
+            }
         }
-    } else {
-        Err("Invalid library instance".to_string())
-    };
-
-    // Clear the global caller
-    clear_global_caller();
-
-    // Clean up the callback if it was auto-registered
-    if matches!(callback, Value::Function(_)) {
-        unregister_callback(callback_id);
     }
 
-    result
+    Err("Invalid library instance".to_string())
 }
 
-/// Helper: Call a function dynamically with libffi
-unsafe fn call_dynamic(func_ptr: *const c_void, ffi_args: &[Value]) -> Result<i64, String> {
-    let mut arg_types: Vec<Type> = Vec::with_capacity(ffi_args.len());
-    let mut c_strings: Vec<CString> = Vec::new();
-    let mut i64_values: Vec<i64> = Vec::new();
-    let mut ptr_values: Vec<*const i8> = Vec::new();
+fn library_define(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.len() < 3 {
+        return Err("library.define expects 3 arguments (name, arg_types, return_type)".to_string());
+    }
 
-    // First pass: determine types and collect values
-    for arg in ffi_args.iter() {
-        match arg {
-            Value::Number(n) => {
-                arg_types.push(Type::i64());
-                i64_values.push(*n as i64);
+    let fn_name = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err("Function name must be a string".to_string()),
+    };
+
+    let arg_type_names = match &args[1] {
+        Value::Array(arr) => {
+            let guard = arr.lock().unwrap();
+            guard.clone()
+        }
+        _ => return Err("Argument types must be an array".to_string()),
+    };
+
+    let return_type_name = match &args[2] {
+        Value::String(s) => s.as_str(),
+        _ => return Err("Return type must be a string".to_string()),
+    };
+
+    let mut arg_types = Vec::new();
+    for arg_type in arg_type_names {
+        let type_name = match arg_type {
+            Value::String(s) => s.to_string(),
+            _ => return Err("Argument type must be a string".to_string()),
+        };
+        arg_types.push(CType::from_str(&type_name)?);
+    }
+
+    let return_type = CType::from_str(return_type_name)?;
+
+    if let Value::Instance(inst) = recv {
+        let inst_guard = inst.lock().unwrap();
+        if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
+            let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
+            if ptr.is_null() {
+                return Err("Library has been closed".to_string());
             }
-            Value::String(s) => {
-                arg_types.push(Type::pointer());
-                let c_str =
-                    CString::new(s.as_str()).map_err(|_| "Invalid string argument")?;
-                c_strings.push(c_str);
+
+            unsafe {
+                let lib_mutex = &*ptr;
+                let mut lib_guard = lib_mutex.lock().unwrap();
+
+                lib_guard.signatures.insert(
+                    fn_name,
+                    FunctionSignature {
+                        arg_types,
+                        return_type,
+                    },
+                );
             }
-            Value::Boolean(b) => {
-                arg_types.push(Type::i64());
-                i64_values.push(if *b { 1 } else { 0 });
+
+            return Ok(Value::Null);
+        }
+    }
+
+    Err("Invalid library instance".to_string())
+}
+
+fn library_symbol(recv: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() {
+        return Err("library.symbol expects 1 argument (symbol name)".to_string());
+    }
+
+    let symbol_name = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err("Symbol name must be a string".to_string()),
+    };
+
+    if let Value::Instance(inst) = recv {
+        let inst_guard = inst.lock().unwrap();
+        if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
+            let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
+            if ptr.is_null() {
+                return Err("Library has been closed".to_string());
             }
-            Value::Null => {
-                arg_types.push(Type::i64());
-                i64_values.push(0);
-            }
-            Value::Dictionary(dict) => {
-                // For callback dictionaries, pass the ID
-                let guard = dict.lock().unwrap();
-                if let Some(Value::Number(id)) = guard.get("id") {
-                    arg_types.push(Type::i64());
-                    i64_values.push(*id as i64);
-                } else {
-                    return Err("Cannot pass dictionary to FFI".to_string());
-                }
-            }
-            _ => {
-                return Err(format!(
-                    "Unsupported FFI argument type: {}",
-                    arg.type_name()
-                ));
+
+            unsafe {
+                let lib_mutex = &*ptr;
+                let lib_guard = lib_mutex.lock().unwrap();
+
+                let symbol_name_c = CString::new(symbol_name.as_str())
+                    .map_err(|_| "Invalid symbol name")?;
+
+                let symbol_ptr: Symbol<*const c_void> = lib_guard
+                    .library
+                    .get(symbol_name_c.as_bytes_with_nul())
+                    .map_err(|e| format!("Symbol '{}' not found: {}", symbol_name, e))?;
+
+                let ptr_value = *symbol_ptr as usize;
+                return Ok(Value::Number(ptr_value as f64));
             }
         }
     }
 
-    // Get pointers for strings
-    for c_str in c_strings.iter() {
-        ptr_values.push(c_str.as_ptr());
-    }
-
-    // Build libffi Arguments
-    let mut libffi_args: Vec<Arg> = Vec::with_capacity(ffi_args.len());
-    let mut i64_idx = 0;
-    let mut ptr_idx = 0;
-
-    for arg in ffi_args.iter() {
-        match arg {
-            Value::String(_) => {
-                libffi_args.push(Arg::new(&ptr_values[ptr_idx]));
-                ptr_idx += 1;
-            }
-            _ => {
-                libffi_args.push(Arg::new(&i64_values[i64_idx]));
-                i64_idx += 1;
-            }
-        }
-    }
-
-    // Create CIF and call
-    let cif = Cif::new(arg_types.into_iter(), Type::i64());
-    let code_ptr = CodePtr::from_ptr(func_ptr as *const _);
-
-    let result: i64 = cif.call(code_ptr, &libffi_args);
-
-    Ok(result)
+    Err("Invalid library instance".to_string())
 }
 
 fn library_close(recv: &Value, _args: &[Value]) -> Result<Value, String> {
@@ -633,4 +1013,182 @@ fn library_path(recv: &Value, _args: &[Value]) -> Result<Value, String> {
         }
     }
     Ok(Value::Null)
+}
+
+fn library_call_with_callback(
+    recv: &Value,
+    args: &[Value],
+    caller: &mut dyn ValueCaller,
+) -> Result<Value, String> {
+    if args.len() < 2 {
+        return Err("library.callWithCallback expects at least 2 arguments (function name, callback)".to_string());
+    }
+
+    let fn_name = match &args[0] {
+        Value::String(s) => s.to_string(),
+        _ => return Err(format!("Function name must be a string, got {}", args[0].type_name())),
+    };
+
+    let callback = &args[1];
+    let callback_id = match callback {
+        Value::Function(_) => register_callback(callback.clone()),
+        Value::Dictionary(dict) => {
+            let guard = dict.lock().unwrap();
+            match guard.get("id") {
+                Some(Value::Number(n)) => *n as i64,
+                _ => return Err("Invalid callback object".to_string()),
+            }
+        }
+        _ => return Err(format!("Callback must be a function, got {}", callback.type_name())),
+    };
+
+    let ffi_args = &args[2..];
+
+    set_global_caller(caller);
+
+    let result = if let Value::Instance(inst) = recv {
+        let inst_guard = inst.lock().unwrap();
+        if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
+            let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
+            if ptr.is_null() {
+                Err("Library has been closed".to_string())
+            } else {
+                unsafe {
+                    let lib_mutex = &*ptr;
+                    let lib_guard = lib_mutex.lock().unwrap();
+
+                    let fn_name_c = CString::new(fn_name.as_str())
+                        .map_err(|_| "Invalid function name")?;
+
+                    let func_ptr: Symbol<*const c_void> = lib_guard
+                        .library
+                        .get(fn_name_c.as_bytes_with_nul())
+                        .map_err(|e| format!("Function '{}' not found: {}", fn_name, e))?;
+
+                    let func_ptr = *func_ptr;
+
+                    let mut all_args = Vec::with_capacity(ffi_args.len() + 2);
+                    all_args.push(Value::Number(callback_id as f64));
+                    all_args.push(Value::Number(sald_get_callback_invoker() as usize as f64));
+                    all_args.extend_from_slice(ffi_args);
+
+                    let arg_types = vec![CType::I64; all_args.len()];
+                    let result = call_with_types(func_ptr, &all_args, &arg_types, &CType::I64)?;
+                    Ok(result)
+                }
+            }
+        } else {
+            Err("Invalid library instance".to_string())
+        }
+    } else {
+        Err("Invalid library instance".to_string())
+    };
+
+    clear_global_caller();
+
+    if matches!(callback, Value::Function(_)) {
+        unregister_callback(callback_id);
+    }
+
+    result
+}
+
+// ==================== FFI Call Implementation ====================
+
+unsafe fn call_with_types(
+    func_ptr: *const c_void,
+    values: &[Value],
+    arg_types: &[CType],
+    return_type: &CType,
+) -> Result<Value, String> {
+    if values.len() != arg_types.len() {
+        return Err(format!(
+            "Argument count mismatch: expected {}, got {}",
+            arg_types.len(),
+            values.len()
+        ));
+    }
+
+    let converted_args: Vec<ConvertedArg> = values
+        .iter()
+        .zip(arg_types.iter())
+        .map(|(val, typ)| convert_value_to_arg(val, typ))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let ffi_types: Vec<FfiType> = converted_args.iter().map(|a| a.ffi_type.clone()).collect();
+
+    let mut ffi_args = Vec::new();
+    for arg in &converted_args {
+        let arg_ref = match &arg.data {
+            ConvertedData::I8(v) => Arg::new(v),
+            ConvertedData::U8(v) => Arg::new(v),
+            ConvertedData::I16(v) => Arg::new(v),
+            ConvertedData::U16(v) => Arg::new(v),
+            ConvertedData::I32(v) => Arg::new(v),
+            ConvertedData::U32(v) => Arg::new(v),
+            ConvertedData::I64(v) => Arg::new(v),
+            ConvertedData::U64(v) => Arg::new(v),
+            ConvertedData::F32(v) => Arg::new(v),
+            ConvertedData::F64(v) => Arg::new(v),
+            ConvertedData::Ptr(v) => Arg::new(v),
+            ConvertedData::CStr(s) => Arg::new(&s.as_ptr()),
+        };
+        ffi_args.push(arg_ref);
+    }
+
+    let cif = Cif::new(ffi_types.into_iter(), return_type.to_ffi_type());
+    let code_ptr = CodePtr::from_ptr(func_ptr as *const _);
+
+    let result = match return_type {
+        CType::Void => {
+            cif.call::<()>(code_ptr, &ffi_args);
+            Value::Null
+        }
+        CType::I8 => {
+            let r: i8 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::U8 => {
+            let r: u8 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::I16 => {
+            let r: i16 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::U16 => {
+            let r: u16 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::I32 => {
+            let r: i32 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::U32 => {
+            let r: u32 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::I64 => {
+            let r: i64 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::U64 => {
+            let r: u64 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::F32 => {
+            let r: f32 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+        CType::F64 => {
+            let r: f64 = cif.call(code_ptr, &ffi_args);
+            Value::Number(r)
+        }
+        CType::Pointer | CType::CString => {
+            let r: usize = cif.call(code_ptr, &ffi_args);
+            Value::Number(r as f64)
+        }
+    };
+
+    Ok(result)
 }
