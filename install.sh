@@ -45,12 +45,6 @@ detect_os() {
             exit 1
             ;;
     esac
-    
-    # Also check for Windows paths as fallback
-    if [ -d "/c/Windows" ] || [ -d "/mnt/c/Windows" ]; then
-        OS="windows"
-        EXT=".exe"
-    fi
 }
 
 # Progress bar
