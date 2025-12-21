@@ -783,8 +783,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "335ff9f135e4384c8150d6f27c6daed433577f86b4750418338c01a1a2528592"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1864,6 +1866,7 @@ dependencies = [
  "dashmap",
  "dirs",
  "futures",
+ "getrandom 0.2.16",
  "hex",
  "hmac",
  "hyper",
@@ -1886,6 +1889,7 @@ dependencies = [
  "tokio",
  "tower-lsp",
  "uuid",
+ "wasm-bindgen",
  "zip",
 ]
 

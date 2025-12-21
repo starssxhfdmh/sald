@@ -2,14 +2,22 @@
 // A fast, class-based interpreter
 
 pub mod ast;
-pub mod binary;
 pub mod builtins;
 pub mod compiler;
 pub mod error;
 pub mod lexer;
-pub mod lsp;
 pub mod parser;
 pub mod vm;
+
+// Native-only modules
+#[cfg(not(target_arch = "wasm32"))]
+pub mod binary;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lsp;
+
+// WASM module
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -36,6 +44,7 @@ pub fn get_project_root() -> Option<PathBuf> {
 
 /// Push a module workspace onto the stack
 /// Called when entering a module during import
+#[cfg(not(target_arch = "wasm32"))]
 pub fn push_module_workspace(path: &std::path::Path) {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     MODULE_WORKSPACE_STACK.write().unwrap().push(canonical);
@@ -43,6 +52,7 @@ pub fn push_module_workspace(path: &std::path::Path) {
 
 /// Pop the module workspace from the stack
 /// Called when leaving a module after import
+#[cfg(not(target_arch = "wasm32"))]
 pub fn pop_module_workspace() {
     MODULE_WORKSPACE_STACK.write().unwrap().pop();
 }
@@ -62,8 +72,15 @@ pub fn get_current_workspace() -> PathBuf {
         return root;
     }
     
-    // Fall back to CWD
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    // Fall back to CWD (or virtual path for WASM)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        PathBuf::from("/virtual")
+    }
 }
 
 /// Resolve a path relative to current workspace
@@ -84,6 +101,7 @@ pub fn resolve_script_path(path: &str) -> PathBuf {
 // Legacy functions for backward compatibility (used by sald CLI without salad)
 
 /// Legacy: Set script directory (for backward compatibility with sald CLI)
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_script_dir(path: &str) {
     let dir = PathBuf::from(path)
         .parent()
@@ -98,16 +116,35 @@ pub fn set_script_dir(path: &str) {
 }
 
 /// Legacy: Push script directory (no-op in new system)
+#[cfg(not(target_arch = "wasm32"))]
 pub fn push_script_dir(_path: &str) {
     // No-op - kept for compatibility
 }
 
 /// Legacy: Pop script directory (no-op in new system)
+#[cfg(not(target_arch = "wasm32"))]
 pub fn pop_script_dir() {
     // No-op - kept for compatibility
 }
 
 /// Legacy: Get script directory
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get_script_dir() -> PathBuf {
     get_project_root().unwrap_or_else(|| PathBuf::from("."))
 }
+
+// WASM no-op versions
+#[cfg(target_arch = "wasm32")]
+pub fn set_script_dir(_path: &str) {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn push_script_dir(_path: &str) {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn pop_script_dir() {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn push_module_workspace(_path: &std::path::Path) {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn pop_module_workspace() {}

@@ -129,10 +129,23 @@ fn math_exp(args: &[Value]) -> Result<Value, String> {
 }
 
 fn math_random(_args: &[Value]) -> Result<Value, String> {
-    use rand::Rng;
-    let mut rng = rand::rng();
-    let random: f64 = rng.random();
-    Ok(Value::Number(random))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let random: f64 = rng.random();
+        Ok(Value::Number(random))
+    }
+    
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Use getrandom for WASM (with js feature)
+        use getrandom::getrandom;
+        let mut buf = [0u8; 8];
+        getrandom(&mut buf).map_err(|e| e.to_string())?;
+        let random = u64::from_le_bytes(buf) as f64 / u64::MAX as f64;
+        Ok(Value::Number(random))
+    }
 }
 
 fn math_min(args: &[Value]) -> Result<Value, String> {

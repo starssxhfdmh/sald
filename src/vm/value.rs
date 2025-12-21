@@ -6,6 +6,8 @@ use crate::compiler::Chunk;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::oneshot;
 
 /// Native function type (for static methods)
@@ -20,10 +22,15 @@ pub type NativeConstructorFn = fn(&[Value]) -> Result<Value, String>;
 /// Old native function type for backwards compatibility
 pub type NativeFn = fn(&[Value]) -> Value;
 
-/// Future for async operations - wraps a oneshot receiver
+/// Future for async operations - wraps a oneshot receiver (native only)
+#[cfg(not(target_arch = "wasm32"))]
 pub struct SaldFuture {
     pub receiver: oneshot::Receiver<Result<Value, String>>,
 }
+
+/// Placeholder for WASM (futures not supported)
+#[cfg(target_arch = "wasm32")]
+pub struct SaldFuture;
 
 /// Runtime value types
 /// Uses Arc for shared ownership and Mutex/RwLock for interior mutability

@@ -15,17 +15,26 @@ use crate::parser::Parser;
 use crate::vm::caller::ValueCaller;
 use crate::vm::gc::GcHeap;
 use crate::vm::value::{Class, Function, Instance, UpvalueObj, Value};
+
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::oneshot;
 
 const STACK_MAX: usize = 65536;
 const FRAMES_MAX: usize = 4096;
 
 /// Result of VM execution - supports suspend/resume for async
+#[cfg(not(target_arch = "wasm32"))]
 pub enum ExecutionResult {
     Completed(Value),
     Suspended {
         receiver: oneshot::Receiver<Result<Value, String>>,
     },
+    Error(SaldError),
+}
+
+#[cfg(target_arch = "wasm32")]
+pub enum ExecutionResult {
+    Completed(Value),
     Error(SaldError),
 }
 
@@ -105,10 +114,18 @@ pub struct VM {
 // ==================== Dispatch Table ====================
 
 /// Control flow result from opcode handlers
+#[cfg(not(target_arch = "wasm32"))]
 enum ControlFlow {
     Continue,
     Return(Value),
     Suspend(oneshot::Receiver<Result<Value, String>>),
+    Error(SaldError),
+}
+
+#[cfg(target_arch = "wasm32")]
+enum ControlFlow {
+    Continue,
+    Return(Value),
     Error(SaldError),
 }
 
@@ -889,6 +906,7 @@ fn op_throw(vm: &mut VM) -> ControlFlow {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn op_await(vm: &mut VM) -> ControlFlow {
     let value = vm.stack.pop().unwrap_or(Value::Null);
     match value {
@@ -900,6 +918,20 @@ fn op_await(vm: &mut VM) -> ControlFlow {
             } else {
                 return ControlFlow::Error(vm.create_error(ErrorKind::RuntimeError, "Future has already been consumed"));
             }
+        }
+        other => {
+            vm.stack.push(other);
+            ControlFlow::Continue
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn op_await(vm: &mut VM) -> ControlFlow {
+    let value = vm.stack.pop().unwrap_or(Value::Null);
+    match value {
+        Value::Future(_) => {
+            ControlFlow::Error(vm.create_error(ErrorKind::RuntimeError, "async/await is not supported in WASM playground"))
         }
         other => {
             vm.stack.push(other);
@@ -1100,6 +1132,7 @@ fn shift_op(vm: &mut VM, op: fn(i64, u32) -> i64) -> ControlFlow {
 
 // ==================== ValueCaller Implementation ====================
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ValueCaller for VM {
     fn call(&mut self, callee: &Value, args: Vec<Value>) -> Result<Value, String> {
         let frame_count_before = self.frames.len();
@@ -1126,6 +1159,37 @@ impl ValueCaller for VM {
                         Err(_) => return Err("Future was cancelled".to_string()),
                     }
                 }
+                ControlFlow::Error(e) => return Err(e.message),
+            }
+        }
+    }
+
+    fn get_globals(&self) -> HashMap<String, Value> {
+        self.globals.read().unwrap().clone()
+    }
+
+    fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> {
+        self.globals.clone()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ValueCaller for VM {
+    fn call(&mut self, callee: &Value, args: Vec<Value>) -> Result<Value, String> {
+        let frame_count_before = self.frames.len();
+        self.push_fast(callee.clone()).map_err(|e| e.message)?;
+        for arg in args.iter() {
+            self.push_fast(arg.clone()).map_err(|e| e.message)?;
+        }
+        self.call_value(args.len()).map_err(|e| e.message)?;
+
+        loop {
+            if self.frames.len() == frame_count_before {
+                return Ok(self.stack.pop().unwrap_or(Value::Null));
+            }
+            match self.execute_one_threaded() {
+                ControlFlow::Continue => continue,
+                ControlFlow::Return(v) => return Ok(v),
                 ControlFlow::Error(e) => return Err(e.message),
             }
         }
@@ -1278,7 +1342,8 @@ impl VM {
         false
     }
 
-    /// Main entry point - async execution with event loop
+    /// Main entry point - async execution with event loop (native only)
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn run(&mut self, chunk: Chunk, file: &str, source: &str) -> SaldResult<Value> {
         self.file = file.to_string();
         self.source = source.to_string();
@@ -1297,6 +1362,20 @@ impl VM {
         result
     }
 
+    /// Main entry point - synchronous execution (WASM)
+    #[cfg(target_arch = "wasm32")]
+    pub fn run(&mut self, chunk: &Chunk) -> SaldResult<Value> {
+        let mut main_function = Function::new("<script>", 0, chunk.clone());
+        let main_function = Arc::new(main_function);
+
+        let slots_start = self.stack.len();
+        self.stack.push(Value::Null);
+        self.frames.push(CallFrame::new(main_function, slots_start));
+
+        self.execute_until_complete()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn run_handler(&mut self, handler: Value, arg: Value, script_dir: Option<&str>) -> SaldResult<Value> {
         self.file = "<handler>".to_string();
         self.source = String::new();
@@ -1312,6 +1391,7 @@ impl VM {
         result
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn run_event_loop(&mut self) -> SaldResult<Value> {
         loop {
             match self.execute_until_suspend() {
@@ -1328,7 +1408,8 @@ impl VM {
         }
     }
 
-    /// Execute with threaded dispatch until suspend or complete
+    /// Execute with threaded dispatch until suspend or complete (native)
+    #[cfg(not(target_arch = "wasm32"))]
     fn execute_until_suspend(&mut self) -> ExecutionResult {
         loop {
             if self.frames.is_empty() {
@@ -1346,6 +1427,27 @@ impl VM {
                         continue;
                     }
                     return ExecutionResult::Error(e);
+                }
+            }
+        }
+    }
+
+    /// Execute until complete (WASM - no suspend support)
+    #[cfg(target_arch = "wasm32")]
+    fn execute_until_complete(&mut self) -> SaldResult<Value> {
+        loop {
+            if self.frames.is_empty() {
+                return Ok(self.stack.pop().unwrap_or(Value::Null));
+            }
+            match self.execute_one_threaded() {
+                ControlFlow::Continue => continue,
+                ControlFlow::Return(v) => return Ok(v),
+                ControlFlow::Error(e) => {
+                    if !self.exception_handlers.is_empty() {
+                        self.handle_native_error(e.message.clone())?;
+                        continue;
+                    }
+                    return Err(e);
                 }
             }
         }
@@ -2101,6 +2203,7 @@ impl VM {
 
     // ==================== Import Handlers ====================
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn handle_import(&mut self, import_path: &str) -> SaldResult<()> {
         let resolved_path = self.resolve_import_path(import_path)?;
         let module_workspace = self.pending_module_workspace.take();
@@ -2116,6 +2219,12 @@ impl VM {
         Ok(())
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn handle_import(&mut self, import_path: &str) -> SaldResult<()> {
+        Err(self.create_error(ErrorKind::ImportError, &format!("import is not supported in WASM playground: {}", import_path)))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn handle_import_as(&mut self, import_path: &str, alias: &str) -> SaldResult<()> {
         let resolved_path = self.resolve_import_path(import_path)?;
         let module_workspace = self.pending_module_workspace.take();
@@ -2143,15 +2252,23 @@ impl VM {
         Ok(())
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn handle_import_as(&mut self, import_path: &str, _alias: &str) -> SaldResult<()> {
+        Err(self.create_error(ErrorKind::ImportError, &format!("import is not supported in WASM playground: {}", import_path)))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn resolve_import_path(&mut self, import_path: &str) -> SaldResult<String> {
         if Self::is_module_import(import_path) { return self.resolve_module_import(import_path); }
         self.resolve_file_import(import_path)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn is_module_import(path: &str) -> bool {
         !path.contains('/') && !path.contains('\\') && !path.ends_with(".sald") && !path.ends_with(".saldc")
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn resolve_module_import(&mut self, module_name: &str) -> SaldResult<String> {
         let project_root = crate::get_project_root()
             .ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Cannot import module '{}': no project root set", module_name)))?;
@@ -2166,12 +2283,14 @@ impl VM {
         main_path.to_str().map(|s| s.to_string()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid module path for '{}'", module_name)))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn parse_module_config(&self, config_path: &std::path::Path, module_name: &str) -> SaldResult<String> {
         let content = std::fs::read_to_string(config_path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Failed to read module '{}' config: {}", module_name, e)))?;
         let json: serde_json::Value = serde_json::from_str(&content).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Module '{}' config invalid JSON: {}", module_name, e)))?;
         json.get("main").and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Module '{}' config missing 'main' field", module_name)))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn resolve_file_import(&self, import_path: &str) -> SaldResult<String> {
         use std::path::PathBuf;
         use std::env;
@@ -2189,6 +2308,7 @@ impl VM {
         relative_path.to_str().map(|s| s.to_string()).ok_or_else(|| self.create_error(ErrorKind::ImportError, &format!("Invalid import path: {}", import_path)))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn import_and_execute(&mut self, path: &str) -> SaldResult<HashMap<String, Value>> {
         let chunk = if path.ends_with(".saldc") {
             let data = std::fs::read(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
@@ -2238,6 +2358,7 @@ impl VM {
 
     /// Import and execute a module, returning both the globals HashMap AND the Arc
     /// This preserves the module's globals context for proper function scoping in import-as
+    #[cfg(not(target_arch = "wasm32"))]
     fn import_and_execute_with_globals(&mut self, path: &str) -> SaldResult<(HashMap<String, Value>, Arc<RwLock<HashMap<String, Value>>>)> {
         let chunk = if path.ends_with(".saldc") {
             let data = std::fs::read(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
@@ -2320,6 +2441,7 @@ impl VM {
     }
 
     /// Call a global function by name (for test runner)
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn call_global(&mut self, name: &str, args: Vec<Value>) -> SaldResult<Value> {
         // Look up the function in globals
         let func = {

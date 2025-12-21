@@ -1,6 +1,7 @@
 // Sald Error Handling Module
 // Provides comprehensive error reporting with line numbers, spans, and stack traces
 
+#[cfg(not(target_arch = "wasm32"))]
 use colored::*;
 use std::fmt;
 
@@ -194,7 +195,8 @@ impl SaldError {
         self.stack_trace.push(frame);
     }
 
-    /// Format the error for display
+    /// Format the error for display (with colors for native)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn format(&self) -> String {
         let mut output = String::new();
 
@@ -259,7 +261,70 @@ impl SaldError {
         output
     }
 
-    /// Format the error with options
+    /// Format the error for display (plain text for WASM)
+    #[cfg(target_arch = "wasm32")]
+    pub fn format(&self) -> String {
+        let mut output = String::new();
+
+        // Error header: SyntaxError: message at file:line:column
+        let header = format!(
+            "{}: {} at {}:{}:{}",
+            self.kind,
+            self.message,
+            self.file.trim_start_matches(r"\\?\"),
+            self.span.start.line,
+            self.span.start.column
+        );
+        output.push_str(&header);
+        output.push('\n');
+
+        // Source context
+        if !self.source_lines.is_empty() {
+            let error_line = self.span.start.line;
+            let start_line = if error_line > 1 { error_line - 1 } else { 1 };
+            let end_line = (error_line + 1).min(self.source_lines.len());
+
+            output.push('\n');
+
+            for line_num in start_line..=end_line {
+                if line_num <= self.source_lines.len() {
+                    let line_content = &self.source_lines[line_num - 1];
+                    let line_num_str = format!("{:>4} |", line_num);
+
+                    output.push_str(&format!("{} {}\n", line_num_str, line_content));
+
+                    if line_num == error_line {
+                        let spaces = " ".repeat(6 + self.span.start.column);
+                        let caret_len = if self.span.end.column > self.span.start.column {
+                            self.span.end.column - self.span.start.column + 1
+                        } else {
+                            1
+                        };
+                        let carets = "^".repeat(caret_len);
+                        output.push_str(&format!("{}{}\n", spaces, carets));
+                    }
+                }
+            }
+        }
+
+        // Help message
+        if let Some(ref help) = self.help {
+            output.push_str(&format!("\n      Help: {}\n", help));
+        }
+
+        // Stack trace
+        if !self.stack_trace.is_empty() {
+            output.push_str("\nStack trace:\n");
+            for frame in self.stack_trace.iter() {
+                output.push_str(&format!("{}\n", frame));
+            }
+        }
+
+        output
+    }
+
+    /// Format the error with options (native with colors)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn format_with_options(&self, full_trace: bool) -> String {
         if full_trace {
             // Use full trace - show all stack frames
@@ -326,6 +391,12 @@ impl SaldError {
         } else {
             self.format()
         }
+    }
+
+    /// Format the error with options (WASM plain text)
+    #[cfg(target_arch = "wasm32")]
+    pub fn format_with_options(&self, _full_trace: bool) -> String {
+        self.format()
     }
 }
 
