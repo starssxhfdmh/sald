@@ -5,6 +5,7 @@
 use super::{check_arity, check_arity_range, get_number_arg};
 use crate::vm::value::{Class, Instance, NativeInstanceFn, NativeStaticFn, SaldFuture, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
@@ -14,6 +15,9 @@ struct ChannelState {
     sender: Option<mpsc::Sender<Value>>,
     receiver: Option<Arc<tokio::sync::Mutex<mpsc::Receiver<Value>>>>,
     closed: bool,
+    /// Number of messages that have been sent but not yet received
+    /// This is used to make isClosed() return false if there are pending messages
+    pending_count: Arc<AtomicUsize>,
 }
 
 pub fn create_channel_class() -> Class {
@@ -57,6 +61,7 @@ fn channel_new(args: &[Value]) -> Result<Value, String> {
         sender: Some(tx),
         receiver: Some(Arc::new(tokio::sync::Mutex::new(rx))),
         closed: false,
+        pending_count: Arc::new(AtomicUsize::new(0)),
     }));
     
     // Store the state arc pointer as a number (hacky but works)
@@ -88,13 +93,13 @@ fn channel_send(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let inst = inst.lock().unwrap();
         let state = get_channel_state(&inst)?;
         
-        // Get sender BEFORE entering async (to avoid holding lock across await)
-        let sender = {
+        // Get sender and pending_count BEFORE entering async (to avoid holding lock across await)
+        let (sender, pending_count) = {
             let state_guard = state.lock().unwrap();
             if state_guard.closed {
                 return Err("Cannot send on closed channel".to_string());
             }
-            state_guard.sender.clone()
+            (state_guard.sender.clone(), state_guard.pending_count.clone())
         };
         
         let Some(sender) = sender else {
@@ -105,10 +110,18 @@ fn channel_send(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let (tx, rx) = oneshot::channel();
         
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            // Increment pending count BEFORE spawning (so it's visible immediately)
+            pending_count.fetch_add(1, Ordering::SeqCst);
+            let pending_count_clone = pending_count.clone();
+            
             handle.spawn(async move {
                 match sender.send(value).await {
                     Ok(()) => { let _ = tx.send(Ok(Value::Null)); }
-                    Err(_) => { let _ = tx.send(Err("Channel closed".to_string())); }
+                    Err(_) => {
+                        // Send failed, decrement pending count
+                        pending_count_clone.fetch_sub(1, Ordering::SeqCst);
+                        let _ = tx.send(Err("Channel closed".to_string()));
+                    }
                 }
             });
         } else {
@@ -133,16 +146,20 @@ fn channel_receive(recv: &Value, args: &[Value]) -> Result<Value, String> {
         
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                let receiver_arc = {
+                let (receiver_arc, pending_count) = {
                     let state_guard = state.lock().unwrap();
-                    state_guard.receiver.clone()
+                    (state_guard.receiver.clone(), state_guard.pending_count.clone())
                 };
                 
                 if let Some(receiver_arc) = receiver_arc {
                     let mut receiver = receiver_arc.lock().await;
                     match receiver.recv().await {
-                        Some(value) => { let _ = tx.send(Ok(value)); }
-                        None => { let _ = tx.send(Ok(Value::Null)); } // Channel closed
+                        Some(value) => {
+                            // Successfully received, decrement pending count
+                            pending_count.fetch_sub(1, Ordering::SeqCst);
+                            let _ = tx.send(Ok(value));
+                        }
+                        None => { let _ = tx.send(Ok(Value::Null)); } // Channel closed and empty
                     }
                 } else {
                     let _ = tx.send(Err("Channel receiver dropped".to_string()));
@@ -204,7 +221,8 @@ fn channel_close(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-/// channel.isClosed() - Check if channel is closed
+/// channel.isClosed() - Check if channel is closed AND has no pending messages
+/// Returns true only when there are no more messages to receive
 fn channel_is_closed(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     
@@ -213,7 +231,13 @@ fn channel_is_closed(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let state = get_channel_state(&inst)?;
         let state_guard = state.lock().unwrap();
         
-        Ok(Value::Boolean(state_guard.closed))
+        // Channel is truly "closed" only when:
+        // 1. close() has been called (closed flag is true)
+        // 2. AND there are no pending messages to receive
+        let is_truly_closed = state_guard.closed && 
+            state_guard.pending_count.load(Ordering::SeqCst) == 0;
+        
+        Ok(Value::Boolean(is_truly_closed))
     } else {
         Err("isClosed() must be called on a Channel instance".to_string())
     }
