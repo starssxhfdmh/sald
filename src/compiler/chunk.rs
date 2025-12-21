@@ -3,12 +3,13 @@
 
 use super::opcode::OpCode;
 use crate::error::Span;
+use std::sync::Arc;
 
 /// Constant values stored in the constant pool
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
     Number(f64),
-    String(String),
+    String(Arc<String>),  // Arc to avoid clone on every access
     Function(FunctionConstant),
     Class(ClassConstant),
 }

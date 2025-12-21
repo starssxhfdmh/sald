@@ -1515,7 +1515,7 @@ impl VM {
         let constant = &self.current_frame().function.chunk.constants[idx];
         match constant {
             Constant::Number(n) => Value::Number(*n),
-            Constant::String(s) => Value::String(Arc::new(s.clone())),
+            Constant::String(s) => Value::String(s.clone()),
             Constant::Function(f) => Value::Function(Arc::new(Function::from_constant(f))),
             Constant::Class(c) => Value::Class(Arc::new(Class::new(&c.name))),
         }
@@ -1523,7 +1523,7 @@ impl VM {
 
     fn read_string_constant(&self, idx: usize) -> SaldResult<String> {
         match &self.current_frame().function.chunk.constants[idx] {
-            Constant::String(s) => Ok(s.clone()),
+            Constant::String(s) => Ok((**s).clone()),
             _ => Err(self.create_error(ErrorKind::TypeError, "Expected string constant")),
         }
     }

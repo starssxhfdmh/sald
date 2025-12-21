@@ -31,9 +31,9 @@ fn json_parse(args: &[Value]) -> Result<Value, String> {
 fn json_stringify(args: &[Value]) -> Result<Value, String> {
     check_arity_range(1, 2, args.len())?;
 
-    let json_value = sald_value_to_json(&args[0])?;
-
     let json_string = if args.len() == 2 {
+        // Pretty printing - use serde path
+        let json_value = sald_value_to_json(&args[0])?;
         let indent = get_number_arg(&args[1], "indent")? as usize;
         let indent_str = " ".repeat(indent);
 
@@ -43,7 +43,10 @@ fn json_stringify(args: &[Value]) -> Result<Value, String> {
         json_value.serialize(&mut ser).map_err(|e| e.to_string())?;
         String::from_utf8(buf).map_err(|e| e.to_string())?
     } else {
-        serde_json::to_string(&json_value).map_err(|e| e.to_string())?
+        // Fast path - write directly to string buffer
+        let mut buf = String::with_capacity(256);
+        write_json_value(&args[0], &mut buf)?;
+        buf
     };
 
     Ok(Value::String(Arc::new(json_string)))
@@ -74,6 +77,7 @@ fn json_to_sald_value(json: &serde_json::Value) -> Result<Value, String> {
 }
 
 /// Convert Sald Value to serde_json::Value
+/// Note: Uses fast path for simple stringify, serde path for pretty printing
 fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
     match value {
         Value::Null => Ok(serde_json::Value::Null),
@@ -81,18 +85,91 @@ fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
         Value::Number(n) => serde_json::Number::from_f64(*n)
             .map(serde_json::Value::Number)
             .ok_or_else(|| "Cannot convert number to JSON".to_string()),
-        Value::String(s) => Ok(serde_json::Value::String(s.to_string())),
+        Value::String(s) => Ok(serde_json::Value::String((**s).clone())),
         Value::Array(arr) => {
+            let guard = arr.lock().unwrap();
             let json_arr: Result<Vec<serde_json::Value>, String> =
-                arr.lock().unwrap().iter().map(sald_value_to_json).collect();
+                guard.iter().map(sald_value_to_json).collect();
             Ok(serde_json::Value::Array(json_arr?))
         }
         Value::Dictionary(dict) => {
             let mut map = serde_json::Map::new();
-            for (key, val) in dict.lock().unwrap().iter() {
+            let guard = dict.lock().unwrap();
+            for (key, val) in guard.iter() {
                 map.insert(key.clone(), sald_value_to_json(val)?);
             }
             Ok(serde_json::Value::Object(map))
+        }
+        _ => Err(format!("Cannot convert {} to JSON", value.type_name())),
+    }
+}
+
+/// Fast path: directly write JSON to string buffer without intermediate serde_json::Value
+fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
+    use std::fmt::Write;
+    match value {
+        Value::Null => { buf.push_str("null"); Ok(()) }
+        Value::Boolean(b) => { buf.push_str(if *b { "true" } else { "false" }); Ok(()) }
+        Value::Number(n) => {
+            if n.is_nan() || n.is_infinite() {
+                return Err("Cannot convert NaN/Infinity to JSON".to_string());
+            }
+            if n.fract() == 0.0 && n.abs() < 1e15 {
+                let _ = write!(buf, "{}", *n as i64);
+            } else {
+                let _ = write!(buf, "{}", n);
+            }
+            Ok(())
+        }
+        Value::String(s) => {
+            buf.push('"');
+            for ch in s.chars() {
+                match ch {
+                    '"' => buf.push_str("\\\""),
+                    '\\' => buf.push_str("\\\\"),
+                    '\n' => buf.push_str("\\n"),
+                    '\r' => buf.push_str("\\r"),
+                    '\t' => buf.push_str("\\t"),
+                    c if c.is_control() => { let _ = write!(buf, "\\u{:04x}", c as u32); }
+                    c => buf.push(c),
+                }
+            }
+            buf.push('"');
+            Ok(())
+        }
+        Value::Array(arr) => {
+            buf.push('[');
+            let guard = arr.lock().unwrap();
+            let mut first = true;
+            for item in guard.iter() {
+                if !first { buf.push(','); }
+                first = false;
+                write_json_value(item, buf)?;
+            }
+            buf.push(']');
+            Ok(())
+        }
+        Value::Dictionary(dict) => {
+            buf.push('{');
+            let guard = dict.lock().unwrap();
+            let mut first = true;
+            for (key, val) in guard.iter() {
+                if !first { buf.push(','); }
+                first = false;
+                // Write key
+                buf.push('"');
+                for ch in key.chars() {
+                    match ch {
+                        '"' => buf.push_str("\\\""),
+                        '\\' => buf.push_str("\\\\"),
+                        c => buf.push(c),
+                    }
+                }
+                buf.push_str("\":");
+                write_json_value(val, buf)?;
+            }
+            buf.push('}');
+            Ok(())
         }
         _ => Err(format!("Cannot convert {} to JSON", value.type_name())),
     }
