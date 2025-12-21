@@ -6,6 +6,6 @@
   "license": "MIT",
   "main": "main.sald",
   "modules": {
-    "macrosald": "1.0.5"
+    "macrosald": "1.0.8"
   }
 }
