@@ -22,6 +22,10 @@ use tokio::sync::oneshot;
 const STACK_MAX: usize = 65536;
 const FRAMES_MAX: usize = 4096;
 
+// Start small, grow as needed - avoids over-allocation for simple scripts
+const STACK_INIT: usize = 256;
+const FRAMES_INIT: usize = 32;
+
 /// Result of VM execution - supports suspend/resume for async
 #[cfg(not(target_arch = "wasm32"))]
 pub enum ExecutionResult {
@@ -1210,8 +1214,8 @@ impl VM {
     pub fn new() -> Self {
         let globals = builtins::create_builtin_classes();
         Self {
-            stack: Vec::with_capacity(STACK_MAX),
-            frames: Vec::with_capacity(FRAMES_MAX),
+            stack: Vec::with_capacity(STACK_INIT),
+            frames: Vec::with_capacity(FRAMES_INIT),
             globals: Arc::new(RwLock::new(globals)),
             file: String::new(),
             source: String::new(),
@@ -1228,8 +1232,8 @@ impl VM {
 
     pub fn new_with_shared_globals(globals: Arc<RwLock<HashMap<String, Value>>>) -> Self {
         Self {
-            stack: Vec::with_capacity(STACK_MAX),
-            frames: Vec::with_capacity(FRAMES_MAX),
+            stack: Vec::with_capacity(STACK_INIT),
+            frames: Vec::with_capacity(FRAMES_INIT),
             globals,
             file: String::new(),
             source: String::new(),
@@ -1242,6 +1246,16 @@ impl VM {
             args: Vec::new(),
             namespace_context: Vec::new(),
         }
+    }
+
+    /// Reset VM state for reuse (avoids reallocation)
+    #[inline]
+    pub fn reset(&mut self) {
+        self.stack.clear();
+        self.frames.clear();
+        self.exception_handlers.clear();
+        self.open_upvalues.clear();
+        self.gc_counter = 0;
     }
 
     pub fn set_args(&mut self, args: Vec<String>) { self.args = args; }
@@ -1377,13 +1391,11 @@ impl VM {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn run_handler(&mut self, handler: Value, arg: Value, script_dir: Option<&str>) -> SaldResult<Value> {
-        self.file = "<handler>".to_string();
-        self.source = String::new();
         if let Some(dir) = script_dir {
-            crate::push_script_dir(&format!("{}/handler.sald", dir));
+            crate::push_script_dir(dir);
         }
         self.stack.push(Value::Null);
-        self.stack.push(handler.clone());
+        self.stack.push(handler); // handler consumed, no clone needed
         self.stack.push(arg);
         self.call_value(1)?;
         let result = self.run_event_loop().await;

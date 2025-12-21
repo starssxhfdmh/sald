@@ -14,7 +14,6 @@ use crate::vm::caller::CallableNativeInstanceFn;
 use crate::vm::value::{Class, Instance, NativeInstanceFn, SaldFuture, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
 use tokio::sync::oneshot;
 
 /// Create the Http namespace with client functions and Server class
@@ -481,9 +480,8 @@ async fn run_async_server(
 ) -> Result<Value, String> {
     use tokio::net::TcpListener;
 
-    // Bind to [::] for dual-stack (IPv4 + IPv6) support
-    // This fixes "localhost" being slow due to IPv6 timeout
-    let addr = format!("[::]:{}", port);
+    // Bind to 0.0.0.0 for IPv4 support (Windows doesn't support dual-stack on [::])
+    let addr = format!("0.0.0.0:{}", port);
     
     let listener = TcpListener::bind(&addr).await
         .map_err(|e| format!("Failed to bind to port {}: {}", port, e))?;
@@ -509,7 +507,7 @@ async fn run_async_server(
     }
 }
 
-/// Handle a single HTTP connection in its own task
+/// Handle HTTP connection with keepalive support - handles multiple requests per connection
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     routes: Arc<HashMap<String, Value>>,
@@ -522,149 +520,134 @@ async fn handle_connection(
     // Disable Nagle's algorithm for lower latency
     let _ = stream.set_nodelay(true);
 
-    // Read request
+    // Reuse VM for this connection - avoids allocation per request
+    let mut vm = VM::new_with_shared_globals(globals);
+
     let mut buffer = [0u8; 8192];
-    let bytes_read = stream.read(&mut buffer).await
-        .map_err(|e| format!("Read error: {}", e))?;
 
-    if bytes_read == 0 {
-        return Ok(());
-    }
+    // Keepalive loop - handle multiple requests on same connection
+    loop {
+        // Read request
+        let bytes_read = match stream.read(&mut buffer).await {
+            Ok(0) => return Ok(()), // Connection closed
+            Ok(n) => n,
+            Err(_) => return Ok(()), // Read error, close connection
+        };
 
-    let request_str = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let lines: Vec<&str> = request_str.lines().collect();
+        let request_str = String::from_utf8_lossy(&buffer[..bytes_read]);
+        let lines: Vec<&str> = request_str.lines().collect();
 
-    if lines.is_empty() {
-        return Ok(());
-    }
-
-    // Parse request line: "GET /path HTTP/1.1"
-    let request_line: Vec<&str> = lines[0].split_whitespace().collect();
-    if request_line.len() < 2 {
-        return Ok(());
-    }
-
-    let method = request_line[0].to_string();
-    let full_path = request_line[1].to_string();
-
-    // Split path and query string
-    let (path, query_string) = if let Some(idx) = full_path.find('?') {
-        (full_path[..idx].to_string(), full_path[idx + 1..].to_string())
-    } else {
-        (full_path.clone(), String::new())
-    };
-
-    // Parse headers
-    let mut headers: HashMap<String, Value> = HashMap::new();
-    let mut body_start = 0;
-    for (i, line) in lines.iter().enumerate().skip(1) {
-        if line.is_empty() {
-            body_start = i + 1;
-            break;
+        if lines.is_empty() {
+            continue;
         }
-        if let Some(colon_idx) = line.find(':') {
-            let key = line[..colon_idx].trim().to_lowercase();
-            let value = line[colon_idx + 1..].trim();
-            headers.insert(key, Value::String(Arc::new(value.to_string())));
+
+        // Parse request line: "GET /path HTTP/1.1"
+        let request_line: Vec<&str> = lines[0].split_whitespace().collect();
+        if request_line.len() < 2 {
+            continue;
         }
-    }
 
-    // Get body
-    let body = if body_start > 0 && body_start < lines.len() {
-        lines[body_start..].join("\n")
-    } else {
-        String::new()
-    };
+        let method = request_line[0].to_string();
+        let full_path = request_line[1].to_string();
 
-    // Parse query parameters
-    let mut query_params: HashMap<String, Value> = HashMap::new();
-    if !query_string.is_empty() {
-        for pair in query_string.split('&') {
-            if let Some(eq_idx) = pair.find('=') {
-                let key = &pair[..eq_idx];
-                let value = &pair[eq_idx + 1..];
-                query_params.insert(
-                    key.to_string(),
-                    Value::String(Arc::new(value.to_string())),
-                );
+        // Split path and query string
+        let (path, query_string) = if let Some(idx) = full_path.find('?') {
+            (full_path[..idx].to_string(), full_path[idx + 1..].to_string())
+        } else {
+            (full_path.clone(), String::new())
+        };
+
+        // Parse headers
+        let mut headers: HashMap<String, Value> = HashMap::new();
+        let mut body_start = 0;
+        let mut connection_close = false;
+        for (i, line) in lines.iter().enumerate().skip(1) {
+            if line.is_empty() {
+                body_start = i + 1;
+                break;
+            }
+            if let Some(colon_idx) = line.find(':') {
+                let key = line[..colon_idx].trim().to_lowercase();
+                let value = line[colon_idx + 1..].trim();
+                // Check if client wants to close connection
+                if key == "connection" && value.eq_ignore_ascii_case("close") {
+                    connection_close = true;
+                }
+                headers.insert(key, Value::String(Arc::new(value.to_string())));
             }
         }
-    }
 
-    // Start timing
-    let start_time = Instant::now();
+        // Get body
+        let body = if body_start > 0 && body_start < lines.len() {
+            lines[body_start..].join("\n")
+        } else {
+            String::new()
+        };
 
-    // Find matching route and extract params
-    let (handler, route_params) = find_matching_route(&routes, &method, &path);
-
-    let response = if let Some(handler_fn) = handler {
-        // Build request dictionary
-        let mut req_fields: HashMap<String, Value> = HashMap::new();
-        req_fields.insert(
-            "method".to_string(),
-            Value::String(Arc::new(method.clone())),
-        );
-        req_fields.insert(
-            "path".to_string(),
-            Value::String(Arc::new(path.clone())),
-        );
-        req_fields.insert("body".to_string(), Value::String(Arc::new(body)));
-        req_fields.insert(
-            "params".to_string(),
-            Value::Dictionary(Arc::new(Mutex::new(route_params))),
-        );
-        req_fields.insert(
-            "query".to_string(),
-            Value::Dictionary(Arc::new(Mutex::new(query_params))),
-        );
-        req_fields.insert(
-            "headers".to_string(),
-            Value::Dictionary(Arc::new(Mutex::new(headers))),
-        );
-
-        let request = Value::Dictionary(Arc::new(Mutex::new(req_fields)));
-
-        // Create a NEW VM for this request with SHARED globals Arc
-        // The Arc<RwLock<HashMap>> is shared directly - modifications are visible everywhere!
-        let mut vm = VM::new_with_shared_globals(globals.clone());
-        
-        // Call the handler using the VM's run_handler method with script_dir for path resolution
-        match vm.run_handler(handler_fn, request, Some(&script_dir)).await {
-            Ok(result) => build_http_response(&result),
-            Err(e) => {
-                // Log error to terminal
-                eprintln!("\n{}", e);
-                format!(
-                    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nHandler error: {}",
-                    e
-                )
+        // Parse query parameters
+        let mut query_params: HashMap<String, Value> = HashMap::new();
+        if !query_string.is_empty() {
+            for pair in query_string.split('&') {
+                if let Some(eq_idx) = pair.find('=') {
+                    let key = &pair[..eq_idx];
+                    let value = &pair[eq_idx + 1..];
+                    query_params.insert(
+                        key.to_string(),
+                        Value::String(Arc::new(value.to_string())),
+                    );
+                }
             }
         }
-    } else {
-        format!(
-            "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found: {} {}",
-            method, path
-        )
-    };
 
-    // Calculate response time (for middleware use)
-    let _duration = start_time.elapsed();
-    
-    // Extract status code from response
-    let _status_code = if response.starts_with("HTTP/1.1 ") {
-        response[9..12].to_string()
-    } else {
-        "???".to_string()
-    };
+        // Find matching route and extract params
+        let (handler, route_params) = find_matching_route(&routes, &method, &path);
 
-    // Note: Logging removed - use Spark.Middleware.logger() for colored logs
+        let response = if let Some(handler_fn) = handler {
+            // Build request dictionary
+            let mut req_fields: HashMap<String, Value> = HashMap::new();
+            req_fields.insert("method".to_string(), Value::String(Arc::new(method)));
+            req_fields.insert("path".to_string(), Value::String(Arc::new(path)));
+            req_fields.insert("body".to_string(), Value::String(Arc::new(body)));
+            req_fields.insert("params".to_string(), Value::Dictionary(Arc::new(Mutex::new(route_params))));
+            req_fields.insert("query".to_string(), Value::Dictionary(Arc::new(Mutex::new(query_params))));
+            req_fields.insert("headers".to_string(), Value::Dictionary(Arc::new(Mutex::new(headers))));
 
-    stream.write_all(response.as_bytes()).await
-        .map_err(|e| format!("Write error: {}", e))?;
-    stream.flush().await
-        .map_err(|e| format!("Flush error: {}", e))?;
+            let request = Value::Dictionary(Arc::new(Mutex::new(req_fields)));
 
-    Ok(())
+            // Reset VM state for clean execution (reuse allocation)
+            vm.reset();
+            
+            // Call the handler using the reused VM
+            match vm.run_handler(handler_fn, request, Some(&script_dir)).await {
+                Ok(result) => build_http_response(&result),
+                Err(e) => {
+                    eprintln!("\n{}", e);
+                    format!(
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nHandler error: {}",
+                        e
+                    )
+                }
+            }
+        } else {
+            format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found: {} {}",
+                method, full_path
+            )
+        };
+
+        // Write response
+        if stream.write_all(response.as_bytes()).await.is_err() {
+            return Ok(());
+        }
+        if stream.flush().await.is_err() {
+            return Ok(());
+        }
+
+        // If client requested connection close, break the loop
+        if connection_close {
+            return Ok(());
+        }
+    }
 }
 
 /// Find a matching route handler and extract path parameters
@@ -675,15 +658,23 @@ fn find_matching_route(
 ) -> (Option<Value>, HashMap<String, Value>) {
     let mut params: HashMap<String, Value> = HashMap::new();
 
+    // Build route key on stack to avoid allocation 
+    // (method max ~7 chars + ":" + path typically < 256 chars)
+    let mut key_buf = String::with_capacity(method.len() + 1 + path.len());
+    key_buf.push_str(method);
+    key_buf.push(':');
+    key_buf.push_str(path);
+    
     // Try exact match first
-    let route_key = format!("{}:{}", method, path);
-    if let Some(handler) = routes.get(&route_key) {
+    if let Some(handler) = routes.get(&key_buf) {
         return (Some(handler.clone()), params);
     }
 
-    // Try ALL method
-    let all_key = format!("ALL:{}", path);
-    if let Some(handler) = routes.get(&all_key) {
+    // Try ALL method - reuse buffer
+    key_buf.clear();
+    key_buf.push_str("ALL:");
+    key_buf.push_str(path);
+    if let Some(handler) = routes.get(&key_buf) {
         return (Some(handler.clone()), params);
     }
 
@@ -777,6 +768,8 @@ fn match_route_pattern(pattern: &str, path: &str) -> Option<HashMap<String, Valu
 
 /// Build HTTP response from handler return value
 fn build_http_response(result: &Value) -> String {
+    use std::fmt::Write;
+    
     let (status, body, headers) = match result {
         Value::Dictionary(dict) => {
             let dict_guard = dict.lock().unwrap();
@@ -831,22 +824,25 @@ fn build_http_response(result: &Value) -> String {
         _ => "OK",
     };
 
-    let mut response = format!("HTTP/1.1 {} {}\r\n", status, status_text);
-    response.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    // Pre-allocate response buffer (headers ~200 bytes typical + body)
+    let mut response = String::with_capacity(256 + body.len());
+    
+    // Use write! macro - more efficient than format! for building strings
+    let _ = write!(response, "HTTP/1.1 {} {}\r\n", status, status_text);
+    let _ = write!(response, "Content-Length: {}\r\n", body.len());
 
     for (key, value) in &headers {
-        response.push_str(&format!("{}: {}\r\n", key, value));
+        let _ = write!(response, "{}: {}\r\n", key, value);
     }
 
     if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
         response.push_str("Content-Type: text/plain; charset=utf-8\r\n");
     }
 
-    // Close connection after response (no keep-alive for simplicity)
-    response.push_str("Connection: close\r\n");
+    // Keep connection alive for better performance (HTTP/1.1 default)
+    response.push_str("Connection: keep-alive\r\n");
 
     response.push_str("\r\n");
     response.push_str(&body);
-
     response
 }
