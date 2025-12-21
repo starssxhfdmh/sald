@@ -130,22 +130,150 @@ unsafe impl Sync for SendConstPtr {}
 
 struct CallbackInfo {
     func: Value,
-    #[allow(dead_code)]
     arg_types: Vec<CType>,
-    #[allow(dead_code)]
     return_type: CType,
 }
 
 static CALLBACK_REGISTRY: RwLock<Option<HashMap<i64, CallbackInfo>>> = RwLock::new(None);
 static NEXT_CALLBACK_ID: Mutex<i64> = Mutex::new(1);
 
-static GLOBAL_CALLER_PTR: Mutex<Option<SendPtr>> = Mutex::new(None);
-static GLOBAL_CALLER_VTABLE: Mutex<Option<SendConstPtr>> = Mutex::new(None);
+static GLOBAL_CALLER_PTR: Mutex<Vec<SendPtr>> = Mutex::new(Vec::new());
+static GLOBAL_CALLER_VTABLE: Mutex<Vec<SendConstPtr>> = Mutex::new(Vec::new());
 
 fn init_registry() {
     let mut reg = CALLBACK_REGISTRY.write().unwrap();
     if reg.is_none() {
         *reg = Some(HashMap::new());
+    }
+}
+
+// Storage for libffi closures - must be kept alive while callback is in use
+static CLOSURE_REGISTRY: RwLock<Option<HashMap<i64, ClosureData>>> = RwLock::new(None);
+
+struct ClosureData {
+    #[allow(dead_code)]
+    cif: Cif,
+    #[allow(dead_code)]
+    closure: libffi::middle::Closure<'static>,
+    #[allow(dead_code)]
+    code_ptr: usize,  // Store as usize to avoid lifetime issues
+}
+
+// Ensure ClosureData is Send+Sync  
+unsafe impl Send for ClosureData {}
+unsafe impl Sync for ClosureData {}
+
+fn init_closure_registry() {
+    let mut reg = CLOSURE_REGISTRY.write().unwrap();
+    if reg.is_none() {
+        *reg = Some(HashMap::new());
+    }
+}
+
+/// Generic callback handler that libffi closures call
+/// This function is called by the trampoline with raw args
+extern "C" fn closure_handler(
+    _cif: &libffi::low::ffi_cif,
+    result: &mut u64,
+    args: *const *const c_void,
+    userdata: &i64,
+) {
+    let callback_id = *userdata;
+    
+    // Get callback info
+    let (callback_fn, arg_types, return_type) = {
+        let reg = CALLBACK_REGISTRY.read().unwrap();
+        if let Some(ref map) = *reg {
+            if let Some(info) = map.get(&callback_id) {
+                (info.func.clone(), info.arg_types.clone(), info.return_type.clone())
+            } else {
+                eprintln!("[FFI] Callback {} not found", callback_id);
+                *result = 0;
+                return;
+            }
+        } else {
+            eprintln!("[FFI] Callback registry not initialized");
+            *result = 0;
+            return;
+        }
+    };
+    
+    // Get global caller from top of stack
+    let (data_ptr, vtable_ptr) = {
+        let ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
+        let vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+        match (ptr_guard.last(), vtable_guard.last()) {
+            (Some(SendPtr(p)), Some(SendConstPtr(v))) => (*p, *v),
+            _ => {
+                eprintln!("[FFI] No active caller for callback");
+                *result = 0;
+                return;
+            }
+        }
+    };
+    
+    let caller: &mut dyn ValueCaller = unsafe {
+        let fat_ptr: [*const (); 2] = [data_ptr as *const (), vtable_ptr];
+        let trait_ptr = std::ptr::read(&fat_ptr as *const _ as *const *mut dyn ValueCaller);
+        &mut *trait_ptr
+    };
+    
+    // Convert C args to Sald Values based on arg_types
+    let mut sald_args = Vec::with_capacity(arg_types.len());
+    for (i, arg_type) in arg_types.iter().enumerate() {
+        let arg_ptr = unsafe { *args.add(i) };
+        let value = match arg_type {
+            CType::I8 => Value::Number(unsafe { *(arg_ptr as *const i8) } as f64),
+            CType::U8 => Value::Number(unsafe { *(arg_ptr as *const u8) } as f64),
+            CType::I16 => Value::Number(unsafe { *(arg_ptr as *const i16) } as f64),
+            CType::U16 => Value::Number(unsafe { *(arg_ptr as *const u16) } as f64),
+            CType::I32 => Value::Number(unsafe { *(arg_ptr as *const i32) } as f64),
+            CType::U32 => Value::Number(unsafe { *(arg_ptr as *const u32) } as f64),
+            CType::I64 => Value::Number(unsafe { *(arg_ptr as *const i64) } as f64),
+            CType::U64 => Value::Number(unsafe { *(arg_ptr as *const u64) } as f64),
+            CType::F32 => Value::Number(unsafe { *(arg_ptr as *const f32) } as f64),
+            CType::F64 => Value::Number(unsafe { *(arg_ptr as *const f64) }),
+            CType::Pointer => Value::Number(unsafe { *(arg_ptr as *const usize) } as f64),
+            CType::CString => {
+                let ptr = unsafe { *(arg_ptr as *const *const i8) };
+                if ptr.is_null() {
+                    Value::Null
+                } else {
+                    let cstr = unsafe { CStr::from_ptr(ptr) };
+                    Value::String(Arc::new(cstr.to_string_lossy().to_string()))
+                }
+            }
+            CType::Void => Value::Null,
+        };
+        sald_args.push(value);
+    }
+    
+    // Call the Sald function
+    match caller.call(&callback_fn, sald_args) {
+        Ok(ret_val) => {
+            // Convert return value based on return_type
+            *result = match (&return_type, &ret_val) {
+                (CType::Void, _) => 0,
+                (CType::I8, Value::Number(n)) => *n as i8 as u64,
+                (CType::U8, Value::Number(n)) => *n as u8 as u64,
+                (CType::I16, Value::Number(n)) => *n as i16 as u64,
+                (CType::U16, Value::Number(n)) => *n as u16 as u64,
+                (CType::I32, Value::Number(n)) => *n as i32 as u64,
+                (CType::U32, Value::Number(n)) => *n as u32 as u64,
+                (CType::I64, Value::Number(n)) => *n as i64 as u64,
+                (CType::U64, Value::Number(n)) => *n as u64,
+                (CType::F32, Value::Number(n)) => (*n as f32).to_bits() as u64,
+                (CType::F64, Value::Number(n)) => n.to_bits(),
+                (CType::Pointer, Value::Number(n)) => *n as usize as u64,
+                (_, Value::Boolean(b)) => if *b { 1 } else { 0 },
+                (_, Value::Null) => 0,
+                _ => 0,
+            };
+        }
+        Err(e) => {
+            eprintln!("[FFI] Callback error: {}", e);
+            *result = 0;
+        }
     }
 }
 
@@ -186,17 +314,19 @@ fn set_global_caller(caller: &mut dyn ValueCaller) {
         (*fat_ptr_bytes)[1] as *const ()
     };
 
+    // Push onto stack for nested/reentrant call support
     let mut ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
     let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
-    *ptr_guard = Some(SendPtr(data_ptr));
-    *vtable_guard = Some(SendConstPtr(vtable_ptr));
+    ptr_guard.push(SendPtr(data_ptr));
+    vtable_guard.push(SendConstPtr(vtable_ptr));
 }
 
 fn clear_global_caller() {
+    // Pop from stack (restore previous caller if any)
     let mut ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
     let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
-    *ptr_guard = None;
-    *vtable_guard = None;
+    ptr_guard.pop();
+    vtable_guard.pop();
 }
 
 #[no_mangle]
@@ -212,7 +342,7 @@ pub extern "C" fn sald_invoke_callback(callback_id: i64, arg_count: i64, args: *
     let (data_ptr, vtable_ptr) = {
         let ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
         let vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
-        match (&*ptr_guard, &*vtable_guard) {
+        match (ptr_guard.last(), vtable_guard.last()) {
             (Some(SendPtr(p)), Some(SendConstPtr(v))) => (*p, *v),
             _ => {
                 eprintln!("[FFI] No active caller for callback");
@@ -830,31 +960,43 @@ fn library_call(
     set_global_caller(caller);
 
     let result = if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
-        if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
-            let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
-            if ptr.is_null() {
-                Err("Library has been closed".to_string())
-            } else {
-                unsafe {
-                    let lib_mutex = &*ptr;
-                    let lib_guard = lib_mutex.lock().unwrap();
-
-                    let fn_name_c = CString::new(fn_name.as_str())
-                        .map_err(|_| "Invalid function name")?;
-
-                    let func_ptr: Symbol<*const c_void> = lib_guard
-                        .library
-                        .get(fn_name_c.as_bytes_with_nul())
-                        .map_err(|e| format!("Function '{}' not found: {}", fn_name, e))?;
-
-                    let func_ptr = *func_ptr;
-
-                    call_with_types(func_ptr, &call_values, &arg_types, &return_type)
+        // Get handle pointer and release Instance lock immediately
+        let lib_ptr = {
+            let inst_guard = inst.lock().unwrap();
+            if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
+                let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
+                if ptr.is_null() {
+                    return Err("Library has been closed".to_string());
                 }
+                ptr
+            } else {
+                return Err("Invalid library instance".to_string());
             }
-        } else {
-            Err("Invalid library instance".to_string())
+            // inst_guard is dropped here, releasing the Instance lock
+        };
+
+        unsafe {
+            let lib_mutex = &*lib_ptr;
+            
+            // Get function pointer while holding the library lock
+            let func_ptr = {
+                let lib_guard = lib_mutex.lock().unwrap();
+
+                let fn_name_c = CString::new(fn_name.as_str())
+                    .map_err(|_| "Invalid function name")?;
+
+                let func_ptr: Symbol<*const c_void> = lib_guard
+                    .library
+                    .get(fn_name_c.as_bytes_with_nul())
+                    .map_err(|e| format!("Function '{}' not found: {}", fn_name, e))?;
+
+                *func_ptr
+                // lib_guard is dropped here, releasing the library lock
+            };
+
+            // Call FFI function WITHOUT holding ANY locks
+            // This allows nested/reentrant calls from callbacks
+            call_with_types(func_ptr, &call_values, &arg_types, &return_type)
         }
     } else {
         Err("Invalid library instance".to_string())
@@ -971,7 +1113,7 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
     };
 
     // Parse argument types
-    let arg_types = match options.get("args") {
+    let arg_types: Vec<CType> = match options.get("args") {
         Some(Value::Array(arr)) => {
             let arr_guard = arr.lock().unwrap();
             let mut types = Vec::new();
@@ -1001,16 +1143,48 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
         None => return Err("Missing 'fn' field in Callback options".to_string()),
     };
 
-    // Register callback
-    let callback_id = register_callback(func, arg_types, return_type);
-    let invoker_ptr = sald_get_callback_invoker() as usize;
+    // Register callback in callback registry
+    let callback_id = register_callback(func, arg_types.clone(), return_type.clone());
+    
+    // Build libffi Cif with the correct argument types
+    let ffi_arg_types: Vec<FfiType> = arg_types.iter().map(|t| t.to_ffi_type()).collect();
+    let ffi_return_type = return_type.to_ffi_type();
+    let cif = Cif::new(ffi_arg_types, ffi_return_type);
+    
+    // Create the libffi closure with callback_id as userdata
+    // The closure will call closure_handler when invoked
+    init_closure_registry();
+    
+    // Box the callback_id so it has a stable address
+    let callback_id_box = Box::new(callback_id);
+    let callback_id_ref: &'static i64 = Box::leak(callback_id_box);
+    
+    let closure = libffi::middle::Closure::new(cif.clone(), closure_handler, callback_id_ref);
+    // Get the executable code pointer from the closure
+    // closure.code_ptr() returns &unsafe extern "C" fn() - we need the address of that function
+    let code_ptr_value = unsafe {
+        let fn_ptr: unsafe extern "C" fn() = *closure.code_ptr();
+        std::mem::transmute::<unsafe extern "C" fn(), usize>(fn_ptr)
+    };
+    
+    // Store closure data to keep it alive
+    {
+        let mut reg = CLOSURE_REGISTRY.write().unwrap();
+        if let Some(ref mut map) = *reg {
+            map.insert(callback_id, ClosureData {
+                cif,
+                closure,
+                code_ptr: code_ptr_value,
+            });
+        }
+    }
 
     // Create callback instance
     let callback_class = Arc::new(create_callback_class());
     let mut instance = Instance::new(callback_class);
 
     instance.fields.insert("_id".to_string(), Value::Number(callback_id as f64));
-    instance.fields.insert("_invoker".to_string(), Value::Number(invoker_ptr as f64));
+    instance.fields.insert("_code_ptr".to_string(), Value::Number(code_ptr_value as f64));
     instance.fields.insert("_released".to_string(), Value::Boolean(false));
 
     Ok(Value::Instance(Arc::new(Mutex::new(instance))))
@@ -1025,9 +1199,9 @@ fn callback_ptr(recv: &Value, _args: &[Value]) -> Result<Value, String> {
             return Err("Callback has been released".to_string());
         }
 
-        // Return the invoker pointer - C code calls this with callback_id as first arg
-        if let Some(Value::Number(invoker)) = inst_guard.fields.get("_invoker") {
-            return Ok(Value::Number(*invoker));
+        // Return the closure's code pointer - this is the trampoline address
+        if let Some(Value::Number(code_ptr)) = inst_guard.fields.get("_code_ptr") {
+            return Ok(Value::Number(*code_ptr));
         }
     }
     Err("Invalid callback instance".to_string())
@@ -1059,7 +1233,15 @@ fn callback_release(recv: &Value, _args: &[Value]) -> Result<Value, String> {
         }
 
         if let Some(Value::Number(id)) = inst_guard.fields.get("_id") {
-            unregister_callback(*id as i64);
+            let callback_id = *id as i64;
+            unregister_callback(callback_id);
+            
+            // Also remove from closure registry to free the closure
+            if let Ok(mut reg) = CLOSURE_REGISTRY.write() {
+                if let Some(ref mut map) = *reg {
+                    map.remove(&callback_id);
+                }
+            }
         }
 
         inst_guard.fields.insert("_released".to_string(), Value::Boolean(true));
