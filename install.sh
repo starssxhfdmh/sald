@@ -16,35 +16,72 @@ INSTALL_DIR="$HOME/.sald"
 BIN_DIR="$INSTALL_DIR/bin"
 TEMP_DIR="/tmp/sald-install-$$"
 
-# Detect OS and set binary suffix
+# Detect OS and architecture with proper priority
 detect_os() {
     OS=""
     EXT=""
+    ARCH=""
     
-    case "$(uname -s)" in
-        Linux*)
-            # Check if running on Windows via MSYS2/Git Bash/Cygwin
-            if [ -n "$MSYSTEM" ] || [ -n "$CYGWIN" ] || uname -r | grep -qi microsoft; then
-                OS="windows"
-                EXT=".exe"
-            else
-                OS="linux"
-                EXT=""
-            fi
+    # Detect architecture first
+    case "$(uname -m)" in
+        x86_64|amd64)
+            ARCH="x86_64"
             ;;
-        Darwin*)
-            echo -e "  ${RED}macOS is not yet supported${RESET}"
-            exit 1
-            ;;
-        CYGWIN*|MINGW*|MSYS*)
-            OS="windows"
-            EXT=".exe"
+        aarch64|arm64)
+            ARCH="arm64"
             ;;
         *)
-            echo -e "  ${RED}Unsupported OS: $(uname -s)${RESET}"
+            echo -e "  ${RED}Unsupported architecture: $(uname -m)${RESET}"
             exit 1
             ;;
     esac
+    
+    # Detect OS with proper priority
+    # Check Windows environments first (highest priority)
+    if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
+        OS="windows"
+        EXT=".exe"
+    elif [ -n "$MSYSTEM" ]; then
+        # MSYS2 environment (Git Bash on Windows)
+        OS="windows"
+        EXT=".exe"
+    elif uname -r | grep -qi microsoft; then
+        # WSL (Windows Subsystem for Linux)
+        # WSL should use Linux binaries, not Windows
+        OS="linux"
+        EXT=""
+    else
+        # Pure Unix-like systems
+        case "$(uname -s)" in
+            Linux*)
+                OS="linux"
+                EXT=""
+                ;;
+            Darwin*)
+                OS="darwin"
+                EXT=""
+                # Check if macOS is supported
+                echo -e "  ${RED}macOS is not yet supported${RESET}"
+                exit 1
+                ;;
+            FreeBSD*)
+                echo -e "  ${RED}FreeBSD is not yet supported${RESET}"
+                exit 1
+                ;;
+            *)
+                echo -e "  ${RED}Unsupported OS: $(uname -s)${RESET}"
+                exit 1
+                ;;
+        esac
+    fi
+    
+    # Verify detection
+    if [ -z "$OS" ] || [ -z "$ARCH" ]; then
+        echo -e "  ${RED}Failed to detect OS or architecture${RESET}"
+        echo -e "  ${DIM}OS: $(uname -s), Arch: $(uname -m)${RESET}"
+        echo -e "  ${DIM}OSTYPE: ${OSTYPE:-not set}${RESET}"
+        exit 1
+    fi
 }
 
 # Progress bar
@@ -94,7 +131,7 @@ main() {
 
     # Detect OS
     detect_os
-    echo -e "  ${DIM}Platform: ${OS}-x86_64${RESET}"
+    echo -e "  ${DIM}Platform: ${OS}-${ARCH}${RESET}"
 
     # Get latest version
     echo -e "  ${DIM}Fetching latest version...${RESET}"
@@ -112,7 +149,7 @@ main() {
     trap "rm -rf $TEMP_DIR" EXIT
 
     BASE_URL="https://github.com/$REPO/releases/download/$VERSION"
-    SUFFIX="${OS}-x86_64${EXT}"
+    SUFFIX="${OS}-${ARCH}${EXT}"
     
     # Download binaries with progress
     echo -e "  ${DIM}Downloading...${RESET}"
