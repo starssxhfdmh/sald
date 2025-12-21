@@ -6,6 +6,7 @@ use super::opcode::OpCode;
 use crate::ast::*;
 use crate::error::{SaldError, SaldResult, Span};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Result type for constant folding at compile time
 #[derive(Debug, Clone)]
@@ -307,7 +308,7 @@ impl Compiler {
 
             let const_idx = self
                 .current_chunk()
-                .add_constant(Constant::String(property.to_string()));
+                .add_constant(Constant::String(Arc::new(property.to_string())));
             self.emit_op(OpCode::SetProperty, span);
             self.emit_u16(const_idx as u16, span);
             self.emit_op(OpCode::Pop, span);
@@ -328,7 +329,7 @@ impl Compiler {
             // Global variable
             let const_idx = self
                 .current_chunk()
-                .add_constant(Constant::String(name.to_string()));
+                .add_constant(Constant::String(Arc::new(name.to_string())));
             self.emit_op(OpCode::DefineGlobal, span);
             self.emit_u16(const_idx as u16, span);
         }
@@ -367,7 +368,7 @@ impl Compiler {
                     } else {
                         let const_idx = self
                             .current_chunk()
-                            .add_constant(Constant::String(name.to_string()));
+                            .add_constant(Constant::String(Arc::new(name.to_string())));
                         self.emit_op(OpCode::DefineGlobal, span);
                         self.emit_u16(const_idx as u16, span);
                     }
@@ -383,7 +384,7 @@ impl Compiler {
                     // Call slice method - need to invoke the slice builtin
                     // For simplicity, we'll use GetIndex with a special marker
                     // Actually, let's just call the slice method directly
-                    let slice_name = self.current_chunk().add_constant(Constant::String("slice".to_string()));
+                    let slice_name = self.current_chunk().add_constant(Constant::String(Arc::new("slice".to_string())));
                     self.emit_op(OpCode::Invoke, span);
                     self.emit_u16(slice_name as u16, span);
                     self.emit_u16(1, span); // 1 arg (start index only, to end)
@@ -395,7 +396,7 @@ impl Compiler {
                     } else {
                         let const_idx = self
                             .current_chunk()
-                            .add_constant(Constant::String(name.to_string()));
+                            .add_constant(Constant::String(Arc::new(name.to_string())));
                         self.emit_op(OpCode::DefineGlobal, span);
                         self.emit_u16(const_idx as u16, span);
                     }
@@ -573,7 +574,7 @@ impl Compiler {
             // Call .length() via Invoke
             let length_const = self
                 .current_chunk()
-                .add_constant(Constant::String("length".to_string()));
+                .add_constant(Constant::String(Arc::new("length".to_string())));
             self.emit_op(OpCode::Invoke, span);
             self.emit_u16(length_const as u16, span);
             self.emit_u16(0, span); // 0 arguments
@@ -784,7 +785,7 @@ impl Compiler {
                 // Look up decorator by name
                 let decorator_name_const = self
                     .current_chunk()
-                    .add_constant(Constant::String(decorator.name.clone()));
+                    .add_constant(Constant::String(Arc::new(decorator.name.clone())));
                 self.emit_op(OpCode::GetGlobal, func_span);
                 self.emit_u16(decorator_name_const as u16, func_span);
                 
@@ -815,7 +816,7 @@ impl Compiler {
             if self.current_scope().scope_depth == 0 {
                 let name_const = self
                     .current_chunk()
-                    .add_constant(Constant::String(def.name.clone()));
+                    .add_constant(Constant::String(Arc::new(def.name.clone())));
                 self.emit_op(OpCode::DefineGlobal, func_span);
                 self.emit_u16(name_const as u16, func_span);
             }
@@ -861,7 +862,7 @@ impl Compiler {
         // Emit class instruction
         let name_const = self
             .current_chunk()
-            .add_constant(Constant::String(def.name.clone()));
+            .add_constant(Constant::String(Arc::new(def.name.clone())));
         self.emit_op(OpCode::Class, class_span);
         self.emit_u16(name_const as u16, class_span);
 
@@ -872,7 +873,7 @@ impl Compiler {
             // Get superclass
             let super_const = self
                 .current_chunk()
-                .add_constant(Constant::String(superclass.clone()));
+                .add_constant(Constant::String(Arc::new(superclass.clone())));
             self.emit_op(OpCode::GetGlobal, class_span);
             self.emit_u16(super_const as u16, class_span);
 
@@ -889,7 +890,7 @@ impl Compiler {
         // Now define/update global with the fully constructed class
         let name_const2 = self
             .current_chunk()
-            .add_constant(Constant::String(def.name.clone()));
+            .add_constant(Constant::String(Arc::new(def.name.clone())));
         self.emit_op(OpCode::DefineGlobal, class_span);
         self.emit_u16(name_const2 as u16, class_span);
 
@@ -1040,7 +1041,7 @@ impl Compiler {
         // Const is always global (for export/namespace purposes)
         let const_idx = self
             .current_chunk()
-            .add_constant(Constant::String(name.to_string()));
+            .add_constant(Constant::String(Arc::new(name.to_string())));
         self.emit_op(OpCode::DefineGlobal, span);
         self.emit_u16(const_idx as u16, span);
 
@@ -1107,7 +1108,7 @@ impl Compiler {
         // Add let/const variables (get from locals)
         for (var_name, var_span) in &namespace_vars {
             // Push key
-            let key_idx = self.current_chunk().add_constant(Constant::String(var_name.clone()));
+            let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(var_name.clone())));
             self.emit_op(OpCode::Constant, *var_span);
             self.emit_u16(key_idx as u16, *var_span);
             // Get value from local
@@ -1123,7 +1124,7 @@ impl Compiler {
             match stmt {
                 Stmt::Function { def } => {
                     // Push key
-                    let key_idx = self.current_chunk().add_constant(Constant::String(def.name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(def.name.clone())));
                     self.emit_op(OpCode::Constant, def.span);
                     self.emit_u16(key_idx as u16, def.span);
                     // Compile function as closure (can capture namespace locals as upvalues)
@@ -1132,7 +1133,7 @@ impl Compiler {
                 }
                 Stmt::Class { def } => {
                     // Push key
-                    let key_idx = self.current_chunk().add_constant(Constant::String(def.name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(def.name.clone())));
                     self.emit_op(OpCode::Constant, def.span);
                     self.emit_u16(key_idx as u16, def.span);
                     // Compile class and leave on stack
@@ -1141,7 +1142,7 @@ impl Compiler {
                 }
                 Stmt::Namespace { name: ns_name, body: ns_body, span: ns_span } => {
                     // Push key
-                    let key_idx = self.current_chunk().add_constant(Constant::String(ns_name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(ns_name.clone())));
                     self.emit_op(OpCode::Constant, *ns_span);
                     self.emit_u16(key_idx as u16, *ns_span);
                     // Recursively compile nested namespace (builds dict, leaves on stack)
@@ -1150,7 +1151,7 @@ impl Compiler {
                 }
                 Stmt::Enum { name: enum_name, variants, span: enum_span } => {
                     // Push key
-                    let key_idx = self.current_chunk().add_constant(Constant::String(enum_name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(enum_name.clone())));
                     self.emit_op(OpCode::Constant, *enum_span);
                     self.emit_u16(key_idx as u16, *enum_span);
                     // Compile enum as dict, leave on stack
@@ -1210,7 +1211,7 @@ impl Compiler {
         self.emit_u16(0, span);
         
         // Define the result as global
-        let name_idx = self.current_chunk().add_constant(Constant::String(name.to_string()));
+        let name_idx = self.current_chunk().add_constant(Constant::String(Arc::new(name.to_string())));
         self.emit_op(OpCode::DefineGlobal, span);
         self.emit_u16(name_idx as u16, span);
         
@@ -1268,7 +1269,7 @@ impl Compiler {
         
         // Add let/const variables (get from locals)
         for (var_name, var_span) in &namespace_vars {
-            let key_idx = self.current_chunk().add_constant(Constant::String(var_name.clone()));
+            let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(var_name.clone())));
             self.emit_op(OpCode::Constant, *var_span);
             self.emit_u16(key_idx as u16, *var_span);
             if let Some(slot) = self.resolve_local(var_name) {
@@ -1282,28 +1283,28 @@ impl Compiler {
         for stmt in body {
             match stmt {
                 Stmt::Function { def } => {
-                    let key_idx = self.current_chunk().add_constant(Constant::String(def.name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(def.name.clone())));
                     self.emit_op(OpCode::Constant, def.span);
                     self.emit_u16(key_idx as u16, def.span);
                     self.compile_namespace_function(def)?;
                     member_count += 1;
                 }
                 Stmt::Class { def } => {
-                    let key_idx = self.current_chunk().add_constant(Constant::String(def.name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(def.name.clone())));
                     self.emit_op(OpCode::Constant, def.span);
                     self.emit_u16(key_idx as u16, def.span);
                     self.compile_namespace_class(def)?;
                     member_count += 1;
                 }
                 Stmt::Namespace { name: ns_name, body: ns_body, span: ns_span } => {
-                    let key_idx = self.current_chunk().add_constant(Constant::String(ns_name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(ns_name.clone())));
                     self.emit_op(OpCode::Constant, *ns_span);
                     self.emit_u16(key_idx as u16, *ns_span);
                     self.compile_namespace_inner(ns_name, ns_body, *ns_span)?;
                     member_count += 1;
                 }
                 Stmt::Enum { name: enum_name, variants, span: enum_span } => {
-                    let key_idx = self.current_chunk().add_constant(Constant::String(enum_name.clone()));
+                    let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(enum_name.clone())));
                     self.emit_op(OpCode::Constant, *enum_span);
                     self.emit_u16(key_idx as u16, *enum_span);
                     self.compile_enum_inner(enum_name, variants, *enum_span)?;
@@ -1470,12 +1471,12 @@ impl Compiler {
         let previous_class = self.current_class.clone();
         self.current_class = Some(def.name.clone());
 
-        let name_const = self.current_chunk().add_constant(Constant::String(def.name.clone()));
+        let name_const = self.current_chunk().add_constant(Constant::String(Arc::new(def.name.clone())));
         self.emit_op(OpCode::Class, class_span);
         self.emit_u16(name_const as u16, class_span);
 
         if let Some(superclass) = &def.superclass {
-            let super_const = self.current_chunk().add_constant(Constant::String(superclass.clone()));
+            let super_const = self.current_chunk().add_constant(Constant::String(Arc::new(superclass.clone())));
             self.emit_op(OpCode::GetGlobal, class_span);
             self.emit_u16(super_const as u16, class_span);
             self.emit_op(OpCode::Inherit, class_span);
@@ -1501,7 +1502,7 @@ impl Compiler {
         self.compile_enum_inner(name, variants, span)?;
 
         // Define as global
-        let name_idx = self.current_chunk().add_constant(Constant::String(name.to_string()));
+        let name_idx = self.current_chunk().add_constant(Constant::String(Arc::new(name.to_string())));
         self.emit_op(OpCode::DefineGlobal, span);
         self.emit_u16(name_idx as u16, span);
 
@@ -1512,13 +1513,13 @@ impl Compiler {
     fn compile_enum_inner(&mut self, name: &str, variants: &[String], span: Span) -> SaldResult<()> {
         for variant in variants {
             // Push key (variant name)
-            let key_idx = self.current_chunk().add_constant(Constant::String(variant.clone()));
+            let key_idx = self.current_chunk().add_constant(Constant::String(Arc::new(variant.clone())));
             self.emit_op(OpCode::Constant, span);
             self.emit_u16(key_idx as u16, span);
 
             // Push value ("EnumName.Variant")
             let value = format!("{}.{}", name, variant);
-            let val_idx = self.current_chunk().add_constant(Constant::String(value));
+            let val_idx = self.current_chunk().add_constant(Constant::String(Arc::new(value)));
             self.emit_op(OpCode::Constant, span);
             self.emit_u16(val_idx as u16, span);
         }
@@ -1590,7 +1591,7 @@ impl Compiler {
                         }
                         let const_idx = self
                             .current_chunk()
-                            .add_constant(Constant::String(property.clone()));
+                            .add_constant(Constant::String(Arc::new(property.clone())));
                         self.emit_op(OpCode::Invoke, *span);
                         self.emit_u16(const_idx as u16, *span);
                         self.emit_u16(args.len() as u16, *span);
@@ -1602,7 +1603,7 @@ impl Compiler {
                         }
                         let const_idx = self
                             .current_chunk()
-                            .add_constant(Constant::String(property.clone()));
+                            .add_constant(Constant::String(Arc::new(property.clone())));
                         self.emit_op(OpCode::Invoke, *span);
                         self.emit_u16(const_idx as u16, *span);
                         self.emit_u16(args.len() as u16, *span);
@@ -1646,7 +1647,7 @@ impl Compiler {
                     // 6. Do normal property access on obj already on stack
                     let const_idx = self
                         .current_chunk()
-                        .add_constant(Constant::String(property.clone()));
+                        .add_constant(Constant::String(Arc::new(property.clone())));
                     self.emit_op(OpCode::GetProperty, *span);
                     self.emit_u16(const_idx as u16, *span);
                     // Stack: [prop_value]
@@ -1655,7 +1656,7 @@ impl Compiler {
                 } else {
                     let const_idx = self
                         .current_chunk()
-                        .add_constant(Constant::String(property.clone()));
+                        .add_constant(Constant::String(Arc::new(property.clone())));
                     self.emit_op(OpCode::GetProperty, *span);
                     self.emit_u16(const_idx as u16, *span);
                 }
@@ -2001,7 +2002,7 @@ impl Compiler {
                 // Get array length
                 self.emit_op(OpCode::GetLocal, span);
                 self.emit_u16(value_slot as u16, span);
-                let length_idx = self.current_chunk().add_constant(Constant::String("length".to_string()));
+                let length_idx = self.current_chunk().add_constant(Constant::String(Arc::new("length".to_string())));
                 self.emit_op(OpCode::Invoke, span);
                 self.emit_u16(length_idx as u16, span);
                 self.emit_u16(0, span);
@@ -2030,7 +2031,7 @@ impl Compiler {
                     self.emit_op(OpCode::GetLocal, span);
                     self.emit_u16(value_slot as u16, span);
                     let key = &entries[0].0;
-                    let key_const = self.current_chunk().add_constant(Constant::String(key.clone()));
+                    let key_const = self.current_chunk().add_constant(Constant::String(Arc::new(key.clone())));
                     self.emit_op(OpCode::Constant, span);
                     self.emit_u16(key_const as u16, span);
                     self.emit_op(OpCode::GetIndex, span);
@@ -2148,7 +2149,7 @@ impl Compiler {
                             let idx_const = self.current_chunk().add_constant(Constant::Number(idx as f64));
                             self.emit_op(OpCode::Constant, span);
                             self.emit_u16(idx_const as u16, span);
-                            let slice_idx = self.current_chunk().add_constant(Constant::String("slice".to_string()));
+                            let slice_idx = self.current_chunk().add_constant(Constant::String(Arc::new("slice".to_string())));
                             self.emit_op(OpCode::Invoke, span);
                             self.emit_u16(slice_idx as u16, span);
                             self.emit_u16(1, span);
@@ -2164,7 +2165,7 @@ impl Compiler {
                     // Get dict[key]
                     self.emit_op(OpCode::GetLocal, span);
                     self.emit_u16(value_slot as u16, span);
-                    let key_const = self.current_chunk().add_constant(Constant::String(key.clone()));
+                    let key_const = self.current_chunk().add_constant(Constant::String(Arc::new(key.clone())));
                     self.emit_op(OpCode::Constant, span);
                     self.emit_u16(key_const as u16, span);
                     self.emit_op(OpCode::GetIndex, span);
@@ -2215,7 +2216,7 @@ impl Compiler {
             Literal::String(s) => {
                 let const_idx = self
                     .current_chunk()
-                    .add_constant(Constant::String(s.clone()));
+                    .add_constant(Constant::String(Arc::new(s.clone())));
                 self.emit_op(OpCode::Constant, span);
                 self.emit_u16(const_idx as u16, span);
             }
@@ -2244,7 +2245,7 @@ impl Compiler {
             // Global variable
             let const_idx = self
                 .current_chunk()
-                .add_constant(Constant::String(name.to_string()));
+                .add_constant(Constant::String(Arc::new(name.to_string())));
             self.emit_op(OpCode::GetGlobal, span);
             self.emit_u16(const_idx as u16, span);
         }
@@ -2307,7 +2308,7 @@ impl Compiler {
                     self.emit_op(if b { OpCode::True } else { OpCode::False }, span);
                 }
                 FoldedValue::String(s) => {
-                    let const_idx = self.current_chunk().add_constant(Constant::String(s));
+                    let const_idx = self.current_chunk().add_constant(Constant::String(Arc::new(s)));
                     self.emit_op(OpCode::Constant, span);
                     self.emit_u16(const_idx as u16, span);
                 }
@@ -2358,7 +2359,7 @@ impl Compiler {
                     self.emit_op(if b { OpCode::True } else { OpCode::False }, span);
                 }
                 FoldedValue::String(s) => {
-                    let const_idx = self.current_chunk().add_constant(Constant::String(s));
+                    let const_idx = self.current_chunk().add_constant(Constant::String(Arc::new(s)));
                     self.emit_op(OpCode::Constant, span);
                     self.emit_u16(const_idx as u16, span);
                 }
@@ -2415,7 +2416,7 @@ impl Compiler {
                 } else {
                     let const_idx = self
                         .current_chunk()
-                        .add_constant(Constant::String(name.clone()));
+                        .add_constant(Constant::String(Arc::new(name.clone())));
                     self.emit_op(OpCode::SetGlobal, span);
                     self.emit_u16(const_idx as u16, span);
                 }
@@ -2429,7 +2430,7 @@ impl Compiler {
                     self.emit_op(OpCode::Dup, span);
                     let const_idx = self
                         .current_chunk()
-                        .add_constant(Constant::String(property.clone()));
+                        .add_constant(Constant::String(Arc::new(property.clone())));
                     self.emit_op(OpCode::GetProperty, span);
                     self.emit_u16(const_idx as u16, span);
                 }
@@ -2447,7 +2448,7 @@ impl Compiler {
 
                 let const_idx = self
                     .current_chunk()
-                    .add_constant(Constant::String(property.clone()));
+                    .add_constant(Constant::String(Arc::new(property.clone())));
                 self.emit_op(OpCode::SetProperty, span);
                 self.emit_u16(const_idx as u16, span);
             }
@@ -2501,7 +2502,7 @@ impl Compiler {
 
         let const_idx = self
             .current_chunk()
-            .add_constant(Constant::String(property.to_string()));
+            .add_constant(Constant::String(Arc::new(property.to_string())));
         self.emit_op(OpCode::SetProperty, span);
         self.emit_u16(const_idx as u16, span);
 
@@ -2762,13 +2763,13 @@ impl Compiler {
         // Add path as constant
         let path_const = self
             .current_chunk()
-            .add_constant(Constant::String(path.to_string()));
+            .add_constant(Constant::String(Arc::new(path.to_string())));
 
         if let Some(alias) = alias {
             // Import with alias: import "file.sald" as Module
             let alias_const = self
                 .current_chunk()
-                .add_constant(Constant::String(alias.to_string()));
+                .add_constant(Constant::String(Arc::new(alias.to_string())));
             self.emit_op(OpCode::ImportAs, span);
             self.emit_u16(path_const as u16, span);
             // Store alias constant in next u16
@@ -2916,7 +2917,7 @@ impl Compiler {
         // Get super method
         let method_const = self
             .current_chunk()
-            .add_constant(Constant::String(method.to_string()));
+            .add_constant(Constant::String(Arc::new(method.to_string())));
         self.emit_op(OpCode::GetSuper, span);
         self.emit_u16(method_const as u16, span);
 
