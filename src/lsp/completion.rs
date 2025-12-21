@@ -391,16 +391,49 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
     },
     BuiltinClass {
         name: "Ffi",
-        doc: "Foreign Function Interface",
+        doc: "Foreign Function Interface for calling native C libraries",
         methods: &[
-            ("load", "load(path)", "Load dynamic library"),
-            ("callback", "callback(fn)", "Register callback function"),
-            ("removeCallback", "removeCallback(id)", "Unregister callback"),
-            ("readString", "readString(ptr)", "Read C string from pointer"),
+            // Library management
+            ("open", "open(path)", "Load a dynamic library (.dll/.so/.dylib)"),
+            // Memory operations
+            ("alloc", "alloc(size)", "Allocate memory"),
+            ("free", "free(ptr)", "Free allocated memory"),
+            ("memcpy", "memcpy(dest, src, size)", "Copy memory"),
+            ("memset", "memset(ptr, value, size)", "Fill memory with value"),
+            // Read operations
+            ("readI8", "readI8(ptr)", "Read signed 8-bit integer"),
+            ("readU8", "readU8(ptr)", "Read unsigned 8-bit integer"),
+            ("readI16", "readI16(ptr)", "Read signed 16-bit integer"),
+            ("readU16", "readU16(ptr)", "Read unsigned 16-bit integer"),
+            ("readI32", "readI32(ptr)", "Read signed 32-bit integer"),
+            ("readU32", "readU32(ptr)", "Read unsigned 32-bit integer"),
+            ("readI64", "readI64(ptr)", "Read signed 64-bit integer"),
+            ("readU64", "readU64(ptr)", "Read unsigned 64-bit integer"),
+            ("readF32", "readF32(ptr)", "Read 32-bit float"),
+            ("readF64", "readF64(ptr)", "Read 64-bit double"),
+            ("readPtr", "readPtr(ptr)", "Read pointer"),
+            ("readString", "readString(ptr)", "Read null-terminated C string"),
+            // Write operations
+            ("writeI8", "writeI8(ptr, value)", "Write signed 8-bit integer"),
+            ("writeU8", "writeU8(ptr, value)", "Write unsigned 8-bit integer"),
+            ("writeI16", "writeI16(ptr, value)", "Write signed 16-bit integer"),
+            ("writeU16", "writeU16(ptr, value)", "Write unsigned 16-bit integer"),
+            ("writeI32", "writeI32(ptr, value)", "Write signed 32-bit integer"),
+            ("writeU32", "writeU32(ptr, value)", "Write unsigned 32-bit integer"),
+            ("writeI64", "writeI64(ptr, value)", "Write signed 64-bit integer"),
+            ("writeU64", "writeU64(ptr, value)", "Write unsigned 64-bit integer"),
+            ("writeF32", "writeF32(ptr, value)", "Write 32-bit float"),
+            ("writeF64", "writeF64(ptr, value)", "Write 64-bit double"),
+            ("writePtr", "writePtr(ptr, value)", "Write pointer"),
+            ("writeString", "writeString(ptr, value)", "Write null-terminated C string"),
+            // Pointer operations
+            ("offset", "offset(ptr, bytes)", "Add byte offset to pointer"),
+            ("sizeof", "sizeof(type)", "Get size of type in bytes"),
+            // Callback class
+            ("Callback", "Callback({ args, returns, fn })", "Create callback for C functions"),
         ],
         properties: &[
             ("NULL", "Null pointer (0)"),
-            ("INVOKER", "Callback invoker pointer"),
         ],
     },
     BuiltinClass {

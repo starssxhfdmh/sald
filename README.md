@@ -72,7 +72,7 @@ g.greet()
 
 ## Documentation
 
-See [DOCS.md](DOCS.md) for the complete language reference.
+See [Documentation](https://starssxhfdmh.github.io/sald-docs/) for the complete language reference.
 
 ## License
 
