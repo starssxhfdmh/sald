@@ -4,12 +4,12 @@
 
 use super::check_arity;
 use crate::vm::value::{Class, NativeStaticFn, SaldFuture, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
 pub fn create_promise_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("all".to_string(), promise_all);
     static_methods.insert("race".to_string(), promise_race);

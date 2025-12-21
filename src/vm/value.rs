@@ -3,7 +3,7 @@
 // Uses Arc/Mutex for thread-safety (async support)
 
 use crate::compiler::Chunk;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -42,7 +42,7 @@ pub enum Value {
     Number(f64),
     String(Arc<String>),
     Array(Arc<Mutex<Vec<Value>>>),
-    Dictionary(Arc<Mutex<HashMap<String, Value>>>),
+    Dictionary(Arc<Mutex<FxHashMap<String, Value>>>),
     Function(Arc<Function>),
     /// Native function with class reference (for static method calls)
     NativeFunction {
@@ -68,14 +68,14 @@ pub enum Value {
     /// For imported modules with alias, module_globals stores the original globals context
     Namespace {
         name: String,
-        members: Arc<Mutex<HashMap<String, Value>>>,
+        members: Arc<Mutex<FxHashMap<String, Value>>>,
         /// Optional: for imported modules, stores the module's globals for proper function scoping
-        module_globals: Option<Arc<std::sync::RwLock<HashMap<String, Value>>>>,
+        module_globals: Option<Arc<std::sync::RwLock<FxHashMap<String, Value>>>>,
     },
     /// Enum value: holds variants as a HashMap
     Enum {
         name: String,
-        variants: Arc<HashMap<String, Value>>,
+        variants: Arc<FxHashMap<String, Value>>,
     },
     /// Spread marker: wraps a value that should be spread as multiple arguments
     SpreadMarker(Box<Value>),
@@ -370,17 +370,17 @@ impl Function {
 pub struct Class {
     pub name: String,
     /// User-defined instance methods
-    pub methods: HashMap<String, Value>,
+    pub methods: FxHashMap<String, Value>,
     /// User-defined static methods
-    pub user_static_methods: HashMap<String, Value>,
+    pub user_static_methods: FxHashMap<String, Value>,
     /// Native static methods (Console.println, Date.now)
-    pub native_static_methods: HashMap<String, NativeStaticFn>,
+    pub native_static_methods: FxHashMap<String, NativeStaticFn>,
     /// Native instance methods (simple, no closure calls needed)
-    pub native_instance_methods: HashMap<String, NativeInstanceFn>,
+    pub native_instance_methods: FxHashMap<String, NativeInstanceFn>,
     /// Callable native instance methods (can call closures: map, filter, forEach, etc.)
-    pub callable_native_instance_methods: HashMap<String, super::caller::CallableNativeInstanceFn>,
+    pub callable_native_instance_methods: FxHashMap<String, super::caller::CallableNativeInstanceFn>,
     /// Native static fields (Math.PI, Math.E)
-    pub native_static_fields: HashMap<String, Value>,
+    pub native_static_fields: FxHashMap<String, Value>,
     /// Constructor for type conversion (e.g., String(42) -> "42")
     pub constructor: Option<NativeConstructorFn>,
     /// Superclass for inheritance
@@ -392,12 +392,12 @@ impl Class {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            methods: HashMap::new(),
-            user_static_methods: HashMap::new(),
-            native_static_methods: HashMap::new(),
-            native_instance_methods: HashMap::new(),
-            callable_native_instance_methods: HashMap::new(),
-            native_static_fields: HashMap::new(),
+            methods: FxHashMap::default(),
+            user_static_methods: FxHashMap::default(),
+            native_static_methods: FxHashMap::default(),
+            native_instance_methods: FxHashMap::default(),
+            callable_native_instance_methods: FxHashMap::default(),
+            native_static_fields: FxHashMap::default(),
             constructor: None,
             superclass: None,
         }
@@ -406,16 +406,16 @@ impl Class {
     /// Create class with native static methods (Console, Type, Date)
     pub fn new_with_static(
         name: impl Into<String>,
-        native_static_methods: HashMap<String, NativeStaticFn>,
+        native_static_methods: FxHashMap<String, NativeStaticFn>,
     ) -> Self {
         Self {
             name: name.into(),
-            methods: HashMap::new(),
-            user_static_methods: HashMap::new(),
+            methods: FxHashMap::default(),
+            user_static_methods: FxHashMap::default(),
             native_static_methods,
-            native_instance_methods: HashMap::new(),
-            callable_native_instance_methods: HashMap::new(),
-            native_static_fields: HashMap::new(),
+            native_instance_methods: FxHashMap::default(),
+            callable_native_instance_methods: FxHashMap::default(),
+            native_static_fields: FxHashMap::default(),
             constructor: None,
             superclass: None,
         }
@@ -424,17 +424,17 @@ impl Class {
     /// Create class with native instance methods (String, Number, Array)
     pub fn new_with_instance(
         name: impl Into<String>,
-        native_instance_methods: HashMap<String, NativeInstanceFn>,
+        native_instance_methods: FxHashMap<String, NativeInstanceFn>,
         constructor: Option<NativeConstructorFn>,
     ) -> Self {
         Self {
             name: name.into(),
-            methods: HashMap::new(),
-            user_static_methods: HashMap::new(),
-            native_static_methods: HashMap::new(),
+            methods: FxHashMap::default(),
+            user_static_methods: FxHashMap::default(),
+            native_static_methods: FxHashMap::default(),
             native_instance_methods,
-            callable_native_instance_methods: HashMap::new(),
-            native_static_fields: HashMap::new(),
+            callable_native_instance_methods: FxHashMap::default(),
+            native_static_fields: FxHashMap::default(),
             constructor,
             superclass: None,
         }
@@ -443,16 +443,16 @@ impl Class {
     /// Create class with native static methods and static fields (Math with PI, E)
     pub fn new_with_static_and_fields(
         name: impl Into<String>,
-        native_static_methods: HashMap<String, NativeStaticFn>,
-        native_static_fields: HashMap<String, Value>,
+        native_static_methods: FxHashMap<String, NativeStaticFn>,
+        native_static_fields: FxHashMap<String, Value>,
     ) -> Self {
         Self {
             name: name.into(),
-            methods: HashMap::new(),
-            user_static_methods: HashMap::new(),
+            methods: FxHashMap::default(),
+            user_static_methods: FxHashMap::default(),
             native_static_methods,
-            native_instance_methods: HashMap::new(),
-            callable_native_instance_methods: HashMap::new(),
+            native_instance_methods: FxHashMap::default(),
+            callable_native_instance_methods: FxHashMap::default(),
             native_static_fields,
             constructor: None,
             superclass: None,
@@ -465,7 +465,7 @@ impl Class {
 pub struct Instance {
     pub class_name: String,
     pub class: Arc<Class>,
-    pub fields: HashMap<String, Value>,
+    pub fields: FxHashMap<String, Value>,
 }
 
 impl Instance {
@@ -473,7 +473,7 @@ impl Instance {
         Self {
             class_name: class.name.clone(),
             class,
-            fields: HashMap::new(),
+            fields: FxHashMap::default(),
         }
     }
 }

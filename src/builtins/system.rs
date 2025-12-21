@@ -3,12 +3,12 @@
 // Uses Arc for thread-safety
 
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 use sysinfo::System;
 
 pub fn create_system_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     // Basic info (no sysinfo needed)
     static_methods.insert("os".to_string(), system_os);
@@ -172,7 +172,7 @@ fn system_boot_time(_args: &[Value]) -> Result<Value, String> {
 fn system_info(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
     
-    let mut info: HashMap<String, Value> = HashMap::new();
+    let mut info: FxHashMap<String, Value> = FxHashMap::default();
     
     // Basic
     info.insert("os".to_string(), Value::String(Arc::new(std::env::consts::OS.to_string())));
@@ -244,7 +244,7 @@ fn system_setenv(args: &[Value]) -> Result<Value, String> {
 
 /// Get all environment variables as dictionary
 fn system_envs(_args: &[Value]) -> Result<Value, String> {
-    let mut envs: HashMap<String, Value> = HashMap::new();
+    let mut envs: FxHashMap<String, Value> = FxHashMap::default();
     
     for (key, value) in std::env::vars() {
         envs.insert(key, Value::String(Arc::new(value)));

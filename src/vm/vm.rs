@@ -3,7 +3,7 @@
 // Uses Arc/Mutex for thread-safe async support
 // Implements suspend/resume for true non-blocking async
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::builtins;
@@ -52,7 +52,7 @@ struct CallFrame {
     /// Class context for private access checking (Some if this is an instance method)
     class_context: Option<String>,
     /// Saved globals for module function calls - restore when this frame pops
-    saved_globals: Option<Arc<RwLock<HashMap<String, Value>>>>,
+    saved_globals: Option<Arc<RwLock<FxHashMap<String, Value>>>>,
 }
 
 impl CallFrame {
@@ -101,7 +101,7 @@ struct ExceptionHandler {
 pub struct VM {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
-    globals: Arc<RwLock<HashMap<String, Value>>>,
+    globals: Arc<RwLock<FxHashMap<String, Value>>>,
     file: String,
     source: String,
     exception_handlers: Vec<ExceptionHandler>,
@@ -1168,11 +1168,11 @@ impl ValueCaller for VM {
         }
     }
 
-    fn get_globals(&self) -> HashMap<String, Value> {
+    fn get_globals(&self) -> FxHashMap<String, Value> {
         self.globals.read().unwrap().clone()
     }
 
-    fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> {
+    fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> {
         self.globals.clone()
     }
 }
@@ -1199,11 +1199,11 @@ impl ValueCaller for VM {
         }
     }
 
-    fn get_globals(&self) -> HashMap<String, Value> {
+    fn get_globals(&self) -> FxHashMap<String, Value> {
         self.globals.read().unwrap().clone()
     }
 
-    fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> {
+    fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> {
         self.globals.clone()
     }
 }
@@ -1230,7 +1230,7 @@ impl VM {
         }
     }
 
-    pub fn new_with_shared_globals(globals: Arc<RwLock<HashMap<String, Value>>>) -> Self {
+    pub fn new_with_shared_globals(globals: Arc<RwLock<FxHashMap<String, Value>>>) -> Self {
         Self {
             stack: Vec::with_capacity(STACK_INIT),
             frames: Vec::with_capacity(FRAMES_INIT),
@@ -1260,8 +1260,8 @@ impl VM {
 
     pub fn set_args(&mut self, args: Vec<String>) { self.args = args; }
     pub fn set_gc_stats_enabled(&mut self, enabled: bool) { self.gc_stats_enabled = enabled; }
-    pub fn get_globals(&self) -> HashMap<String, Value> { self.globals.read().unwrap().clone() }
-    pub fn get_shared_globals(&self) -> Arc<RwLock<HashMap<String, Value>>> { self.globals.clone() }
+    pub fn get_globals(&self) -> FxHashMap<String, Value> { self.globals.read().unwrap().clone() }
+    pub fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> { self.globals.clone() }
     pub fn gc_stats(&self) -> super::gc::GcStats { self.gc.get_stats() }
 
     #[inline(always)]
@@ -1288,7 +1288,7 @@ impl VM {
     }
 
     fn track_array(&mut self, arr: &Arc<Mutex<Vec<Value>>>) { self.gc.track_array(arr); }
-    fn track_dict(&mut self, dict: &Arc<Mutex<HashMap<String, Value>>>) { self.gc.track_dict(dict); }
+    fn track_dict(&mut self, dict: &Arc<Mutex<FxHashMap<String, Value>>>) { self.gc.track_dict(dict); }
     fn track_instance(&mut self, inst: &Arc<Mutex<Instance>>) { self.gc.track_instance(inst); }
 
     // ==================== Private Access Checking ====================
@@ -2086,7 +2086,7 @@ impl VM {
 
     fn handle_build_dict(&mut self) -> SaldResult<()> {
         let count = self.read_u16() as usize;
-        let mut map = HashMap::new();
+        let mut map: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(count, Default::default());
         let mut pairs = Vec::with_capacity(count);
         for _ in 0..count {
             let value = self.stack.pop().unwrap_or(Value::Null);
@@ -2115,7 +2115,7 @@ impl VM {
 
     fn handle_build_namespace(&mut self) -> SaldResult<()> {
         let count = self.read_u16() as usize;
-        let mut members = HashMap::new();
+        let mut members: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(count, Default::default());
         for _ in 0..count {
             let mut value = self.stack.pop().unwrap_or(Value::Null);
             let key = self.stack.pop().unwrap_or(Value::Null);
@@ -2142,7 +2142,7 @@ impl VM {
 
     fn handle_build_enum(&mut self) -> SaldResult<()> {
         let count = self.read_u16() as usize;
-        let mut variants = HashMap::new();
+        let mut variants: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(count, Default::default());
         for _ in 0..count {
             let value = self.stack.pop().unwrap_or(Value::Null);
             let key = self.stack.pop().unwrap_or(Value::Null);
@@ -2246,7 +2246,7 @@ impl VM {
         let (imported_globals, module_globals_arc) = self.import_and_execute_with_globals(&resolved_path)?;
         
         if module_workspace.is_some() { crate::pop_module_workspace(); }
-        let mut module_fields = HashMap::new();
+        let mut module_fields = FxHashMap::default();
         for (name, value) in imported_globals {
             if !matches!(&value, Value::Class(c) if ["String", "Number", "Boolean", "Null", "Array"].contains(&c.name.as_str())) {
                 module_fields.insert(name, value);
@@ -2321,7 +2321,7 @@ impl VM {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn import_and_execute(&mut self, path: &str) -> SaldResult<HashMap<String, Value>> {
+    fn import_and_execute(&mut self, path: &str) -> SaldResult<FxHashMap<String, Value>> {
         let chunk = if path.ends_with(".saldc") {
             let data = std::fs::read(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
             crate::binary::deserialize(&data).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Error deserializing import '{}': {}", path, e)))?
@@ -2371,7 +2371,7 @@ impl VM {
     /// Import and execute a module, returning both the globals HashMap AND the Arc
     /// This preserves the module's globals context for proper function scoping in import-as
     #[cfg(not(target_arch = "wasm32"))]
-    fn import_and_execute_with_globals(&mut self, path: &str) -> SaldResult<(HashMap<String, Value>, Arc<RwLock<HashMap<String, Value>>>)> {
+    fn import_and_execute_with_globals(&mut self, path: &str) -> SaldResult<(FxHashMap<String, Value>, Arc<RwLock<FxHashMap<String, Value>>>)> {
         let chunk = if path.ends_with(".saldc") {
             let data = std::fs::read(path).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Cannot read import file '{}': {}", path, e)))?;
             crate::binary::deserialize(&data).map_err(|e| self.create_error(ErrorKind::ImportError, &format!("Error deserializing import '{}': {}", path, e)))?

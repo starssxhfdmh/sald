@@ -4,7 +4,7 @@
 
 use super::{check_arity, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, SaldFuture, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
@@ -19,7 +19,7 @@ fn resolve_path(path: &str) -> String {
 }
 
 pub fn create_file_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     // Async Read/Write operations (return Future)
     static_methods.insert("read".to_string(), file_read);

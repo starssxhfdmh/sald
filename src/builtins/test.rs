@@ -5,10 +5,10 @@
 use super::check_arity;
 use super::check_arity_min;
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub fn create_test_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("assert".to_string(), test_assert);
     static_methods.insert("assert_eq".to_string(), test_assert_eq);

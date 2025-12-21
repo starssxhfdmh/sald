@@ -13,7 +13,8 @@
 // 3. When collection runs, traces from roots and identifies unreachable cycles
 // 4. Breaks cycles by clearing references in unreachable objects
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex, Weak};
 
 /// GC configuration
@@ -48,7 +49,7 @@ pub enum ObjectType {
 #[derive(Clone)]
 pub enum TrackedObject {
     Array(Weak<Mutex<Vec<super::Value>>>),
-    Dictionary(Weak<Mutex<HashMap<String, super::Value>>>),
+    Dictionary(Weak<Mutex<FxHashMap<String, super::Value>>>),
     Instance(Weak<Mutex<super::Instance>>),
 }
 
@@ -79,7 +80,7 @@ impl TrackedObject {
         }
     }
 
-    pub fn upgrade_dict(&self) -> Option<Arc<Mutex<HashMap<String, super::Value>>>> {
+    pub fn upgrade_dict(&self) -> Option<Arc<Mutex<FxHashMap<String, super::Value>>>> {
         match self {
             TrackedObject::Dictionary(w) => w.upgrade(),
             _ => None,
@@ -126,7 +127,7 @@ pub struct GcHeap {
     /// Counter for unique IDs
     next_id: u64,
     /// All tracked objects (weak references)
-    tracked: HashMap<ObjectId, TrackedObject>,
+    tracked: FxHashMap<ObjectId, TrackedObject>,
     /// Threshold for automatic collection
     threshold: usize,
     /// GC statistics
@@ -139,7 +140,7 @@ impl GcHeap {
     pub fn new() -> Self {
         Self {
             next_id: 0,
-            tracked: HashMap::new(),
+            tracked: FxHashMap::default(),
             threshold: INITIAL_THRESHOLD,
             stats: GcStats::default(),
             collecting: false,
@@ -162,7 +163,7 @@ impl GcHeap {
     }
 
     /// Track a new dictionary
-    pub fn track_dict(&mut self, dict: &Arc<Mutex<HashMap<String, super::Value>>>) -> ObjectId {
+    pub fn track_dict(&mut self, dict: &Arc<Mutex<FxHashMap<String, super::Value>>>) -> ObjectId {
         let id = self.next_id;
         self.next_id += 1;
         self.tracked.insert(id, TrackedObject::Dictionary(Arc::downgrade(dict)));
@@ -216,8 +217,8 @@ impl GcHeap {
     }
 
     /// Mark all reachable objects from roots
-    fn mark_from_roots(&self, roots: &[&super::Value]) -> HashSet<ObjectId> {
-        let mut reachable = HashSet::new();
+    fn mark_from_roots(&self, roots: &[&super::Value]) -> FxHashSet<ObjectId> {
+        let mut reachable = FxHashSet::default();
         let mut worklist: Vec<&super::Value> = roots.iter().copied().collect();
 
         while let Some(value) = worklist.pop() {
@@ -231,7 +232,7 @@ impl GcHeap {
     fn mark_value<'a>(
         &self,
         value: &'a super::Value,
-        reachable: &mut HashSet<ObjectId>,
+        reachable: &mut FxHashSet<ObjectId>,
         _worklist: &mut Vec<&'a super::Value>,
     ) {
         use super::Value;
@@ -301,7 +302,7 @@ impl GcHeap {
     }
 
     /// Break cycles by clearing unreachable objects that are in cycles
-    fn break_cycles(&mut self, reachable: &HashSet<ObjectId>) -> usize {
+    fn break_cycles(&mut self, reachable: &FxHashSet<ObjectId>) -> usize {
         let mut broken = 0;
 
         // Find unreachable objects that still have strong references (cycles)

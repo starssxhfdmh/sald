@@ -99,7 +99,7 @@ impl SymbolTable {
     }
 }
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::path::PathBuf;
 
 /// Workspace-wide index for cross-file symbol tracking
@@ -110,7 +110,7 @@ pub struct WorkspaceIndex {
     exports: DashMap<PathBuf, Vec<Symbol>>,
     /// Symbol references: which files use which symbol names
     /// Key: symbol name, Value: set of files that use this symbol
-    references: DashMap<String, HashSet<PathBuf>>,
+    references: DashMap<String, FxHashSet<PathBuf>>,
     /// Workspace root path
     workspace_root: parking_lot::RwLock<Option<PathBuf>>,
 }
@@ -144,7 +144,7 @@ impl WorkspaceIndex {
         for name in symbol_names {
             self.references
                 .entry(name)
-                .or_insert_with(HashSet::new)
+                .or_insert_with(FxHashSet::default)
                 .insert(file_path.clone());
         }
     }
@@ -160,11 +160,11 @@ impl WorkspaceIndex {
     }
     
     /// Get all exported symbol names for determining if a symbol is exported
-    pub fn get_exported_names(&self, file_path: &PathBuf) -> HashSet<String> {
+    pub fn get_exported_names(&self, file_path: &PathBuf) -> FxHashSet<String> {
         if let Some(exports) = self.exports.get(file_path) {
             exports.iter().map(|s| s.name.clone()).collect()
         } else {
-            HashSet::new()
+            FxHashSet::default()
         }
     }
     

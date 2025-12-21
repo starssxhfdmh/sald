@@ -4,11 +4,11 @@
 
 use super::check_arity;
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 pub fn create_type_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("of".to_string(), type_of);
     static_methods.insert("isString".to_string(), type_is_string);

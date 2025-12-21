@@ -4,12 +4,12 @@
 
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeInstanceFn, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
 pub fn create_string_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     // Static methods
     static_methods.insert("fromCharCode".to_string(), string_from_char_code);

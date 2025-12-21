@@ -4,11 +4,11 @@
 
 use super::check_arity;
 use crate::vm::value::{Class, NativeInstanceFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 pub fn create_number_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
     instance_methods.insert("abs".to_string(), number_abs);
     instance_methods.insert("floor".to_string(), number_floor);

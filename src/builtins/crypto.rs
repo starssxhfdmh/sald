@@ -3,7 +3,7 @@
 
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
 use base64::{Engine, engine::general_purpose};
@@ -14,7 +14,7 @@ type HmacSha256 = Hmac<Sha256>;
 type HmacSha512 = Hmac<Sha512>;
 
 pub fn create_crypto_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("hash".to_string(), crypto_hash);
     static_methods.insert("hmac".to_string(), crypto_hmac);

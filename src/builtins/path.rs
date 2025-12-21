@@ -3,12 +3,12 @@
 // Uses Arc for thread-safety
 
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 pub fn create_path_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("join".to_string(), path_join);
     static_methods.insert("dirname".to_string(), path_dirname);

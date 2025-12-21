@@ -5,11 +5,11 @@
 use super::{check_arity, check_arity_range, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use serde::Serialize;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
 pub fn create_json_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("parse".to_string(), json_parse);
     static_methods.insert("stringify".to_string(), json_stringify);
@@ -67,7 +67,7 @@ fn json_to_sald_value(json: &serde_json::Value) -> Result<Value, String> {
             Ok(Value::Array(Arc::new(Mutex::new(sald_arr?))))
         }
         serde_json::Value::Object(obj) => {
-            let mut map = HashMap::new();
+            let mut map = FxHashMap::default();
             for (key, value) in obj {
                 map.insert(key.clone(), json_to_sald_value(value)?);
             }

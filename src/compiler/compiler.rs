@@ -5,7 +5,7 @@ use super::chunk::{Chunk, Constant, FunctionConstant, UpvalueInfo};
 use super::opcode::OpCode;
 use crate::ast::*;
 use crate::error::{SaldError, SaldResult, Span};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// Result type for constant folding at compile time
@@ -86,7 +86,7 @@ pub struct Compiler {
     source: String,
     had_error: bool,
     class_depth: usize,
-    interfaces: HashMap<String, InterfaceDef>,
+    interfaces: FxHashMap<String, InterfaceDef>,
     current_namespace: Option<String>,
     current_class: Option<String>,
 }
@@ -99,7 +99,7 @@ impl Compiler {
             source: source.into(),
             had_error: false,
             class_depth: 0,
-            interfaces: HashMap::new(),
+            interfaces: FxHashMap::default(),
             current_namespace: None,
             current_class: None,
         }

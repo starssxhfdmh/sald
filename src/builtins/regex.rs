@@ -4,12 +4,12 @@
 use super::{check_arity, check_arity_range, get_string_arg};
 use crate::vm::value::{Class, Instance, NativeInstanceFn, NativeStaticFn, Value};
 use regex::Regex as RustRegex;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
 pub fn create_regex_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
     // Static methods
     static_methods.insert("new".to_string(), regex_new);

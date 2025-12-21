@@ -96,7 +96,7 @@ impl SaldLanguageServer {
         // Pass workspace info for cross-file usage tracking
         if let Some(ref path) = file_path {
             let exported_names = self.workspace_index.get_exported_names(path);
-            let externally_used: std::collections::HashSet<String> = exported_names
+            let externally_used: rustc_hash::FxHashSet<String> = exported_names
                 .iter()
                 .filter(|name| self.workspace_index.is_symbol_used_externally(name, path))
                 .cloned()
@@ -394,7 +394,7 @@ impl SaldLanguageServer {
             .collect();
         
         // Extract properties from method bodies (self.xxx = yyy patterns)
-        let mut seen_props = std::collections::HashSet::new();
+        let mut seen_props = rustc_hash::FxHashSet::default();
         for method in &def.methods {
             self.extract_properties_from_stmts(&method.body, &mut children, &mut seen_props);
         }
@@ -417,13 +417,13 @@ impl SaldLanguageServer {
     }
     
     /// Extract self.xxx = yyy property assignments from statements
-    fn extract_properties_from_stmts(&self, stmts: &[Stmt], children: &mut Vec<Symbol>, seen: &mut std::collections::HashSet<String>) {
+    fn extract_properties_from_stmts(&self, stmts: &[Stmt], children: &mut Vec<Symbol>, seen: &mut rustc_hash::FxHashSet<String>) {
         for stmt in stmts {
             self.extract_properties_from_stmt(stmt, children, seen);
         }
     }
     
-    fn extract_properties_from_stmt(&self, stmt: &Stmt, children: &mut Vec<Symbol>, seen: &mut std::collections::HashSet<String>) {
+    fn extract_properties_from_stmt(&self, stmt: &Stmt, children: &mut Vec<Symbol>, seen: &mut rustc_hash::FxHashSet<String>) {
         match stmt {
             Stmt::Expression { expr, .. } => {
                 self.extract_properties_from_expr(expr, children, seen);
@@ -451,7 +451,7 @@ impl SaldLanguageServer {
         }
     }
     
-    fn extract_properties_from_expr(&self, expr: &Expr, children: &mut Vec<Symbol>, seen: &mut std::collections::HashSet<String>) {
+    fn extract_properties_from_expr(&self, expr: &Expr, children: &mut Vec<Symbol>, seen: &mut rustc_hash::FxHashSet<String>) {
         match expr {
             Expr::Set { object, property, value, span } => {
                 // Check if object is 'self'

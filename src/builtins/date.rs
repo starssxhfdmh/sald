@@ -3,12 +3,12 @@
 
 use super::{check_arity, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn create_date_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("now".to_string(), date_now);
     static_methods.insert("timestamp".to_string(), date_timestamp);

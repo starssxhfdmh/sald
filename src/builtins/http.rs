@@ -12,13 +12,14 @@
 
 use crate::vm::caller::CallableNativeInstanceFn;
 use crate::vm::value::{Class, Instance, NativeInstanceFn, SaldFuture, Value};
-use std::collections::HashMap;
+use bytes::Bytes;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::oneshot;
 
 /// Create the Http namespace with client functions and Server class
 pub fn create_http_namespace() -> Value {
-    let mut members: HashMap<String, Value> = HashMap::new();
+    let mut members: FxHashMap<String, Value> = FxHashMap::default();
 
     // Client functions (wrapped as NativeFunction)
     members.insert(
@@ -246,8 +247,8 @@ fn http_delete(args: &[Value]) -> Result<Value, String> {
 // ==================== HTTP Server Class ====================
 
 fn create_server_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
-    let mut callable_methods: HashMap<String, CallableNativeInstanceFn> = HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
+    let mut callable_methods: FxHashMap<String, CallableNativeInstanceFn> = FxHashMap::default();
 
     // Route registration methods (need ValueCaller to store and call handlers)
     callable_methods.insert("get".to_string(), server_route_get);
@@ -276,7 +277,7 @@ fn server_constructor(_args: &[Value]) -> Result<Value, String> {
     // Initialize routes storage: { "GET:/path": handler, ... }
     instance.fields.insert(
         "_routes".to_string(),
-        Value::Dictionary(Arc::new(Mutex::new(HashMap::new()))),
+        Value::Dictionary(Arc::new(Mutex::new(FxHashMap::default()))),
     );
 
     Ok(Value::Instance(Arc::new(Mutex::new(instance))))
@@ -441,12 +442,12 @@ fn server_listen(
     };
 
     // Extract routes from the instance
-    let routes: Arc<HashMap<String, Value>> = if let Value::Instance(inst) = recv {
+    let routes: Arc<FxHashMap<String, Value>> = if let Value::Instance(inst) = recv {
         let inst_guard = inst.lock().unwrap();
         if let Some(Value::Dictionary(routes_dict)) = inst_guard.fields.get("_routes") {
             Arc::new(routes_dict.lock().unwrap().clone())
         } else {
-            Arc::new(HashMap::new())
+            Arc::new(FxHashMap::default())
         }
     } else {
         return Err("Invalid Server instance".to_string());
@@ -474,8 +475,8 @@ fn server_listen(
 /// Async HTTP server implementation
 async fn run_async_server(
     port: u16,
-    routes: Arc<HashMap<String, Value>>,
-    globals: Arc<RwLock<HashMap<String, Value>>>,
+    routes: Arc<FxHashMap<String, Value>>,
+    globals: Arc<RwLock<FxHashMap<String, Value>>>,
     script_dir: String,
 ) -> Result<Value, String> {
     use tokio::net::TcpListener;
@@ -510,8 +511,8 @@ async fn run_async_server(
 /// Handle HTTP connection with keepalive support - handles multiple requests per connection
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
-    routes: Arc<HashMap<String, Value>>,
-    globals: Arc<RwLock<HashMap<String, Value>>>,
+    routes: Arc<FxHashMap<String, Value>>,
+    globals: Arc<RwLock<FxHashMap<String, Value>>>,
     script_dir: String,
 ) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -557,8 +558,8 @@ async fn handle_connection(
             (full_path.clone(), String::new())
         };
 
-        // Parse headers
-        let mut headers: HashMap<String, Value> = HashMap::new();
+        // Parse headers (pre-allocate for typical ~8 headers)
+        let mut headers: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(8, Default::default());
         let mut body_start = 0;
         let mut connection_close = false;
         for (i, line) in lines.iter().enumerate().skip(1) {
@@ -584,8 +585,8 @@ async fn handle_connection(
             String::new()
         };
 
-        // Parse query parameters
-        let mut query_params: HashMap<String, Value> = HashMap::new();
+        // Parse query parameters (pre-allocate for typical ~4 params)
+        let mut query_params: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(4, Default::default());
         if !query_string.is_empty() {
             for pair in query_string.split('&') {
                 if let Some(eq_idx) = pair.find('=') {
@@ -602,9 +603,9 @@ async fn handle_connection(
         // Find matching route and extract params
         let (handler, route_params) = find_matching_route(&routes, &method, &path);
 
-        let response = if let Some(handler_fn) = handler {
-            // Build request dictionary
-            let mut req_fields: HashMap<String, Value> = HashMap::new();
+        if let Some(handler_fn) = handler {
+            // Build request dictionary (exactly 6 fields)
+            let mut req_fields: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(6, Default::default());
             req_fields.insert("method".to_string(), Value::String(Arc::new(method)));
             req_fields.insert("path".to_string(), Value::String(Arc::new(path)));
             req_fields.insert("body".to_string(), Value::String(Arc::new(body)));
@@ -619,28 +620,47 @@ async fn handle_connection(
             
             // Call the handler using the reused VM
             match vm.run_handler(handler_fn, request, Some(&script_dir)).await {
-                Ok(result) => build_http_response(&result),
+                Ok(result) => {
+                    // ZERO-COPY SPLIT WRITE: Get headers and body as Bytes, write directly
+                    let (headers_bytes, body_bytes) = build_http_response_parts(&result);
+                    
+                    // Write headers first (Bytes derefs to &[u8])
+                    if stream.write_all(&headers_bytes).await.is_err() {
+                        return Ok(());
+                    }
+                    // Write body directly - ZERO COPY!
+                    if stream.write_all(&body_bytes).await.is_err() {
+                        return Ok(());
+                    }
+                    if stream.flush().await.is_err() {
+                        return Ok(());
+                    }
+                }
                 Err(e) => {
                     eprintln!("\n{}", e);
-                    format!(
+                    let error_response = format!(
                         "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\nHandler error: {}",
                         e
-                    )
+                    );
+                    if stream.write_all(error_response.as_bytes()).await.is_err() {
+                        return Ok(());
+                    }
+                    if stream.flush().await.is_err() {
+                        return Ok(());
+                    }
                 }
             }
         } else {
-            format!(
+            let not_found = format!(
                 "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found: {} {}",
                 method, full_path
-            )
-        };
-
-        // Write response
-        if stream.write_all(response.as_bytes()).await.is_err() {
-            return Ok(());
-        }
-        if stream.flush().await.is_err() {
-            return Ok(());
+            );
+            if stream.write_all(not_found.as_bytes()).await.is_err() {
+                return Ok(());
+            }
+            if stream.flush().await.is_err() {
+                return Ok(());
+            }
         }
 
         // If client requested connection close, break the loop
@@ -652,11 +672,12 @@ async fn handle_connection(
 
 /// Find a matching route handler and extract path parameters
 fn find_matching_route(
-    routes: &HashMap<String, Value>,
+    routes: &FxHashMap<String, Value>,
     method: &str,
     path: &str,
-) -> (Option<Value>, HashMap<String, Value>) {
-    let mut params: HashMap<String, Value> = HashMap::new();
+) -> (Option<Value>, FxHashMap<String, Value>) {
+    // Pre-allocate for typical ~2-3 route params
+    let mut params: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(4, Default::default());
 
     // Build route key on stack to avoid allocation 
     // (method max ~7 chars + ":" + path typically < 256 chars)
@@ -705,7 +726,7 @@ fn find_matching_route(
 
 /// Match a route pattern against a path, extracting parameters
 /// Supports wildcard patterns like /:filepath* which captures remaining path segments
-fn match_route_pattern(pattern: &str, path: &str) -> Option<HashMap<String, Value>> {
+fn match_route_pattern(pattern: &str, path: &str) -> Option<FxHashMap<String, Value>> {
     let pattern_parts: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
     let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
@@ -726,7 +747,8 @@ fn match_route_pattern(pattern: &str, path: &str) -> Option<HashMap<String, Valu
         }
     }
 
-    let mut params: HashMap<String, Value> = HashMap::new();
+    // Pre-allocate for typical ~2 route params
+    let mut params: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(4, Default::default());
 
     for (i, pattern_part) in pattern_parts.iter().enumerate() {
         if pattern_part.starts_with(':') {
@@ -766,11 +788,13 @@ fn match_route_pattern(pattern: &str, path: &str) -> Option<HashMap<String, Valu
     Some(params)
 }
 
-/// Build HTTP response from handler return value
-fn build_http_response(result: &Value) -> String {
+/// Build HTTP response headers and extract body
+/// Returns (headers_bytes, body_bytes) for zero-copy socket writes
+fn build_http_response_parts(result: &Value) -> (Bytes, Bytes) {
     use std::fmt::Write;
     
-    let (status, body, headers) = match result {
+    // Extract status, body, and headers - avoid cloning body when possible
+    let (status, body, headers): (u16, String, FxHashMap<String, String>) = match result {
         Value::Dictionary(dict) => {
             let dict_guard = dict.lock().unwrap();
 
@@ -779,35 +803,32 @@ fn build_http_response(result: &Value) -> String {
                 _ => 200,
             };
 
+            // Get body - only clone if needed for non-string types
             let body = match dict_guard.get("body") {
-                Some(Value::String(s)) => s.to_string(),
+                Some(Value::String(s)) => (**s).clone(), // Clone the inner String from Arc
                 Some(other) => format!("{}", other),
                 None => String::new(),
             };
 
-            let headers: HashMap<String, String> =
+            let headers: FxHashMap<String, String> =
                 if let Some(Value::Dictionary(hdrs)) = dict_guard.get("headers") {
                     let hdrs_guard = hdrs.lock().unwrap();
-                    hdrs_guard
-                        .iter()
-                        .map(|(k, v)| {
-                            (
-                                k.clone(),
-                                match v {
-                                    Value::String(s) => s.to_string(),
-                                    other => format!("{}", other),
-                                },
-                            )
-                        })
-                        .collect()
+                    let mut h = FxHashMap::with_capacity_and_hasher(hdrs_guard.len(), Default::default());
+                    for (k, v) in hdrs_guard.iter() {
+                        h.insert(k.clone(), match v {
+                            Value::String(s) => (**s).clone(),
+                            other => format!("{}", other),
+                        });
+                    }
+                    h
                 } else {
-                    HashMap::new()
+                    FxHashMap::default()
                 };
 
             (status, body, headers)
         }
-        Value::String(s) => (200, s.to_string(), HashMap::new()),
-        other => (200, format!("{}", other), HashMap::new()),
+        Value::String(s) => (200, (**s).clone(), FxHashMap::default()),
+        other => (200, format!("{}", other), FxHashMap::default()),
     };
 
     let status_text = match status {
@@ -824,25 +845,25 @@ fn build_http_response(result: &Value) -> String {
         _ => "OK",
     };
 
-    // Pre-allocate response buffer (headers ~200 bytes typical + body)
-    let mut response = String::with_capacity(256 + body.len());
+    // Build headers only (body will be written separately)
+    let mut header_buf = String::with_capacity(256);
     
-    // Use write! macro - more efficient than format! for building strings
-    let _ = write!(response, "HTTP/1.1 {} {}\r\n", status, status_text);
-    let _ = write!(response, "Content-Length: {}\r\n", body.len());
+    let _ = write!(header_buf, "HTTP/1.1 {} {}\r\n", status, status_text);
+    let _ = write!(header_buf, "Content-Length: {}\r\n", body.len());
 
     for (key, value) in &headers {
-        let _ = write!(response, "{}: {}\r\n", key, value);
+        let _ = write!(header_buf, "{}: {}\r\n", key, value);
     }
 
     if !headers.contains_key("Content-Type") && !headers.contains_key("content-type") {
-        response.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+        header_buf.push_str("Content-Type: text/plain; charset=utf-8\r\n");
     }
 
-    // Keep connection alive for better performance (HTTP/1.1 default)
-    response.push_str("Connection: keep-alive\r\n");
+    header_buf.push_str("Connection: keep-alive\r\n");
+    header_buf.push_str("\r\n");
 
-    response.push_str("\r\n");
-    response.push_str(&body);
-    response
+    // Convert to Bytes - takes ownership of the underlying buffer (zero-copy!)
+    (Bytes::from(header_buf), Bytes::from(body))
 }
+
+

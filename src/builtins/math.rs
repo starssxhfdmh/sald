@@ -2,11 +2,11 @@
 // Provides: PI, E, abs, floor, ceil, round, sqrt, pow, sin, cos, tan, random, min, max
 
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 pub fn create_math_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
-    let mut static_fields: HashMap<String, Value> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
+    let mut static_fields: FxHashMap<String, Value> = FxHashMap::default();
 
     // Static methods
     static_methods.insert("abs".to_string(), math_abs);

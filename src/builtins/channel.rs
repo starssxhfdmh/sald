@@ -4,7 +4,7 @@
 
 use super::{check_arity, check_arity_range, get_number_arg};
 use crate::vm::value::{Class, Instance, NativeInstanceFn, NativeStaticFn, SaldFuture, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
@@ -21,8 +21,8 @@ struct ChannelState {
 }
 
 pub fn create_channel_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
     // Static constructor (also available as Channel.new())
     static_methods.insert("new".to_string(), channel_new);

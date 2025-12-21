@@ -3,11 +3,11 @@
 
 use super::check_arity;
 use crate::vm::value::{Class, NativeInstanceFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 pub fn create_boolean_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
     instance_methods.insert("toString".to_string(), boolean_to_string);
 

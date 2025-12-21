@@ -4,11 +4,11 @@
 
 use super::{check_arity, check_arity_range, get_string_arg};
 use crate::vm::value::{Class, NativeInstanceFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
 pub fn create_dict_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
     instance_methods.insert("length".to_string(), dict_length);
     instance_methods.insert("keys".to_string(), dict_keys);
@@ -30,7 +30,7 @@ fn dict_constructor(args: &[Value]) -> Result<Value, String> {
     check_arity_range(0, 1, args.len())?;
 
     if args.is_empty() {
-        Ok(Value::Dictionary(Arc::new(Mutex::new(HashMap::new()))))
+        Ok(Value::Dictionary(Arc::new(Mutex::new(FxHashMap::default()))))
     } else {
         match &args[0] {
             Value::Dictionary(source) => {

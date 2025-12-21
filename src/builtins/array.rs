@@ -5,12 +5,12 @@
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::caller::{CallableNativeInstanceFn, ValueCaller};
 use crate::vm::value::{Class, NativeInstanceFn, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 
 pub fn create_array_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
-    let mut callable_methods: HashMap<String, CallableNativeInstanceFn> = HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
+    let mut callable_methods: FxHashMap<String, CallableNativeInstanceFn> = FxHashMap::default();
 
     // Regular instance methods (no closure calls)
     instance_methods.insert("length".to_string(), array_length);

@@ -2,13 +2,13 @@
 // Provides: sleep(ms), now()
 
 use crate::vm::value::{Class, NativeStaticFn, SaldFuture, Value};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
 pub fn create_timer_class() -> Class {
-    let mut static_methods: HashMap<String, NativeStaticFn> = HashMap::new();
+    let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
     static_methods.insert("sleep".to_string(), timer_sleep);
     static_methods.insert("now".to_string(), timer_now);

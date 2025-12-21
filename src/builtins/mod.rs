@@ -42,7 +42,7 @@ mod promise;
 mod test;
 
 use crate::vm::value::Value;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 // Core exports
@@ -91,8 +91,8 @@ pub type NativeStaticFn = fn(&[Value]) -> Result<Value, String>;
 pub type NativeInstanceFn = fn(&Value, &[Value]) -> Result<Value, String>;
 
 /// Create all built-in type classes
-pub fn create_builtin_classes() -> HashMap<String, Value> {
-    let mut classes = HashMap::new();
+pub fn create_builtin_classes() -> FxHashMap<String, Value> {
+    let mut classes = FxHashMap::default();
 
     // Core type classes (available everywhere)
     classes.insert(

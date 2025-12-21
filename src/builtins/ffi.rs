@@ -34,7 +34,7 @@ use crate::vm::value::{Class, Instance, NativeInstanceFn, Value};
 use libffi::middle::{Arg, Cif, CodePtr, Type as FfiType};
 use libloading::{Library, Symbol};
 use std::alloc::{alloc, Layout};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::ffi::{c_void, CStr, CString};
 use std::ptr;
 use std::sync::{Arc, Mutex, RwLock};
@@ -134,31 +134,31 @@ struct CallbackInfo {
     return_type: CType,
 }
 
-static CALLBACK_REGISTRY: RwLock<Option<HashMap<i64, CallbackInfo>>> = RwLock::new(None);
+static CALLBACK_REGISTRY: RwLock<Option<FxHashMap<i64, CallbackInfo>>> = RwLock::new(None);
 static NEXT_CALLBACK_ID: Mutex<i64> = Mutex::new(1);
 
 static GLOBAL_CALLER_PTR: Mutex<Vec<SendPtr>> = Mutex::new(Vec::new());
 static GLOBAL_CALLER_VTABLE: Mutex<Vec<SendConstPtr>> = Mutex::new(Vec::new());
 
 // Track allocation sizes for proper deallocation
-static ALLOCATION_SIZES: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
+static ALLOCATION_SIZES: Mutex<Option<FxHashMap<usize, usize>>> = Mutex::new(None);
 
 fn init_allocations() {
     let mut allocs = ALLOCATION_SIZES.lock().unwrap();
     if allocs.is_none() {
-        *allocs = Some(HashMap::new());
+        *allocs = Some(FxHashMap::default());
     }
 }
 
 fn init_registry() {
     let mut reg = CALLBACK_REGISTRY.write().unwrap();
     if reg.is_none() {
-        *reg = Some(HashMap::new());
+        *reg = Some(FxHashMap::default());
     }
 }
 
 // Storage for libffi closures - must be kept alive while callback is in use
-static CLOSURE_REGISTRY: RwLock<Option<HashMap<i64, ClosureData>>> = RwLock::new(None);
+static CLOSURE_REGISTRY: RwLock<Option<FxHashMap<i64, ClosureData>>> = RwLock::new(None);
 
 struct ClosureData {
     #[allow(dead_code)]
@@ -188,7 +188,7 @@ unsafe impl Sync for ClosureData {}
 fn init_closure_registry() {
     let mut reg = CLOSURE_REGISTRY.write().unwrap();
     if reg.is_none() {
-        *reg = Some(HashMap::new());
+        *reg = Some(FxHashMap::default());
     }
 }
 
@@ -458,7 +458,7 @@ fn convert_value_to_arg(value: &Value, ctype: &CType) -> Result<ConvertedArg, St
 // ==================== FFI Namespace ====================
 
 pub fn create_ffi_namespace() -> Value {
-    let mut members: HashMap<String, Value> = HashMap::new();
+    let mut members: FxHashMap<String, Value> = FxHashMap::default();
 
     // Library management
     members.insert("open".to_string(), Value::NativeFunction {
@@ -917,9 +917,9 @@ fn ffi_open(args: &[Value]) -> Result<Value, String> {
 // ==================== Library Class ====================
 
 fn create_library_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
-    let mut callable_methods: HashMap<String, crate::vm::caller::CallableNativeInstanceFn> =
-        HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
+    let mut callable_methods: FxHashMap<String, crate::vm::caller::CallableNativeInstanceFn> =
+        FxHashMap::default();
 
     instance_methods.insert("symbol".to_string(), library_symbol);
     instance_methods.insert("close".to_string(), library_close);
@@ -1132,7 +1132,7 @@ fn library_path(recv: &Value, _args: &[Value]) -> Result<Value, String> {
 // ==================== Callback Class ====================
 
 fn create_callback_class() -> Class {
-    let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
+    let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
     instance_methods.insert("ptr".to_string(), callback_ptr);
     instance_methods.insert("id".to_string(), callback_id);

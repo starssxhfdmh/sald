@@ -1,7 +1,7 @@
 // Import Resolver for Sald LSP
 // Resolves import paths and extracts exported symbols from imported files
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use parking_lot::RwLock;
@@ -21,7 +21,7 @@ pub struct FileExports {
 /// Import resolver that handles cross-file symbol resolution
 pub struct ImportResolver {
     /// Cache of parsed exports per file
-    cache: Arc<RwLock<HashMap<PathBuf, FileExports>>>,
+    cache: Arc<RwLock<FxHashMap<PathBuf, FileExports>>>,
     /// Workspace root for resolving relative paths
     workspace_root: Option<PathBuf>,
 }
@@ -29,7 +29,7 @@ pub struct ImportResolver {
 impl ImportResolver {
     pub fn new() -> Self {
         Self {
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(FxHashMap::default())),
             workspace_root: None,
         }
     }
@@ -462,14 +462,14 @@ impl ImportResolver {
     /// Resolve imports for a document and return all imported symbols
     /// Returns: (global_symbols, aliased_symbols)
     /// - global_symbols: symbols from `import "file.sald"` (no alias) - added directly to scope
-    /// - aliased_symbols: HashMap<alias, symbols> from `import "file.sald" as Alias`
+    /// - aliased_symbols: FxHashMap<alias, symbols> from `import "file.sald" as Alias`
     pub fn resolve_imports_for_document(
         &self,
         file_path: &Path,
         program: &Program
-    ) -> (Vec<Symbol>, HashMap<String, Vec<Symbol>>) {
+    ) -> (Vec<Symbol>, FxHashMap<String, Vec<Symbol>>) {
         let mut global_symbols = Vec::new();
-        let mut aliased_symbols = HashMap::new();
+        let mut aliased_symbols = FxHashMap::default();
         
         for stmt in &program.statements {
             if let Stmt::Import { path, alias, .. } = stmt {

@@ -11,7 +11,8 @@ use sald_core::lexer::Scanner;
 use sald_core::parser::Parser as SaldParser;
 use sald_core::vm::VM;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{Read, Write, stdout};
@@ -90,7 +91,7 @@ pub struct ProjectConfig {
     #[serde(default = "default_main")]
     pub main: String,
     #[serde(default)]
-    pub modules: HashMap<String, String>,
+    pub modules: FxHashMap<String, String>,
 }
 
 fn default_main() -> String {
@@ -106,7 +107,7 @@ impl Default for ProjectConfig {
             author: None,
             license: Some("MIT".to_string()),
             main: default_main(),
-            modules: HashMap::new(),
+            modules: FxHashMap::default(),
         }
     }
 }
@@ -227,7 +228,7 @@ fn default_salad_json(name: &str, author: Option<&str>) -> String {
         author: author.map(|s| s.to_string()),
         license: Some("MIT".to_string()),
         main: "main.sald".to_string(),
-        modules: HashMap::new(),
+        modules: FxHashMap::default(),
     };
     serde_json::to_string_pretty(&config).unwrap()
 }
@@ -266,7 +267,7 @@ fn check_modules(project_root: &Path) -> Result<ModuleCheckResult, String> {
     let config = parse_config(&project_root.join("salad.json"))?;
     let sald_modules_dir = project_root.join("sald_modules");
     let mut result = ModuleCheckResult::new();
-    let mut checked: HashSet<String> = HashSet::new();
+    let mut checked: FxHashSet<String> = FxHashSet::default();
     let mut to_check: Vec<(String, String)> = config.modules.into_iter().collect();
     
     while let Some((module_name, required_version)) = to_check.pop() {
@@ -537,7 +538,7 @@ async fn handle_callback(
 ) -> Result<Response<Body>, Infallible> {
     if req.uri().path() == "/callback" {
         if let Some(query) = req.uri().query() {
-            let params: HashMap<String, String> = query
+            let params: FxHashMap<String, String> = query
                 .split('&')
                 .filter_map(|s| {
                     let mut parts = s.splitn(2, '=');
@@ -719,7 +720,7 @@ async fn cmd_install() {
     let mut installed = 0;
     let mut failed = 0;
     let mut to_install: Vec<(String, String)> = config.modules.into_iter().collect();
-    let mut done: HashSet<String> = HashSet::new();
+    let mut done: FxHashSet<String> = FxHashSet::default();
 
     while let Some((name, version)) = to_install.pop() {
         if done.contains(&name) { continue; }
@@ -889,7 +890,7 @@ async fn cmd_add(packages: &[String]) {
             added += 1;
             
             // Install transitive dependencies
-            let mut done: HashSet<String> = HashSet::new();
+            let mut done: FxHashSet<String> = FxHashSet::default();
             done.insert(name.clone());
             
             let dep_config_path = sald_modules_dir.join(&name).join("salad.json");
@@ -1082,7 +1083,7 @@ fn cmd_prune() {
     }
 
     // Collect all required modules (direct + transitive)
-    let mut required: HashSet<String> = HashSet::new();
+    let mut required: FxHashSet<String> = FxHashSet::default();
     let mut to_check: Vec<String> = config.modules.keys().cloned().collect();
 
     while let Some(name) = to_check.pop() {

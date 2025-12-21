@@ -1,7 +1,8 @@
 // Semantic Analyzer for Sald LSP
 // Detects runtime-like errors statically: undefined variables, type mismatches, etc.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
 
 use crate::ast::{Expr, Program, Stmt, FunctionDef, LambdaBody, Pattern, SwitchArrayElement};
@@ -11,7 +12,7 @@ use super::symbols::span_to_range;
 /// Scope for tracking local variables
 #[derive(Debug, Clone)]
 struct Scope {
-    variables: HashMap<String, VarInfo>,
+    variables: FxHashMap<String, VarInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,16 +27,16 @@ struct VarInfo {
 pub struct SemanticAnalyzer {
     scopes: Vec<Scope>,
     diagnostics: Vec<Diagnostic>,
-    defined_classes: HashSet<String>,
-    defined_functions: HashSet<String>,
+    defined_classes: FxHashSet<String>,
+    defined_functions: FxHashSet<String>,
     has_imports: bool, // If file has imports, be lenient with undefined checks
     in_class: bool,    // Track if we're inside a class method
-    externally_used: HashSet<String>, // Symbols used by other files
+    externally_used: FxHashSet<String>, // Symbols used by other files
 }
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
-        let mut defined_classes = HashSet::new();
+        let mut defined_classes = FxHashSet::default();
         // Built-in classes
         for cls in &[
             "Console", "Math", "File", "Timer", "Date", "Json", "Path",
@@ -48,19 +49,19 @@ impl SemanticAnalyzer {
 
         Self {
             scopes: vec![Scope {
-                variables: HashMap::new(),
+                variables: FxHashMap::default(),
             }],
             diagnostics: Vec::new(),
             defined_classes,
-            defined_functions: HashSet::new(),
+            defined_functions: FxHashSet::default(),
             has_imports: false,
             in_class: false,
-            externally_used: HashSet::new(),
+            externally_used: FxHashSet::default(),
         }
     }
     
     /// Set symbols that are used by other files (don't warn as unused)
-    pub fn set_externally_used_symbols(&mut self, symbols: HashSet<String>) {
+    pub fn set_externally_used_symbols(&mut self, symbols: FxHashSet<String>) {
         self.externally_used = symbols;
     }
     
@@ -167,7 +168,7 @@ impl SemanticAnalyzer {
 
     fn push_scope(&mut self) {
         self.scopes.push(Scope {
-            variables: HashMap::new(),
+            variables: FxHashMap::default(),
         });
     }
 
