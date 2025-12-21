@@ -140,6 +140,16 @@ static NEXT_CALLBACK_ID: Mutex<i64> = Mutex::new(1);
 static GLOBAL_CALLER_PTR: Mutex<Vec<SendPtr>> = Mutex::new(Vec::new());
 static GLOBAL_CALLER_VTABLE: Mutex<Vec<SendConstPtr>> = Mutex::new(Vec::new());
 
+// Track allocation sizes for proper deallocation
+static ALLOCATION_SIZES: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
+
+fn init_allocations() {
+    let mut allocs = ALLOCATION_SIZES.lock().unwrap();
+    if allocs.is_none() {
+        *allocs = Some(HashMap::new());
+    }
+}
+
 fn init_registry() {
     let mut reg = CALLBACK_REGISTRY.write().unwrap();
     if reg.is_none() {
@@ -157,6 +167,18 @@ struct ClosureData {
     closure: libffi::middle::Closure<'static>,
     #[allow(dead_code)]
     code_ptr: usize,  // Store as usize to avoid lifetime issues
+    callback_id_ptr: *mut i64,  // Pointer to the leaked Box<i64> for cleanup
+}
+
+impl Drop for ClosureData {
+    fn drop(&mut self) {
+        // Reclaim the leaked Box<i64>
+        if !self.callback_id_ptr.is_null() {
+            unsafe {
+                let _ = Box::from_raw(self.callback_id_ptr);
+            }
+        }
+    }
 }
 
 // Ensure ClosureData is Send+Sync  
@@ -403,7 +425,7 @@ enum ConvertedData {
     F32(f32),
     F64(f64),
     Ptr(usize),
-    CStr(CString),
+    // Note: CString is handled separately via pre-allocation in call_with_types
 }
 
 fn convert_value_to_arg(value: &Value, ctype: &CType) -> Result<ConvertedArg, String> {
@@ -419,9 +441,9 @@ fn convert_value_to_arg(value: &Value, ctype: &CType) -> Result<ConvertedArg, St
         (Value::Number(n), CType::F32) => ConvertedData::F32(*n as f32),
         (Value::Number(n), CType::F64) => ConvertedData::F64(*n),
         (Value::Number(n), CType::Pointer) => ConvertedData::Ptr(*n as usize),
-        (Value::String(s), CType::CString) => {
-            let c_str = CString::new(s.as_str()).map_err(|_| "Invalid C string (contains null byte)")?;
-            ConvertedData::CStr(c_str)
+        (Value::String(_), CType::CString) => {
+            // CStrings are pre-allocated in call_with_types, this path should not be reached
+            return Err("CString conversion should be handled via pre-allocation".to_string());
         }
         (Value::Null, CType::Pointer | CType::CString) => ConvertedData::Ptr(0),
         _ => return Err(format!("Cannot convert {} to {:?}", value.type_name(), ctype)),
@@ -606,6 +628,15 @@ fn ffi_alloc(args: &[Value]) -> Result<Value, String> {
         if ptr.is_null() {
             return Err("Memory allocation failed".to_string());
         }
+        
+        // Track allocation size for proper deallocation
+        init_allocations();
+        if let Ok(mut allocs) = ALLOCATION_SIZES.lock() {
+            if let Some(ref mut map) = *allocs {
+                map.insert(ptr as usize, size);
+            }
+        }
+        
         Ok(Value::Number(ptr as usize as f64))
     }
 }
@@ -614,12 +645,34 @@ fn ffi_free(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Ffi.free expects 1 argument (pointer)".to_string());
     }
-    let _ptr = match &args[0] {
-        Value::Number(n) => *n as usize as *mut u8,
+    let ptr_val = match &args[0] {
+        Value::Number(n) => *n as usize,
         _ => return Err("Pointer must be a number".to_string()),
     };
-    // Note: We can't safely free without knowing the original size
-    // This is a limitation - users should track sizes themselves
+    
+    if ptr_val == 0 {
+        return Ok(Value::Null); // Ignore null pointer
+    }
+    
+    // Get allocation size and free
+    let size = {
+        let mut allocs = ALLOCATION_SIZES.lock().unwrap();
+        if let Some(ref mut map) = *allocs {
+            map.remove(&ptr_val)
+        } else {
+            None
+        }
+    };
+    
+    if let Some(size) = size {
+        unsafe {
+            let layout = Layout::from_size_align(size, 8)
+                .map_err(|_| "Invalid layout for deallocation")?;
+            std::alloc::dealloc(ptr_val as *mut u8, layout);
+        }
+    }
+    // If size not found, memory was not allocated by us - silently ignore
+    
     Ok(Value::Null)
 }
 
@@ -1157,7 +1210,8 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
     
     // Box the callback_id so it has a stable address
     let callback_id_box = Box::new(callback_id);
-    let callback_id_ref: &'static i64 = Box::leak(callback_id_box);
+    let callback_id_ptr = Box::into_raw(callback_id_box);  // Get raw pointer for cleanup later
+    let callback_id_ref: &'static i64 = unsafe { &*callback_id_ptr };
     
     let closure = libffi::middle::Closure::new(cif.clone(), closure_handler, callback_id_ref);
     // Get the executable code pointer from the closure
@@ -1175,6 +1229,7 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
                 cif,
                 closure,
                 code_ptr: code_ptr_value,
+                callback_id_ptr,  // Track for cleanup in Drop
             });
         }
     }
@@ -1327,13 +1382,7 @@ unsafe fn call_with_types(
             ConvertedData::F32(v) => Arg::new(v),
             ConvertedData::F64(v) => Arg::new(v),
             ConvertedData::Ptr(v) => Arg::new(v),
-            ConvertedData::CStr(s) => {
-                // This path is no longer used for cstr, but keep for compatibility
-                let ptr = s.as_ptr() as usize;
-                // We need to pass the pointer value, but Arg::new expects a reference
-                // So we store it as usize and pass reference to that
-                Arg::new(&ptr)
-            }
+            // Note: CString handled via pre-allocation, ConvertedData::CStr removed
         };
         ffi_args.push(arg_ref);
     }
