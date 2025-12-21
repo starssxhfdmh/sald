@@ -830,7 +830,20 @@ impl Scanner {
     }
 
     fn number(&mut self) -> SaldResult<()> {
-        while self.peek().is_ascii_digit() {
+        // Check for special number prefixes: 0x (hex), 0b (binary), 0o (octal)
+        let first_char = self.source[self.start];
+        
+        if first_char == '0' && self.current - self.start == 1 {
+            match self.peek() {
+                'x' | 'X' => return self.hex_number(),
+                'b' | 'B' => return self.binary_number(),
+                'o' | 'O' => return self.octal_number(),
+                _ => {}
+            }
+        }
+        
+        // Regular decimal number
+        while self.peek().is_ascii_digit() || self.peek() == '_' {
             self.advance();
         }
 
@@ -839,17 +852,95 @@ impl Scanner {
             // Consume the '.'
             self.advance();
 
-            while self.peek().is_ascii_digit() {
+            while self.peek().is_ascii_digit() || self.peek() == '_' {
                 self.advance();
             }
         }
 
-        let lexeme: String = self.source[self.start..self.current].iter().collect();
+        let lexeme: String = self.source[self.start..self.current]
+            .iter()
+            .filter(|c| **c != '_')  // Remove underscore separators
+            .collect();
         let value: f64 = lexeme
             .parse()
             .map_err(|_| self.error(&format!("Invalid number '{}'", lexeme)))?;
 
         self.add_token(TokenKind::Number(value));
+        Ok(())
+    }
+
+    fn hex_number(&mut self) -> SaldResult<()> {
+        self.advance(); // consume 'x' or 'X'
+        
+        let hex_start = self.current;
+        while self.peek().is_ascii_hexdigit() || self.peek() == '_' {
+            self.advance();
+        }
+        
+        if self.current == hex_start {
+            return Err(self.error("Expected hexadecimal digits after '0x'")
+                .with_help("Use format like 0xFF, 0x1A2B, or 0xFF_FF"));
+        }
+        
+        let hex_str: String = self.source[hex_start..self.current]
+            .iter()
+            .filter(|c| **c != '_')
+            .collect();
+        
+        let value = u64::from_str_radix(&hex_str, 16)
+            .map_err(|_| self.error(&format!("Invalid hexadecimal number '0x{}'", hex_str)))?;
+        
+        self.add_token(TokenKind::Number(value as f64));
+        Ok(())
+    }
+
+    fn binary_number(&mut self) -> SaldResult<()> {
+        self.advance(); // consume 'b' or 'B'
+        
+        let bin_start = self.current;
+        while matches!(self.peek(), '0' | '1' | '_') {
+            self.advance();
+        }
+        
+        if self.current == bin_start {
+            return Err(self.error("Expected binary digits after '0b'")
+                .with_help("Use format like 0b1010, 0b11110000, or 0b1111_0000"));
+        }
+        
+        let bin_str: String = self.source[bin_start..self.current]
+            .iter()
+            .filter(|c| **c != '_')
+            .collect();
+        
+        let value = u64::from_str_radix(&bin_str, 2)
+            .map_err(|_| self.error(&format!("Invalid binary number '0b{}'", bin_str)))?;
+        
+        self.add_token(TokenKind::Number(value as f64));
+        Ok(())
+    }
+
+    fn octal_number(&mut self) -> SaldResult<()> {
+        self.advance(); // consume 'o' or 'O'
+        
+        let oct_start = self.current;
+        while matches!(self.peek(), '0'..='7' | '_') {
+            self.advance();
+        }
+        
+        if self.current == oct_start {
+            return Err(self.error("Expected octal digits after '0o'")
+                .with_help("Use format like 0o777, 0o644, or 0o755"));
+        }
+        
+        let oct_str: String = self.source[oct_start..self.current]
+            .iter()
+            .filter(|c| **c != '_')
+            .collect();
+        
+        let value = u64::from_str_radix(&oct_str, 8)
+            .map_err(|_| self.error(&format!("Invalid octal number '0o{}'", oct_str)))?;
+        
+        self.add_token(TokenKind::Number(value as f64));
         Ok(())
     }
 
