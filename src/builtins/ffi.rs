@@ -964,6 +964,7 @@ fn create_callback_class() -> Class {
     let mut instance_methods: HashMap<String, NativeInstanceFn> = HashMap::new();
 
     instance_methods.insert("ptr".to_string(), callback_ptr);
+    instance_methods.insert("id".to_string(), callback_id);
     instance_methods.insert("release".to_string(), callback_release);
 
     // Use new_with_instance for the instance methods and set constructor for Ffi.Callback() calls
@@ -1051,6 +1052,22 @@ fn callback_ptr(recv: &Value, _args: &[Value]) -> Result<Value, String> {
         // Return the invoker pointer - C code calls this with callback_id as first arg
         if let Some(Value::Number(invoker)) = inst_guard.fields.get("_invoker") {
             return Ok(Value::Number(*invoker));
+        }
+    }
+    Err("Invalid callback instance".to_string())
+}
+
+/// Get the callback ID
+fn callback_id(recv: &Value, _args: &[Value]) -> Result<Value, String> {
+    if let Value::Instance(inst) = recv {
+        let inst_guard = inst.lock().unwrap();
+        
+        if let Some(Value::Boolean(true)) = inst_guard.fields.get("_released") {
+            return Err("Callback has been released".to_string());
+        }
+
+        if let Some(id) = inst_guard.fields.get("_id") {
+            return Ok(id.clone());
         }
     }
     Err("Invalid callback instance".to_string())
