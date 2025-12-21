@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="Sald Logo" width="200">
+  <img src="docs/logo.png" alt="Sald Logo" width="180">
 </p>
 
 <h1 align="center">Sald</h1>
@@ -8,16 +8,22 @@
   A modern dynamic programming language built with Rust.
 </p>
 
+<p align="center">
+  <a href="https://starssxhfdmh.github.io/sald-docs/">Documentation</a> •
+  <a href="https://saladpm.vercel.app">Package Manager</a> •
+  <a href="https://starssxhfdmh.github.io/sald-playground">Playground</a>
+</p>
+
 ---
 
 ## Features
 
 - Class-based OOP with inheritance
 - Async/await for asynchronous programming
-- Standard library: File, Http, Json, System, Process, etc.  
+- Rich standard library (File, Http, Json, System, Process, etc.)
 - Package manager (`salad`)
 - Language server (`sald-lsp`)
-- REPL for quick experimentation
+- Interactive REPL
 
 ## Installation
 
@@ -70,9 +76,11 @@ let g = Greeter("World")
 g.greet()
 ```
 
-## Documentation
+## Resources
 
-See [Documentation](https://starssxhfdmh.github.io/sald-docs/) for the complete language reference.
+- [Documentation](https://starssxhfdmh.github.io/sald-docs/) — Complete language reference
+- [Package Manager](https://saladpm.vercel.app) — Browse and publish packages
+- [Playground](https://starssxhfdmh.github.io/sald-playground) — Try Sald in your browser
 
 ## License
 
