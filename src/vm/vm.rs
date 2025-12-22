@@ -26,7 +26,7 @@ const FRAMES_MAX: usize = 4096;
 
 // Start small, grow as needed - avoids over-allocation for simple scripts
 const STACK_INIT: usize = 256;
-const FRAMES_INIT: usize = 32;
+const FRAMES_INIT: usize = 64;
 
 /// Result of VM execution - supports suspend/resume for async
 #[cfg(not(target_arch = "wasm32"))]
@@ -138,8 +138,8 @@ enum ControlFlow {
 /// Opcode handler function type
 type OpHandler = fn(&mut VM) -> ControlFlow;
 
-/// Single unified dispatch table - 68 opcodes (0-67)
-static DISPATCH: [OpHandler; 68] = [
+/// Single unified dispatch table - 69 opcodes (0-68)
+static DISPATCH: [OpHandler; 69] = [
     op_constant,      // 0
     op_pop,           // 1
     op_dup,           // 2
@@ -207,7 +207,8 @@ static DISPATCH: [OpHandler; 68] = [
     op_right_shift,   // 64
     op_build_range_inclusive, // 65
     op_build_range_exclusive, // 66
-    op_nop,           // 67
+    op_recursive_call, // 67 = RecursiveCall
+    op_nop,            // 68 (unused, for safety)
 ];
 
 // ==================== Opcode Handlers ====================
@@ -1076,6 +1077,30 @@ fn op_nop(_vm: &mut VM) -> ControlFlow {
     ControlFlow::Continue
 }
 
+/// Recursive call - ultra fast self-recursive function call
+/// Directly reuses current frame's function, no stack manipulation for function value
+#[inline(always)]
+fn op_recursive_call(vm: &mut VM) -> ControlFlow {
+    let arg_count = vm.read_u16() as usize;
+    
+    // Get current function directly from frame
+    let function = vm.current_frame().function.clone();
+    
+    // Ultra-fast path: we know this is non-variadic, exact arity for recursive calls
+    if vm.frames.len() >= FRAMES_MAX {
+        return ControlFlow::Error(vm.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
+    }
+    
+    // Compiler already pushed null placeholder BEFORE args, so stack is:
+    // [..., null, arg1, arg2, ...]
+    // slots_start = len - arg_count - 1 (pointing to the null placeholder)
+    let slots_start = vm.stack.len() - arg_count - 1;
+    if !function.file.is_empty() { crate::push_script_dir(&function.file); }
+    vm.frames.push(CallFrame::new(function, slots_start));
+    
+    ControlFlow::Continue
+}
+
 // ==================== Helper Functions ====================
 
 #[inline(always)]
@@ -1566,7 +1591,7 @@ impl VM {
         let op = self.read_byte();
 
         // Single dispatch table lookup - no branching
-        if op < 68 {
+        if op < 69 {
             unsafe { DISPATCH.get_unchecked(op as usize)(self) }
         } else {
             ControlFlow::Error(self.create_error(ErrorKind::RuntimeError, &format!("Unknown opcode: {}", op)))

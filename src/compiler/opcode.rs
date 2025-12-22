@@ -110,6 +110,9 @@ pub enum OpCode {
     // Range operations
     BuildRangeInclusive, // start..end (inclusive)
     BuildRangeExclusive, // start..<end (exclusive)
+
+    // Self-recursion optimization
+    RecursiveCall, // Call current function directly (no stack push needed)
 }
 
 impl OpCode {
@@ -145,7 +148,8 @@ impl OpCode {
             | OpCode::ImportAs
             | OpCode::GetUpvalue
             | OpCode::SetUpvalue
-            | OpCode::TryStart => 2, // u16 operand
+            | OpCode::TryStart
+            | OpCode::RecursiveCall => 2, // u16 operand
 
             _ => 0,
         }

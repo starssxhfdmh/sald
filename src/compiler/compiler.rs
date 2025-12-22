@@ -45,6 +45,8 @@ struct FunctionScope {
     break_jumps: Vec<Vec<usize>>,
     /// Stack of scope depths at each loop entry (for proper break/continue cleanup)
     loop_scope_depths: Vec<usize>,
+    /// Current function name for self-recursion optimization
+    function_name: Option<String>,
 }
 
 impl FunctionScope {
@@ -57,6 +59,7 @@ impl FunctionScope {
             loop_starts: Vec::new(),
             break_jumps: Vec::new(),
             loop_scope_depths: Vec::new(),
+            function_name: None,
         };
 
         // Reserve slot 0 for 'self' in methods or empty in functions
@@ -661,6 +664,13 @@ impl Compiler {
 
         // Create new function scope
         self.scopes.push(FunctionScope::new(as_method));
+        
+        // Track function name for self-recursion optimization
+        // Only for top-level functions (not methods)
+        if !as_method {
+            self.current_scope_mut().function_name = Some(def.name.clone());
+        }
+        
         self.begin_scope();
 
         // Add parameters as locals
@@ -1607,6 +1617,31 @@ impl Compiler {
                             .add_constant(Constant::String(intern(&property.clone())));
                         self.emit_op(OpCode::Invoke, *span);
                         self.emit_u16(const_idx as u16, *span);
+                        self.emit_u16(args.len() as u16, *span);
+                    }
+                } else if let Expr::Identifier { name, .. } = callee.as_ref() {
+                    // Check for self-recursive call optimization
+                    let is_self_recursive = self.current_scope().function_name.as_ref()
+                        .map(|fn_name| fn_name == name)
+                        .unwrap_or(false);
+                    
+                    if is_self_recursive {
+                        // Ultra-fast recursive call
+                        // Push null placeholder FIRST (for slot 0 / return value position)
+                        // This way RecursiveCall doesn't need any stack manipulation at runtime
+                        self.emit_op(OpCode::Null, *span);
+                        for arg in args {
+                            self.compile_expr(&arg.value)?;
+                        }
+                        self.emit_op(OpCode::RecursiveCall, *span);
+                        self.emit_u16(args.len() as u16, *span);
+                    } else {
+                        // Regular function call
+                        self.compile_expr(callee)?;
+                        for arg in args {
+                            self.compile_expr(&arg.value)?;
+                        }
+                        self.emit_op(OpCode::Call, *span);
                         self.emit_u16(args.len() as u16, *span);
                     }
                 } else {
