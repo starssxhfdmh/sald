@@ -82,7 +82,7 @@ fn number_to_fixed(recv: &Value, args: &[Value]) -> Result<Value, String> {
         // Cap at reasonable precision
         let decimals = decimals.min(20);
         
-        Ok(Value::String(Arc::new(format!("{:.prec$}", n, prec = decimals))))
+        Ok(Value::String(Arc::from(format!("{:.prec$}", n, prec = decimals))))
     } else {
         Err("Receiver must be a number".to_string())
     }
@@ -92,9 +92,9 @@ fn number_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Number(n) = recv {
         if n.fract() == 0.0 {
-            Ok(Value::String(Arc::new(format!("{}", *n as i64))))
+            Ok(Value::String(Arc::from(format!("{}", *n as i64))))
         } else {
-            Ok(Value::String(Arc::new(format!("{}", n))))
+            Ok(Value::String(Arc::from(format!("{}", n))))
         }
     } else {
         Err("Receiver must be a number".to_string())

@@ -25,7 +25,7 @@ pub fn create_type_class() -> Class {
 
 fn type_of(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
-    Ok(Value::String(Arc::new(args[0].type_name().to_string())))
+    Ok(Value::String(Arc::from(args[0].type_name().to_string())))
 }
 
 fn type_is_string(args: &[Value]) -> Result<Value, String> {

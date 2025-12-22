@@ -79,7 +79,7 @@ fn console_input(args: &[Value]) -> Result<Value, String> {
             .map_err(|e| e.to_string())?;
 
         let trimmed = input.trim_end_matches('\n').trim_end_matches('\r');
-        Ok(Value::String(Arc::new(trimmed.to_string())))
+        Ok(Value::String(Arc::from(trimmed.to_string())))
     }
     
     #[cfg(target_arch = "wasm32")]

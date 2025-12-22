@@ -288,7 +288,7 @@ fn array_join(recv: &Value, args: &[Value]) -> Result<Value, String> {
             .iter()
             .map(|v| format!("{}", v))
             .collect();
-        Ok(Value::String(Arc::new(items.join(&sep))))
+        Ok(Value::String(Arc::from(items.join(&sep))))
     } else {
         Err("Receiver must be an array".to_string())
     }
@@ -312,7 +312,7 @@ fn array_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
             .iter()
             .map(|v| format!("{}", v))
             .collect();
-        Ok(Value::String(Arc::new(format!("[{}]", items.join(", ")))))
+        Ok(Value::String(Arc::from(format!("[{}]", items.join(", ")))))
     } else {
         Err("Receiver must be an array".to_string())
     }

@@ -18,7 +18,7 @@ pub fn create_null_class() -> Class {
 fn null_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if matches!(recv, Value::Null) {
-        Ok(Value::String(Arc::new("null".to_string())))
+        Ok(Value::String(Arc::from("null".to_string())))
     } else {
         Err("Receiver must be null".to_string())
     }

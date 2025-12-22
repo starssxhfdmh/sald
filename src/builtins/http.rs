@@ -90,7 +90,7 @@ fn http_get(args: &[Value]) -> Result<Value, String> {
         match client.get(&url).send().await {
             Ok(response) => match response.text().await {
                 Ok(text) => {
-                    let _ = tx.send(Ok(Value::String(Arc::new(text))));
+                    let _ = tx.send(Ok(Value::String(Arc::from(text))));
                 }
                 Err(e) => {
                     let _ = tx.send(Err(e.to_string()));
@@ -139,7 +139,7 @@ fn http_post(args: &[Value]) -> Result<Value, String> {
         match client.post(&url).body(body).send().await {
             Ok(response) => match response.text().await {
                 Ok(text) => {
-                    let _ = tx.send(Ok(Value::String(Arc::new(text))));
+                    let _ = tx.send(Ok(Value::String(Arc::from(text))));
                 }
                 Err(e) => {
                     let _ = tx.send(Err(e.to_string()));
@@ -188,7 +188,7 @@ fn http_put(args: &[Value]) -> Result<Value, String> {
         match client.put(&url).body(body).send().await {
             Ok(response) => match response.text().await {
                 Ok(text) => {
-                    let _ = tx.send(Ok(Value::String(Arc::new(text))));
+                    let _ = tx.send(Ok(Value::String(Arc::from(text))));
                 }
                 Err(e) => {
                     let _ = tx.send(Err(e.to_string()));
@@ -228,7 +228,7 @@ fn http_delete(args: &[Value]) -> Result<Value, String> {
         match client.delete(&url).send().await {
             Ok(response) => match response.text().await {
                 Ok(text) => {
-                    let _ = tx.send(Ok(Value::String(Arc::new(text))));
+                    let _ = tx.send(Ok(Value::String(Arc::from(text))));
                 }
                 Err(e) => {
                     let _ = tx.send(Err(e.to_string()));
@@ -401,9 +401,9 @@ fn server_get_routes(recv: &Value, _args: &[Value]) -> Result<Value, String> {
                     // key format is "METHOD:path", convert to "METHOD path"
                     let parts: Vec<&str> = key.splitn(2, ':').collect();
                     if parts.len() == 2 {
-                        Value::String(Arc::new(format!("{} {}", parts[0], parts[1])))
+                        Value::String(Arc::from(format!("{} {}", parts[0], parts[1])))
                     } else {
-                        Value::String(Arc::new(key.clone()))
+                        Value::String(Arc::from(key.clone()))
                     }
                 })
                 .collect();
@@ -575,7 +575,7 @@ async fn handle_connection(
                 if key == "connection" && value.eq_ignore_ascii_case("close") {
                     connection_close = true;
                 }
-                headers.insert(key, Value::String(Arc::new(value.to_string())));
+                headers.insert(key, Value::String(Arc::from(value.to_string())));
             }
         }
 
@@ -595,7 +595,7 @@ async fn handle_connection(
                     let value = &pair[eq_idx + 1..];
                     query_params.insert(
                         key.to_string(),
-                        Value::String(Arc::new(value.to_string())),
+                        Value::String(Arc::from(value.to_string())),
                     );
                 }
             }
@@ -607,9 +607,9 @@ async fn handle_connection(
         if let Some(handler_fn) = handler {
             // Build request dictionary (exactly 6 fields)
             let mut req_fields: FxHashMap<String, Value> = FxHashMap::with_capacity_and_hasher(6, Default::default());
-            req_fields.insert("method".to_string(), Value::String(Arc::new(method)));
-            req_fields.insert("path".to_string(), Value::String(Arc::new(path)));
-            req_fields.insert("body".to_string(), Value::String(Arc::new(body)));
+            req_fields.insert("method".to_string(), Value::String(Arc::from(method)));
+            req_fields.insert("path".to_string(), Value::String(Arc::from(path)));
+            req_fields.insert("body".to_string(), Value::String(Arc::from(body)));
             req_fields.insert("params".to_string(), Value::Dictionary(Arc::new(Mutex::new(route_params))));
             req_fields.insert("query".to_string(), Value::Dictionary(Arc::new(Mutex::new(query_params))));
             req_fields.insert("headers".to_string(), Value::Dictionary(Arc::new(Mutex::new(headers))));
@@ -764,7 +764,7 @@ fn match_route_pattern(pattern: &str, path: &str) -> Option<FxHashMap<String, Va
                 
                 params.insert(
                     param_name.to_string(),
-                    Value::String(Arc::new(captured_path)),
+                    Value::String(Arc::from(captured_path)),
                 );
                 
                 // Wildcard consumes all remaining parts, so we're done
@@ -777,7 +777,7 @@ fn match_route_pattern(pattern: &str, path: &str) -> Option<FxHashMap<String, Va
                 let param_name = &pattern_part[1..];
                 params.insert(
                     param_name.to_string(),
-                    Value::String(Arc::new(path_parts[i].to_string())),
+                    Value::String(Arc::from(path_parts[i].to_string())),
                 );
             }
         } else if i >= path_parts.len() || *pattern_part != path_parts[i] {
@@ -806,7 +806,7 @@ fn build_http_response_parts(result: &Value) -> (Bytes, Bytes) {
 
             // Get body - only clone if needed for non-string types
             let body = match dict_guard.get("body") {
-                Some(Value::String(s)) => (**s).clone(), // Clone the inner String from Arc
+                Some(Value::String(s)) => s.to_string(), // Clone the inner String from Arc
                 Some(other) => format!("{}", other),
                 None => String::new(),
             };
@@ -817,7 +817,7 @@ fn build_http_response_parts(result: &Value) -> (Bytes, Bytes) {
                     let mut h = FxHashMap::with_capacity_and_hasher(hdrs_guard.len(), Default::default());
                     for (k, v) in hdrs_guard.iter() {
                         h.insert(k.clone(), match v {
-                            Value::String(s) => (**s).clone(),
+                            Value::String(s) => s.to_string(),
                             other => format!("{}", other),
                         });
                     }
@@ -828,7 +828,7 @@ fn build_http_response_parts(result: &Value) -> (Bytes, Bytes) {
 
             (status, body, headers)
         }
-        Value::String(s) => (200, (**s).clone(), FxHashMap::default()),
+        Value::String(s) => (200, s.to_string(), FxHashMap::default()),
         other => (200, format!("{}", other), FxHashMap::default()),
     };
 

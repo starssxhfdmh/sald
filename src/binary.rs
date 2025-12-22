@@ -3,7 +3,7 @@
 
 use crate::compiler::chunk::{Chunk, ClassConstant, Constant, FunctionConstant, UpvalueInfo};
 use crate::error::{Position, Span};
-use std::sync::Arc;
+use crate::vm::interner::intern;
 
 const MAGIC: &[u8; 4] = b"SALD";
 const VERSION: u8 = 4; // Added namespace_context and class_context for private access from closures
@@ -251,7 +251,7 @@ fn deserialize_constant(data: &[u8], cursor: &mut usize, version: u8) -> Result<
         1 => {
             // String
             let s = read_string(data, cursor)?;
-            Ok(Constant::String(Arc::new(s)))
+            Ok(Constant::String(intern(&s)))
         }
         2 => {
             // Function

@@ -41,7 +41,7 @@ pub enum Value {
     Null,
     Boolean(bool),
     Number(f64),
-    String(Arc<String>),
+    String(Arc<str>),
     Array(Arc<Mutex<Vec<Value>>>),
     Dictionary(Arc<Mutex<FxHashMap<String, Value>>>),
     Function(Arc<Function>),
@@ -145,7 +145,7 @@ impl Value {
 
     pub fn as_string(&self) -> Option<&str> {
         match self {
-            Value::String(s) => Some(s.as_str()),
+            Value::String(s) => Some(&**s),
             _ => None,
         }
     }
@@ -164,7 +164,7 @@ impl PartialEq for Value {
             (Value::Null, Value::Null) => true,
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
             (Value::Number(a), Value::Number(b)) => a == b,
-            (Value::String(a), Value::String(b)) => a == b,
+            (Value::String(a), Value::String(b)) => Arc::ptr_eq(a, b) || a == b,
             (Value::Instance(a), Value::Instance(b)) => Arc::ptr_eq(a, b),
             (Value::Class(a), Value::Class(b)) => Arc::ptr_eq(a, b),
             (Value::Function(a), Value::Function(b)) => Arc::ptr_eq(a, b),

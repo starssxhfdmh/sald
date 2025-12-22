@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
     Number(f64),
-    String(Arc<String>),  // Arc to avoid clone on every access
+    String(Arc<str>),  // Arc to avoid clone on every access
     Function(FunctionConstant),
     Class(ClassConstant),
 }

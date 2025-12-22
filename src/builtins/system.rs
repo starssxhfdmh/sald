@@ -52,17 +52,17 @@ pub fn create_system_class() -> Class {
 
 /// Get operating system name (linux, windows, macos, etc.)
 fn system_os(_args: &[Value]) -> Result<Value, String> {
-    Ok(Value::String(Arc::new(std::env::consts::OS.to_string())))
+    Ok(Value::String(Arc::from(std::env::consts::OS.to_string())))
 }
 
 /// Get architecture (x86_64, aarch64, etc.)
 fn system_arch(_args: &[Value]) -> Result<Value, String> {
-    Ok(Value::String(Arc::new(std::env::consts::ARCH.to_string())))
+    Ok(Value::String(Arc::from(std::env::consts::ARCH.to_string())))
 }
 
 /// Get OS family (unix, windows, wasm, etc.)
 fn system_family(_args: &[Value]) -> Result<Value, String> {
-    Ok(Value::String(Arc::new(std::env::consts::FAMILY.to_string())))
+    Ok(Value::String(Arc::from(std::env::consts::FAMILY.to_string())))
 }
 
 /// Get number of logical CPUs
@@ -77,21 +77,21 @@ fn system_cpus(_args: &[Value]) -> Result<Value, String> {
 
 /// Get hostname
 fn system_hostname(_args: &[Value]) -> Result<Value, String> {
-    Ok(Value::String(Arc::new(
+    Ok(Value::String(Arc::from(
         System::host_name().unwrap_or_else(|| "unknown".to_string())
     )))
 }
 
 /// Get OS version (e.g., "Windows 11 (22H2)")
 fn system_os_version(_args: &[Value]) -> Result<Value, String> {
-    Ok(Value::String(Arc::new(
+    Ok(Value::String(Arc::from(
         System::long_os_version().unwrap_or_else(|| "unknown".to_string())
     )))
 }
 
 /// Get kernel version
 fn system_kernel_version(_args: &[Value]) -> Result<Value, String> {
-    Ok(Value::String(Arc::new(
+    Ok(Value::String(Arc::from(
         System::kernel_version().unwrap_or_else(|| "unknown".to_string())
     )))
 }
@@ -137,7 +137,7 @@ fn system_cpu_name(_args: &[Value]) -> Result<Value, String> {
         .first()
         .map(|cpu| cpu.brand().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    Ok(Value::String(Arc::new(name)))
+    Ok(Value::String(Arc::from(name)))
 }
 
 /// Get overall CPU usage percentage (0-100)
@@ -176,21 +176,21 @@ fn system_info(_args: &[Value]) -> Result<Value, String> {
     let mut info: FxHashMap<String, Value> = FxHashMap::default();
     
     // Basic
-    info.insert("os".to_string(), Value::String(Arc::new(std::env::consts::OS.to_string())));
-    info.insert("arch".to_string(), Value::String(Arc::new(std::env::consts::ARCH.to_string())));
-    info.insert("family".to_string(), Value::String(Arc::new(std::env::consts::FAMILY.to_string())));
+    info.insert("os".to_string(), Value::String(Arc::from(std::env::consts::OS.to_string())));
+    info.insert("arch".to_string(), Value::String(Arc::from(std::env::consts::ARCH.to_string())));
+    info.insert("family".to_string(), Value::String(Arc::from(std::env::consts::FAMILY.to_string())));
     info.insert("cpus".to_string(), Value::Number(
         std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as f64
     ));
     
     // Extended
-    info.insert("hostname".to_string(), Value::String(Arc::new(
+    info.insert("hostname".to_string(), Value::String(Arc::from(
         System::host_name().unwrap_or_else(|| "unknown".to_string())
     )));
-    info.insert("osVersion".to_string(), Value::String(Arc::new(
+    info.insert("osVersion".to_string(), Value::String(Arc::from(
         System::long_os_version().unwrap_or_else(|| "unknown".to_string())
     )));
-    info.insert("kernelVersion".to_string(), Value::String(Arc::new(
+    info.insert("kernelVersion".to_string(), Value::String(Arc::from(
         System::kernel_version().unwrap_or_else(|| "unknown".to_string())
     )));
     
@@ -204,7 +204,7 @@ fn system_info(_args: &[Value]) -> Result<Value, String> {
         .first()
         .map(|cpu| cpu.brand().to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    info.insert("cpuName".to_string(), Value::String(Arc::new(cpu_name)));
+    info.insert("cpuName".to_string(), Value::String(Arc::from(cpu_name)));
     
     // Uptime
     info.insert("uptime".to_string(), Value::Number(System::uptime() as f64));
@@ -220,7 +220,7 @@ fn system_getenv(args: &[Value]) -> Result<Value, String> {
     let name = super::get_string_arg(&args[0], "name")?;
     
     match std::env::var(&name) {
-        Ok(val) => Ok(Value::String(Arc::new(val))),
+        Ok(val) => Ok(Value::String(Arc::from(val))),
         Err(_) => Ok(Value::Null),
     }
 }
@@ -248,7 +248,7 @@ fn system_envs(_args: &[Value]) -> Result<Value, String> {
     let mut envs: FxHashMap<String, Value> = FxHashMap::default();
     
     for (key, value) in std::env::vars() {
-        envs.insert(key, Value::String(Arc::new(value)));
+        envs.insert(key, Value::String(Arc::from(value)));
     }
     
     Ok(Value::Dictionary(Arc::new(Mutex::new(envs))))

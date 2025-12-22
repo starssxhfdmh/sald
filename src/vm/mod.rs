@@ -5,6 +5,7 @@ pub mod gc;
 pub mod natives;
 pub mod value;
 pub mod vm;
+pub mod interner;
 
 pub use caller::{CallableNativeInstanceFn, CallableNativeStaticFn, ValueCaller};
 pub use natives::NativeFunction;

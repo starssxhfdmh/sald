@@ -63,7 +63,7 @@ fn dict_keys(recv: &Value, args: &[Value]) -> Result<Value, String> {
             let keys: Vec<Value> = dict
                 .lock()
                 .keys()
-                .map(|k| Value::String(Arc::new(k.clone())))
+                .map(|k| Value::String(Arc::from(k.clone())))
                 .collect();
             Ok(Value::Array(Arc::new(Mutex::new(keys))))
         }
@@ -93,7 +93,7 @@ fn dict_entries(recv: &Value, args: &[Value]) -> Result<Value, String> {
                 .iter()
                 .map(|(k, v)| {
                     Value::Array(Arc::new(Mutex::new(vec![
-                        Value::String(Arc::new(k.clone())),
+                        Value::String(Arc::from(k.clone())),
                         v.clone(),
                     ])))
                 })
@@ -194,7 +194,7 @@ fn dict_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
                 .iter()
                 .map(|(k, v)| format!("\"{}\": {}", k, v))
                 .collect();
-            Ok(Value::String(Arc::new(format!("{{{}}}", items.join(", ")))))
+            Ok(Value::String(Arc::from(format!("{{{}}}", items.join(", ")))))
         }
         _ => Err("Receiver must be a dictionary".to_string()),
     }

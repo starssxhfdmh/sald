@@ -24,7 +24,7 @@ pub fn create_process_class() -> Class {
 fn process_args(_args: &[Value]) -> Result<Value, String> {
     let args: Vec<Value> = std::env::args()
         .skip(1) // Skip the executable name
-        .map(|s| Value::String(Arc::new(s)))
+        .map(|s| Value::String(Arc::from(s)))
         .collect();
 
     Ok(Value::Array(Arc::new(Mutex::new(args))))
@@ -47,7 +47,7 @@ fn process_env(args: &[Value]) -> Result<Value, String> {
     };
 
     match std::env::var(&var_name) {
-        Ok(val) => Ok(Value::String(Arc::new(val))),
+        Ok(val) => Ok(Value::String(Arc::from(val))),
         Err(_) => Ok(Value::Null),
     }
 }
@@ -105,11 +105,11 @@ fn process_exec(args: &[Value]) -> Result<Value, String> {
 
             // Return stdout, or stderr if stdout is empty
             if !stdout.is_empty() {
-                Ok(Value::String(Arc::new(stdout)))
+                Ok(Value::String(Arc::from(stdout)))
             } else if !stderr.is_empty() {
-                Ok(Value::String(Arc::new(stderr)))
+                Ok(Value::String(Arc::from(stderr)))
             } else {
-                Ok(Value::String(Arc::new(String::new())))
+                Ok(Value::String(Arc::from(String::new())))
             }
         }
         Err(e) => Err(e.to_string()),
@@ -119,7 +119,7 @@ fn process_exec(args: &[Value]) -> Result<Value, String> {
 /// Get current working directory
 fn process_cwd(_args: &[Value]) -> Result<Value, String> {
     match std::env::current_dir() {
-        Ok(path) => Ok(Value::String(Arc::new(path.to_string_lossy().to_string()))),
+        Ok(path) => Ok(Value::String(Arc::from(path.to_string_lossy().to_string()))),
         Err(e) => Err(e.to_string()),
     }
 }

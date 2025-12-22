@@ -55,8 +55,8 @@ fn string_from_char_code(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let code = get_number_arg(&args[0], "code")? as u32;
     match char::from_u32(code) {
-        Some(c) => Ok(Value::String(Arc::new(c.to_string()))),
-        None => Ok(Value::String(Arc::new(String::new()))),
+        Some(c) => Ok(Value::String(Arc::from(c.to_string()))),
+        None => Ok(Value::String(Arc::from(String::new()))),
     }
 }
 
@@ -80,7 +80,7 @@ fn string_char_code_at(args: &[Value]) -> Result<Value, String> {
 
 fn string_constructor(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
-    Ok(Value::String(Arc::new(format!("{}", args[0]))))
+    Ok(Value::String(Arc::from(format!("{}", args[0]))))
 }
 
 fn string_length(recv: &Value, args: &[Value]) -> Result<Value, String> {
@@ -95,7 +95,7 @@ fn string_length(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn string_upper(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
-        Ok(Value::String(Arc::new(s.to_uppercase())))
+        Ok(Value::String(Arc::from(s.to_uppercase())))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -104,7 +104,7 @@ fn string_upper(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn string_lower(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
-        Ok(Value::String(Arc::new(s.to_lowercase())))
+        Ok(Value::String(Arc::from(s.to_lowercase())))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -113,7 +113,7 @@ fn string_lower(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn string_trim(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
-        Ok(Value::String(Arc::new(s.trim().to_string())))
+        Ok(Value::String(Arc::from(s.trim().to_string())))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -154,7 +154,7 @@ fn string_char_at(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if let Value::String(s) = recv {
         let idx = get_number_arg(&args[0], "index")? as usize;
         match s.chars().nth(idx) {
-            Some(c) => Ok(Value::String(Arc::new(c.to_string()))),
+            Some(c) => Ok(Value::String(Arc::from(c.to_string()))),
             None => Ok(Value::Null),
         }
     } else {
@@ -239,7 +239,7 @@ fn string_replace(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if let Value::String(s) = recv {
         let old = get_string_arg(&args[0], "pattern")?;
         let new = get_string_arg(&args[1], "replacement")?;
-        Ok(Value::String(Arc::new(s.replace(&old, &new))))
+        Ok(Value::String(Arc::from(s.replace(&old, &new))))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -251,7 +251,7 @@ fn string_split(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let sep = get_string_arg(&args[0], "separator")?;
         let parts: Vec<Value> = s
             .split(&sep)
-            .map(|p| Value::String(Arc::new(p.to_string())))
+            .map(|p| Value::String(Arc::from(p.to_string())))
             .collect();
         Ok(Value::Array(Arc::new(Mutex::new(parts))))
     } else {
@@ -280,7 +280,7 @@ fn string_substring(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let len = chars.len();
 
         if start > len {
-            return Ok(Value::String(Arc::new(String::new())));
+            return Ok(Value::String(Arc::from(String::new())));
         }
 
         let end = if args.len() == 2 {
@@ -291,11 +291,11 @@ fn string_substring(recv: &Value, args: &[Value]) -> Result<Value, String> {
         };
 
         if end <= start {
-            return Ok(Value::String(Arc::new(String::new())));
+            return Ok(Value::String(Arc::from(String::new())));
         }
 
         let result: String = chars[start..end].iter().collect();
-        Ok(Value::String(Arc::new(result)))
+        Ok(Value::String(Arc::from(result)))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -346,11 +346,11 @@ fn string_slice(recv: &Value, args: &[Value]) -> Result<Value, String> {
         };
 
         if end <= start {
-            return Ok(Value::String(Arc::new(String::new())));
+            return Ok(Value::String(Arc::from(String::new())));
         }
 
         let result: String = chars[start..end].iter().collect();
-        Ok(Value::String(Arc::new(result)))
+        Ok(Value::String(Arc::from(result)))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -376,7 +376,7 @@ fn string_pad_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
             return Ok(Value::String(Arc::clone(s)));
         }
         let padding: String = std::iter::repeat(pad_char).take(target_len - current_len).collect();
-        Ok(Value::String(Arc::new(format!("{}{}", padding, s))))
+        Ok(Value::String(Arc::from(format!("{}{}", padding, s))))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -400,7 +400,7 @@ fn string_pad_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
             return Ok(Value::String(Arc::clone(s)));
         }
         let padding: String = std::iter::repeat(pad_char).take(target_len - current_len).collect();
-        Ok(Value::String(Arc::new(format!("{}{}", s, padding))))
+        Ok(Value::String(Arc::from(format!("{}{}", s, padding))))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -411,7 +411,7 @@ fn string_repeat(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::String(s) = recv {
         let count = get_number_arg(&args[0], "count")? as usize;
-        Ok(Value::String(Arc::new(s.repeat(count))))
+        Ok(Value::String(Arc::from(s.repeat(count))))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -421,7 +421,7 @@ fn string_repeat(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn string_trim_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
-        Ok(Value::String(Arc::new(s.trim_start().to_string())))
+        Ok(Value::String(Arc::from(s.trim_start().to_string())))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -431,7 +431,7 @@ fn string_trim_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn string_trim_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
-        Ok(Value::String(Arc::new(s.trim_end().to_string())))
+        Ok(Value::String(Arc::from(s.trim_end().to_string())))
     } else {
         Err("Receiver must be a string".to_string())
     }
@@ -484,7 +484,7 @@ fn string_replace_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if let Value::String(s) = recv {
         let old = get_string_arg(&args[0], "pattern")?;
         let new = get_string_arg(&args[1], "replacement")?;
-        Ok(Value::String(Arc::new(s.replace(&old, &new))))
+        Ok(Value::String(Arc::from(s.replace(&old, &new))))
     } else {
         Err("Receiver must be a string".to_string())
     }

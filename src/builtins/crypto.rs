@@ -58,7 +58,7 @@ fn crypto_hash(args: &[Value]) -> Result<Value, String> {
         _ => return Err(format!("Unsupported hash algorithm: {}. Use sha256, sha512, md5, or sha1", algorithm)),
     };
 
-    Ok(Value::String(Arc::new(hash_hex)))
+    Ok(Value::String(Arc::from(hash_hex)))
 }
 
 /// Crypto.hmac(algorithm, key, data) - HMAC signing
@@ -84,13 +84,13 @@ fn crypto_hmac(args: &[Value]) -> Result<Value, String> {
         _ => return Err(format!("Unsupported HMAC algorithm: {}. Use sha256 or sha512", algorithm)),
     };
 
-    Ok(Value::String(Arc::new(hmac_hex)))
+    Ok(Value::String(Arc::from(hmac_hex)))
 }
 
 /// Crypto.uuid() - Generate UUID v4
 fn crypto_uuid(_args: &[Value]) -> Result<Value, String> {
     let id = uuid::Uuid::new_v4().to_string();
-    Ok(Value::String(Arc::new(id)))
+    Ok(Value::String(Arc::from(id)))
 }
 
 /// Crypto.randomBytes(length) - Generate array of random bytes
@@ -133,7 +133,7 @@ fn crypto_base64_encode(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let data = get_string_arg(&args[0], "data")?;
     let encoded = general_purpose::STANDARD.encode(data.as_bytes());
-    Ok(Value::String(Arc::new(encoded)))
+    Ok(Value::String(Arc::from(encoded)))
 }
 
 /// Crypto.base64Decode(data) - Decode base64 to string
@@ -148,5 +148,5 @@ fn crypto_base64_decode(args: &[Value]) -> Result<Value, String> {
     let decoded = String::from_utf8(bytes)
         .map_err(|e| format!("UTF-8 decode error: {}", e))?;
     
-    Ok(Value::String(Arc::new(decoded)))
+    Ok(Value::String(Arc::from(decoded)))
 }

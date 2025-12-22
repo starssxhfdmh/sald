@@ -263,7 +263,7 @@ extern "C" fn closure_handler(
                     Value::Null
                 } else {
                     let cstr = unsafe { CStr::from_ptr(ptr) };
-                    Value::String(Arc::new(cstr.to_string_lossy().to_string()))
+                    Value::String(Arc::from(cstr.to_string_lossy().to_string()))
                 }
             }
             CType::Void => Value::Null,
@@ -768,15 +768,15 @@ fn ffi_read_string(args: &[Value]) -> Result<Value, String> {
         _ => return Err("Pointer must be a number".to_string()),
     };
     if ptr.is_null() {
-        return Ok(Value::String(Arc::new(String::new())));
+        return Ok(Value::String(Arc::from(String::new())));
     }
     let s = unsafe {
         match CStr::from_ptr(ptr).to_str() {
             Ok(s) => s.to_string(),
-            Err(_) => return Ok(Value::String(Arc::new(String::new()))),
+            Err(_) => return Ok(Value::String(Arc::from(String::new()))),
         }
     };
-    Ok(Value::String(Arc::new(s)))
+    Ok(Value::String(Arc::from(s)))
 }
 
 // ==================== Write Operations ====================
@@ -827,7 +827,7 @@ fn ffi_write_string(args: &[Value]) -> Result<Value, String> {
         _ => return Err("Pointer must be a number".to_string()),
     };
     let s = match &args[1] {
-        Value::String(s) => s.as_str(),
+        Value::String(s) => &**s,
         _ => return Err("Value must be a string".to_string()),
     };
     if ptr.is_null() {
@@ -864,7 +864,7 @@ fn ffi_sizeof(args: &[Value]) -> Result<Value, String> {
         return Err("Ffi.sizeof expects 1 argument (type_name)".to_string());
     }
     let type_name = match &args[0] {
-        Value::String(s) => s.as_str(),
+        Value::String(s) => &**s,
         _ => return Err("Type name must be a string".to_string()),
     };
     let ctype = CType::from_str(type_name)?;
@@ -906,7 +906,7 @@ fn ffi_open(args: &[Value]) -> Result<Value, String> {
     );
     instance.fields.insert(
         "_path".to_string(),
-        Value::String(Arc::new(full_path)),
+        Value::String(Arc::from(full_path)),
     );
 
     std::mem::forget(lib_handle);
@@ -1328,7 +1328,7 @@ unsafe fn call_with_types(
     for (val, typ) in values.iter().zip(arg_types.iter()) {
         if *typ == CType::CString {
             if let Value::String(s) = val {
-                let c_str = CString::new(s.as_str())
+                let c_str = CString::new(&**s)
                     .map_err(|_| "Invalid C string (contains null byte)")?;
                 cstrings.push(c_str);
             }

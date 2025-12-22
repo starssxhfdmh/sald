@@ -82,8 +82,8 @@ fn regex_new(args: &[Value]) -> Result<Value, String> {
     // Create a Regex instance with the pattern stored
     let class = Arc::new(create_regex_class());
     let mut instance = Instance::new(class);
-    instance.fields.insert("_pattern".to_string(), Value::String(Arc::new(pattern)));
-    instance.fields.insert("_flags".to_string(), Value::String(Arc::new(flags)));
+    instance.fields.insert("_pattern".to_string(), Value::String(Arc::from(pattern)));
+    instance.fields.insert("_flags".to_string(), Value::String(Arc::from(flags)));
 
     Ok(Value::Instance(Arc::new(Mutex::new(instance))))
 }
@@ -116,7 +116,7 @@ fn regex_match(recv: &Value, args: &[Value]) -> Result<Value, String> {
             let mut matches = Vec::new();
             for cap in captures.iter() {
                 if let Some(m) = cap {
-                    matches.push(Value::String(Arc::new(m.as_str().to_string())));
+                    matches.push(Value::String(Arc::from(m.as_str().to_string())));
                 } else {
                     matches.push(Value::Null);
                 }
@@ -145,7 +145,7 @@ fn regex_match_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
             let mut match_group = Vec::new();
             for cap in captures.iter() {
                 if let Some(m) = cap {
-                    match_group.push(Value::String(Arc::new(m.as_str().to_string())));
+                    match_group.push(Value::String(Arc::from(m.as_str().to_string())));
                 } else {
                     match_group.push(Value::Null);
                 }
@@ -170,7 +170,7 @@ fn regex_replace(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let replacement = get_string_arg(&args[1], "replacement")?;
         
         let result = regex.replace(&input, replacement.as_str());
-        Ok(Value::String(Arc::new(result.into_owned())))
+        Ok(Value::String(Arc::from(result.into_owned())))
     } else {
         Err("replace() must be called on a Regex instance".to_string())
     }
@@ -187,7 +187,7 @@ fn regex_replace_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let replacement = get_string_arg(&args[1], "replacement")?;
         
         let result = regex.replace_all(&input, replacement.as_str());
-        Ok(Value::String(Arc::new(result.into_owned())))
+        Ok(Value::String(Arc::from(result.into_owned())))
     } else {
         Err("replaceAll() must be called on a Regex instance".to_string())
     }
@@ -203,7 +203,7 @@ fn regex_split(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let input = get_string_arg(&args[0], "string")?;
         
         let parts: Vec<Value> = regex.split(&input)
-            .map(|s| Value::String(Arc::new(s.to_string())))
+            .map(|s| Value::String(Arc::from(s.to_string())))
             .collect();
         
         Ok(Value::Array(Arc::new(Mutex::new(parts))))
@@ -221,7 +221,7 @@ fn regex_pattern(recv: &Value, args: &[Value]) -> Result<Value, String> {
         if let Some(pattern) = inst.fields.get("_pattern") {
             Ok(pattern.clone())
         } else {
-            Ok(Value::String(Arc::new(String::new())))
+            Ok(Value::String(Arc::from(String::new())))
         }
     } else {
         Err("pattern() must be called on a Regex instance".to_string())
@@ -237,7 +237,7 @@ fn regex_flags(recv: &Value, args: &[Value]) -> Result<Value, String> {
         if let Some(flags) = inst.fields.get("_flags") {
             Ok(flags.clone())
         } else {
-            Ok(Value::String(Arc::new(String::new())))
+            Ok(Value::String(Arc::from(String::new())))
         }
     } else {
         Err("flags() must be called on a Regex instance".to_string())

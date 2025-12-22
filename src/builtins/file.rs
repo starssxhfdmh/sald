@@ -62,7 +62,7 @@ fn file_read(args: &[Value]) -> Result<Value, String> {
     tokio::spawn(async move {
         match tokio::fs::read_to_string(&path).await {
             Ok(content) => {
-                let _ = tx.send(Ok(Value::String(Arc::new(content))));
+                let _ = tx.send(Ok(Value::String(Arc::from(content))));
             }
             Err(e) => {
                 let _ = tx.send(Err(e.to_string()));
@@ -349,7 +349,7 @@ fn file_read_dir(args: &[Value]) -> Result<Value, String> {
                 let mut items = Vec::new();
                 while let Ok(Some(entry)) = entries.next_entry().await {
                     if let Ok(name) = entry.file_name().into_string() {
-                        items.push(Value::String(Arc::new(name)));
+                        items.push(Value::String(Arc::from(name)));
                     }
                 }
                 let _ = tx.send(Ok(Value::Array(Arc::new(Mutex::new(items)))));
@@ -377,7 +377,7 @@ fn file_join(args: &[Value]) -> Result<Value, String> {
         path.push(&part);
     }
 
-    Ok(Value::String(Arc::new(path.to_string_lossy().to_string())))
+    Ok(Value::String(Arc::from(path.to_string_lossy().to_string())))
 }
 
 /// File.dirname(path) - Sync get directory name
@@ -386,10 +386,10 @@ fn file_dirname(args: &[Value]) -> Result<Value, String> {
     let path = get_string_arg(&args[0], "path")?;
 
     match Path::new(&path).parent() {
-        Some(parent) => Ok(Value::String(Arc::new(
+        Some(parent) => Ok(Value::String(Arc::from(
             parent.to_string_lossy().to_string(),
         ))),
-        None => Ok(Value::String(Arc::new(String::new()))),
+        None => Ok(Value::String(Arc::from(String::new()))),
     }
 }
 
@@ -399,8 +399,8 @@ fn file_basename(args: &[Value]) -> Result<Value, String> {
     let path = get_string_arg(&args[0], "path")?;
 
     match Path::new(&path).file_name() {
-        Some(name) => Ok(Value::String(Arc::new(name.to_string_lossy().to_string()))),
-        None => Ok(Value::String(Arc::new(String::new()))),
+        Some(name) => Ok(Value::String(Arc::from(name.to_string_lossy().to_string()))),
+        None => Ok(Value::String(Arc::from(String::new()))),
     }
 }
 
@@ -410,7 +410,7 @@ fn file_ext(args: &[Value]) -> Result<Value, String> {
     let path = get_string_arg(&args[0], "path")?;
 
     match Path::new(&path).extension() {
-        Some(ext) => Ok(Value::String(Arc::new(ext.to_string_lossy().to_string()))),
-        None => Ok(Value::String(Arc::new(String::new()))),
+        Some(ext) => Ok(Value::String(Arc::from(ext.to_string_lossy().to_string()))),
+        None => Ok(Value::String(Arc::from(String::new()))),
     }
 }

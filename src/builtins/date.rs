@@ -74,7 +74,7 @@ fn is_leap_year(year: i32) -> bool {
 fn date_now(args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     let (year, month, day, hour, minute, second, _) = get_current_datetime();
-    Ok(Value::String(Arc::new(format!(
+    Ok(Value::String(Arc::from(format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         year, month, day, hour, minute, second
     ))))
@@ -135,5 +135,5 @@ fn date_format(args: &[Value]) -> Result<Value, String> {
         .replace("mm", &format!("{:02}", minute))
         .replace("ss", &format!("{:02}", second));
 
-    Ok(Value::String(Arc::new(result)))
+    Ok(Value::String(Arc::from(result)))
 }

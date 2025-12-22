@@ -374,7 +374,7 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             let mut result = String::with_capacity(a_str.len() + b_str.len());
             result.push_str(a_str);
             result.push_str(b_str);
-            Value::String(Arc::new(result))
+            Value::String(Arc::from(result))
         }
         (Value::String(a_str), b) => {
             // Write directly to buffer - no intermediate allocation!
@@ -382,7 +382,7 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             let mut result = String::with_capacity(a_str.len() + 32); // estimate for non-string
             result.push_str(a_str);
             let _ = write!(result, "{}", b);
-            Value::String(Arc::new(result))
+            Value::String(Arc::from(result))
         }
         (a, Value::String(b_str)) => {
             // Write directly to buffer - no intermediate allocation!
@@ -390,7 +390,7 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             let mut result = String::with_capacity(32 + b_str.len()); // estimate for non-string
             let _ = write!(result, "{}", a);
             result.push_str(b_str);
-            Value::String(Arc::new(result))
+            Value::String(Arc::from(result))
         }
         _ => {
             let a_type = a.type_name();
@@ -1545,7 +1545,7 @@ impl VM {
 
     fn read_string_constant(&self, idx: usize) -> SaldResult<String> {
         match &self.current_frame().function.chunk.constants[idx] {
-            Constant::String(s) => Ok((**s).clone()),
+            Constant::String(s) => Ok(s.to_string()),
             _ => Err(self.create_error(ErrorKind::TypeError, "Expected string constant")),
         }
     }
@@ -2075,11 +2075,11 @@ impl VM {
                 let idx = *idx as usize;
                 if idx < s.len() {
                     let ch = s.chars().nth(idx).unwrap_or(' ');
-                    self.stack.push(Value::String(Arc::new(ch.to_string())));
+                    self.stack.push(Value::String(Arc::from(ch.to_string())));
                 } else { return Err(self.create_error(ErrorKind::IndexError, &format!("Index {} out of bounds for string of length {}", idx, s.len()))); }
             }
             (Value::Dictionary(dict), Value::String(key)) => {
-                let value = dict.lock().get(key.as_str()).cloned().unwrap_or(Value::Null);
+                let value = dict.lock().get(&**key).cloned().unwrap_or(Value::Null);
                 self.stack.push(value);
             }
             _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Cannot index '{}' with '{}'", object.type_name(), index.type_name()))),
@@ -2467,7 +2467,7 @@ impl VM {
         if let Some(handler) = self.exception_handlers.pop() {
             while self.frames.len() > handler.frame_index + 1 { self.frames.pop(); }
             while self.stack.len() > handler.stack_size { self.stack.pop(); }
-            self.stack.push(Value::String(Arc::new(error_msg)));
+            self.stack.push(Value::String(Arc::from(error_msg)));
             self.current_frame_mut().ip = handler.catch_ip;
             Ok(())
         } else {

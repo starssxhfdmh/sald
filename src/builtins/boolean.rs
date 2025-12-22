@@ -22,7 +22,7 @@ fn boolean_constructor(args: &[Value]) -> Result<Value, String> {
 fn boolean_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Boolean(b) = recv {
-        Ok(Value::String(Arc::new(b.to_string())))
+        Ok(Value::String(Arc::from(b.to_string())))
     } else {
         Err("Receiver must be a boolean".to_string())
     }

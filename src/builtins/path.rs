@@ -38,13 +38,13 @@ fn get_string(args: &[Value], idx: usize, name: &str) -> Result<String, String> 
 /// Join path components
 fn path_join(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
-        return Ok(Value::String(Arc::new(String::new())));
+        return Ok(Value::String(Arc::from(String::new())));
     }
 
     let mut path = std::path::PathBuf::new();
     for (i, arg) in args.iter().enumerate() {
         match arg {
-            Value::String(s) => path.push(s.as_str()),
+            Value::String(s) => path.push(&**s),
             _ => {
                 return Err(format!(
                     "Argument {} must be a string, got {}",
@@ -55,7 +55,7 @@ fn path_join(args: &[Value]) -> Result<Value, String> {
         }
     }
 
-    Ok(Value::String(Arc::new(path.to_string_lossy().to_string())))
+    Ok(Value::String(Arc::from(path.to_string_lossy().to_string())))
 }
 
 /// Get directory name from path
@@ -64,10 +64,10 @@ fn path_dirname(args: &[Value]) -> Result<Value, String> {
     let path = Path::new(&path_str);
 
     match path.parent() {
-        Some(parent) => Ok(Value::String(Arc::new(
+        Some(parent) => Ok(Value::String(Arc::from(
             parent.to_string_lossy().to_string(),
         ))),
-        None => Ok(Value::String(Arc::new(String::new()))),
+        None => Ok(Value::String(Arc::from(String::new()))),
     }
 }
 
@@ -77,8 +77,8 @@ fn path_basename(args: &[Value]) -> Result<Value, String> {
     let path = Path::new(&path_str);
 
     match path.file_name() {
-        Some(name) => Ok(Value::String(Arc::new(name.to_string_lossy().to_string()))),
-        None => Ok(Value::String(Arc::new(String::new()))),
+        Some(name) => Ok(Value::String(Arc::from(name.to_string_lossy().to_string()))),
+        None => Ok(Value::String(Arc::from(String::new()))),
     }
 }
 
@@ -88,11 +88,11 @@ fn path_extname(args: &[Value]) -> Result<Value, String> {
     let path = Path::new(&path_str);
 
     match path.extension() {
-        Some(ext) => Ok(Value::String(Arc::new(format!(
+        Some(ext) => Ok(Value::String(Arc::from(format!(
             ".{}",
             ext.to_string_lossy()
         )))),
-        None => Ok(Value::String(Arc::new(String::new()))),
+        None => Ok(Value::String(Arc::from(String::new()))),
     }
 }
 
@@ -117,7 +117,7 @@ fn path_normalize(args: &[Value]) -> Result<Value, String> {
 
     // Use canonicalize if path exists, otherwise just clean it
     match path.canonicalize() {
-        Ok(canonical) => Ok(Value::String(Arc::new(
+        Ok(canonical) => Ok(Value::String(Arc::from(
             canonical.to_string_lossy().to_string(),
         ))),
         Err(_) => {
@@ -134,7 +134,7 @@ fn path_normalize(args: &[Value]) -> Result<Value, String> {
                 }
             }
             let result: std::path::PathBuf = components.iter().collect();
-            Ok(Value::String(Arc::new(
+            Ok(Value::String(Arc::from(
                 result.to_string_lossy().to_string(),
             )))
         }

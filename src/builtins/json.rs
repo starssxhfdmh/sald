@@ -50,7 +50,7 @@ fn json_stringify(args: &[Value]) -> Result<Value, String> {
         buf
     };
 
-    Ok(Value::String(Arc::new(json_string)))
+    Ok(Value::String(Arc::from(json_string)))
 }
 
 /// Convert serde_json::Value to Sald Value
@@ -62,7 +62,7 @@ fn json_to_sald_value(json: &serde_json::Value) -> Result<Value, String> {
             .as_f64()
             .map(Value::Number)
             .ok_or_else(|| "Cannot convert JSON number".to_string()),
-        serde_json::Value::String(s) => Ok(Value::String(Arc::new(s.clone()))),
+        serde_json::Value::String(s) => Ok(Value::String(Arc::from(s.clone()))),
         serde_json::Value::Array(arr) => {
             let sald_arr: Result<Vec<Value>, String> = arr.iter().map(json_to_sald_value).collect();
             Ok(Value::Array(Arc::new(Mutex::new(sald_arr?))))
@@ -86,7 +86,7 @@ fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
         Value::Number(n) => serde_json::Number::from_f64(*n)
             .map(serde_json::Value::Number)
             .ok_or_else(|| "Cannot convert number to JSON".to_string()),
-        Value::String(s) => Ok(serde_json::Value::String((**s).clone())),
+        Value::String(s) => Ok(serde_json::Value::String(s.to_string())),
         Value::Array(arr) => {
             let guard = arr.lock();
             let json_arr: Result<Vec<serde_json::Value>, String> =
