@@ -23,7 +23,7 @@
 ## 🛑 Project Status: Unmaintained
 
 > [!CAUTION]
-> **Project ini sudah tidak dikembangkan atau dipelihara lagi.** Kode ini tetap tersedia sebagai referensi atau arsip, namun tidak akan ada pembaruan fitur, perbaikan bug, atau peninjauan pull request di masa mendatang.
+> **This project is no longer being developed or maintained.** This code remains available for reference or archive purposes, but there will be no future feature updates, bug fixes, or pull request reviews.
 
 ---
 
