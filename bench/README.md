@@ -44,6 +44,4 @@ python bench/01_fibonacci.py
 ## Requirements
 
 For graph generation (optional):
-- `matplotlib` (best)
-- `Pillow` (fallback)
-- ASCII output if neither available
+- `matplotlib`

@@ -76,6 +76,16 @@ let g = Greeter("World")
 g.greet()
 ```
 
+## Benchmarks
+
+<p align="center">
+  <img src="bench/benchmark_results.png" alt="Sald vs Python Benchmark" width="700">
+</p>
+
+<p align="center">
+  <em>Sald vs Python performance comparison</em>
+</p>
+
 ## Resources
 
 - [Documentation](https://starssxhfdmh.github.io/sald-docs/) — Complete language reference

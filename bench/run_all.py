@@ -106,7 +106,6 @@ def generate_graph_matplotlib(results, output_path):
     bars2 = ax.bar(x + width/2, python_times, width, label='Python', color='#2196F3')
     
     ax.set_ylabel('Time (ms)', fontsize=12)
-    ax.set_xlabel('Benchmark', fontsize=12)
     ax.set_title('Sald vs Python Benchmark Comparison', fontsize=14, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(benchmarks, rotation=45, ha='right')
@@ -130,87 +129,6 @@ def generate_graph_matplotlib(results, output_path):
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    return True
-
-def generate_graph_pillow(results, output_path):
-    """Fallback graph using Pillow."""
-    from PIL import Image, ImageDraw, ImageFont
-    
-    width, height = 1200, 600
-    img = Image.new('RGB', (width, height), 'white')
-    draw = ImageDraw.Draw(img)
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", 14)
-        font_small = ImageFont.truetype("arial.ttf", 10)
-        font_title = ImageFont.truetype("arial.ttf", 18)
-    except:
-        font = ImageFont.load_default()
-        font_small = font
-        font_title = font
-    
-    # Title
-    draw.text((width//2, 20), "Sald vs Python Benchmark", fill='black', anchor='mt', font=font_title)
-    
-    benchmarks = list(results["sald"].keys())
-    if not benchmarks:
-        draw.text((width//2, height//2), "No results", fill='red', anchor='mm', font=font)
-        img.save(output_path)
-        return True
-    
-    max_time = max(
-        max(results["sald"].values()) if results["sald"] else 1,
-        max(results["python"].values()) if results["python"] else 1
-    )
-    
-    margin_left = 100
-    margin_right = 50
-    margin_top = 60
-    margin_bottom = 100
-    
-    chart_width = width - margin_left - margin_right
-    chart_height = height - margin_top - margin_bottom
-    
-    bar_width = chart_width // len(benchmarks) // 3
-    
-    for i, bench in enumerate(benchmarks):
-        x_center = margin_left + (i + 0.5) * (chart_width // len(benchmarks))
-        
-        # Sald bar
-        sald_time = results["sald"].get(bench, 0)
-        sald_height = int((sald_time / max_time) * chart_height) if max_time > 0 else 0
-        sald_x = x_center - bar_width - 2
-        draw.rectangle(
-            [sald_x, margin_top + chart_height - sald_height, sald_x + bar_width, margin_top + chart_height],
-            fill='#4CAF50'
-        )
-        draw.text((sald_x + bar_width//2, margin_top + chart_height - sald_height - 5),
-                  f"{sald_time:.0f}", fill='#4CAF50', anchor='mb', font=font_small)
-        
-        # Python bar
-        py_time = results["python"].get(bench, 0)
-        py_height = int((py_time / max_time) * chart_height) if max_time > 0 else 0
-        py_x = x_center + 2
-        draw.rectangle(
-            [py_x, margin_top + chart_height - py_height, py_x + bar_width, margin_top + chart_height],
-            fill='#2196F3'
-        )
-        draw.text((py_x + bar_width//2, margin_top + chart_height - py_height - 5),
-                  f"{py_time:.0f}", fill='#2196F3', anchor='mb', font=font_small)
-        
-        # Label
-        draw.text((x_center, height - margin_bottom + 10), bench, fill='black', anchor='mt', font=font_small)
-    
-    # Legend
-    draw.rectangle([width - 150, 50, width - 130, 70], fill='#4CAF50')
-    draw.text((width - 125, 60), "Sald", fill='black', anchor='lm', font=font_small)
-    draw.rectangle([width - 150, 75, width - 130, 95], fill='#2196F3')
-    draw.text((width - 125, 85), "Python", fill='black', anchor='lm', font=font_small)
-    
-    # Y-axis label
-    draw.text((20, height//2), "Time (ms)", fill='black', anchor='mm', font=font)
-    
-    img.save(output_path)
     return True
 
 def generate_ascii_chart(results):
@@ -258,19 +176,9 @@ def generate_graph(results, output_path):
         print(f"\n✓ Graph saved to: {output_path}")
         return True
     except ImportError:
-        print("\n⚠ matplotlib not found, trying Pillow...")
+        print("\n⚠ matplotlib not found, using ASCII instead...")
     except Exception as e:
-        print(f"\n⚠ matplotlib error: {e}, trying Pillow...")
-    
-    # Try Pillow
-    try:
-        generate_graph_pillow(results, output_path)
-        print(f"\n✓ Graph saved to: {output_path}")
-        return True
-    except ImportError:
-        print("\n⚠ Pillow not found, using ASCII fallback...")
-    except Exception as e:
-        print(f"\n⚠ Pillow error: {e}, using ASCII fallback...")
+        print(f"\n⚠ matplotlib error: {e}, using ASCII instead...")
     
     # ASCII fallback
     generate_ascii_chart(results)
