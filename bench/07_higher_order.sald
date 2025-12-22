@@ -1,0 +1,97 @@
+// Benchmark: Higher-Order Functions
+// Tests: Function composition, closures, callbacks
+
+fun compose(...fns) {
+    return |x| {
+        let result = x
+        let i = fns.length() - 1
+        while i >= 0 {
+            result = fns[i](result)
+            i -= 1
+        }
+        return result
+    }
+}
+
+fun curry(fn) {
+    return |a| |b| fn(a, b)
+}
+
+fun memoize(fn) {
+    let cache = {}
+    return |n| {
+        let key = $"{n}"
+        if cache.has(key) {
+            return cache[key]
+        }
+        let result = fn(n)
+        cache[key] = result
+        return result
+    }
+}
+
+let start = Timer.now()
+
+// Compose functions
+let addOne = |x| x + 1
+let double = |x| x * 2
+let square = |x| x * x
+
+let composed = compose(addOne, double, square)
+
+let sum = 0
+let i = 0
+while i < 10000 {
+    sum += composed(i)
+    i += 1
+}
+
+// Currying
+let add = |a, b| a + b
+let curriedAdd = curry(add)
+let add5 = curriedAdd(5)
+
+let curried_sum = 0
+i = 0
+while i < 10000 {
+    curried_sum += add5(i)
+    i += 1
+}
+
+// Memoized fibonacci
+fun slow_fib(n) {
+    if n <= 1 { return n }
+    return slow_fib(n - 1) + slow_fib(n - 2)
+}
+
+let memo_fib = memoize(|n| {
+    if n <= 1 { return n }
+    return memo_fib(n - 1) + memo_fib(n - 2)
+})
+
+let fib_result = memo_fib(30)
+
+// Callback chains
+fun process(data, ...callbacks) {
+    let result = data
+    for cb in callbacks {
+        result = cb(result)
+    }
+    return result
+}
+
+let processed = process(
+    10,
+    |x| x + 1,
+    |x| x * 2,
+    |x| x - 5,
+    |x| x * x
+)
+
+let elapsed = Timer.now() - start
+
+Console.println($"Composed sum: {sum}")
+Console.println($"Curried sum: {curried_sum}")
+Console.println($"Memoized fib(30): {fib_result}")
+Console.println($"Processed: {processed}")
+Console.println($"Time: {elapsed}ms")

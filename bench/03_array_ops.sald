@@ -1,0 +1,31 @@
+// Benchmark: Array Operations
+// Tests: map, filter, reduce performance
+
+fun create_array(n) {
+    let arr = []
+    let i = 0
+    while i < n {
+        arr.push(i)
+        i += 1
+    }
+    return arr
+}
+
+let start = Timer.now()
+
+// Create array of 100000 elements
+let arr = create_array(100000)
+
+// Map: square each element
+let squared = arr.map(|x| x * x)
+
+// Filter: keep only even numbers
+let evens = squared.filter(|x| x % 2 == 0)
+
+// Reduce: sum all
+let total = evens.reduce(|a, b| a + b, 0)
+
+let elapsed = Timer.now() - start
+
+Console.println($"Total: {total}")
+Console.println($"Time: {elapsed}ms")

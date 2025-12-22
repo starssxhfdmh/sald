@@ -1,0 +1,102 @@
+// Benchmark: Prime Sieve (Sieve of Eratosthenes)
+// Tests: Combined array operations, loops, conditionals
+
+fun sieve(limit) {
+    // Initialize array with true values
+    let is_prime = []
+    let i = 0
+    while i <= limit {
+        is_prime.push(true)
+        i += 1
+    }
+    
+    is_prime[0] = false
+    is_prime[1] = false
+    
+    // Sieve
+    i = 2
+    while i * i <= limit {
+        if is_prime[i] {
+            let j = i * i
+            while j <= limit {
+                is_prime[j] = false
+                j += i
+            }
+        }
+        i += 1
+    }
+    
+    // Collect primes
+    let primes = []
+    i = 0
+    while i <= limit {
+        if is_prime[i] {
+            primes.push(i)
+        }
+        i += 1
+    }
+    
+    return primes
+}
+
+fun is_prime_check(n) {
+    if n < 2 { return false }
+    if n == 2 { return true }
+    if n % 2 == 0 { return false }
+    
+    let i = 3
+    while i * i <= n {
+        if n % i == 0 {
+            return false
+        }
+        i += 2
+    }
+    return true
+}
+
+let start = Timer.now()
+
+// Sieve for primes up to 100000
+let primes = sieve(100000)
+
+// Sum of primes
+let sum = 0
+for p in primes {
+    sum += p
+}
+
+// Individual prime checks
+let check_count = 0
+let i = 0
+while i < 10000 {
+    if is_prime_check(i) {
+        check_count += 1
+    }
+    i += 1
+}
+
+// Find nth prime
+fun nth_prime(n) {
+    let count = 0
+    let num = 2
+    while count < n {
+        if is_prime_check(num) {
+            count += 1
+            if count == n {
+                return num
+            }
+        }
+        num += 1
+    }
+    return num
+}
+
+let p1000 = nth_prime(1000)
+
+let elapsed = Timer.now() - start
+
+Console.println($"Primes found (sieve): {primes.length()}")
+Console.println($"Sum of primes: {sum}")
+Console.println($"Primes found (check): {check_count}")
+Console.println($"1000th prime: {p1000}")
+Console.println($"Time: {elapsed}ms")

@@ -1,0 +1,67 @@
+// Benchmark: Dictionary Operations
+// Tests: Dict creation, access, modification, iteration
+
+let start = Timer.now()
+
+// Create large dictionary
+let dict = {}
+let i = 0
+while i < 10000 {
+    dict[$"key_{i}"] = i * 2
+    i += 1
+}
+
+// Access operations
+let sum = 0
+i = 0
+while i < 10000 {
+    sum += dict[$"key_{i}"]
+    i += 1
+}
+
+// Check existence
+let exists_count = 0
+i = 0
+while i < 10000 {
+    if dict.has($"key_{i}") {
+        exists_count += 1
+    }
+    i += 1
+}
+
+// Get with default
+let with_default = 0
+i = 0
+while i < 100 {
+    with_default += dict.get($"missing_{i}", 0)
+    i += 1
+}
+
+// Nested dictionaries
+let nested = {}
+i = 0
+while i < 1000 {
+    nested[$"item_{i}"] = {
+        "id": i,
+        "name": $"Item {i}",
+        "data": {
+            "value": i * 10,
+            "active": i % 2 == 0
+        }
+    }
+    i += 1
+}
+
+// Access nested values
+let nested_sum = 0
+for key in nested.keys() {
+    nested_sum += nested[key]["data"]["value"]
+}
+
+let elapsed = Timer.now() - start
+
+Console.println($"Dict size: {dict.length()}")
+Console.println($"Sum: {sum}")
+Console.println($"Exists count: {exists_count}")
+Console.println($"Nested sum: {nested_sum}")
+Console.println($"Time: {elapsed}ms")

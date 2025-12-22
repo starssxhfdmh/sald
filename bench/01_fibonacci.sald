@@ -1,0 +1,16 @@
+// Benchmark: Recursive Fibonacci
+// Tests: Recursion overhead, function call performance
+
+fun fib(n) {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+let start = Timer.now()
+let result = fib(30)
+let elapsed = Timer.now() - start
+
+Console.println($"Fibonacci(30) = {result}")
+Console.println($"Time: {elapsed}ms")

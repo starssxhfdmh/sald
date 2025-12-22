@@ -1,0 +1,38 @@
+// Benchmark: String Manipulation
+// Tests: String concatenation, methods, interpolation
+
+let start = Timer.now()
+
+let result = ""
+let i = 0
+while i < 10000 {
+    result = result + "a"
+    i += 1
+}
+
+// String methods
+let upper = result.upper()
+let lower = upper.lower()
+let len = lower.length()
+
+// String interpolation
+let messages = []
+i = 0
+while i < 1000 {
+    messages.push($"Item {i}: value={i * 2}")
+    i += 1
+}
+
+// String operations
+let sample = "Hello World Hello World Hello World"
+let replaced = sample.replace("Hello", "Hi")
+let parts = sample.split(" ")
+let joined = parts.join("-")
+
+let elapsed = Timer.now() - start
+
+Console.println($"String length: {len}")
+Console.println($"Messages count: {messages.length()}")
+Console.println($"Replaced: {replaced}")
+Console.println($"Joined: {joined}")
+Console.println($"Time: {elapsed}ms")
