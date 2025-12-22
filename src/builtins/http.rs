@@ -14,7 +14,8 @@ use crate::vm::caller::CallableNativeInstanceFn;
 use crate::vm::value::{Class, Instance, NativeInstanceFn, SaldFuture, Value};
 use bytes::Bytes;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
+use parking_lot::{Mutex, RwLock};
 use tokio::sync::oneshot;
 
 /// Create the Http namespace with client functions and Server class
@@ -59,7 +60,7 @@ pub fn create_http_namespace() -> Value {
 
     Value::Namespace {
         name: "Http".to_string(),
-        members: Arc::new(Mutex::new(members)),
+        members: Arc::new(RwLock::new(members)),
         module_globals: None,
     }
 }
@@ -311,9 +312,9 @@ fn register_route(recv: &Value, args: &[Value], http_method: &str) -> Result<Val
     }
 
     if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
+        let inst_guard = inst.lock();
         if let Some(Value::Dictionary(routes)) = inst_guard.fields.get("_routes") {
-            let mut routes_guard = routes.lock().unwrap();
+            let mut routes_guard = routes.lock();
             let route_key = format!("{}:{}", http_method, path);
             routes_guard.insert(route_key, handler.clone());
         }
@@ -390,9 +391,9 @@ fn server_route_all(
 /// server.routes() - Get registered routes (for display)
 fn server_get_routes(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
+        let inst_guard = inst.lock();
         if let Some(Value::Dictionary(routes)) = inst_guard.fields.get("_routes") {
-            let routes_guard = routes.lock().unwrap();
+            let routes_guard = routes.lock();
             // Build clean array of route strings: ["GET /", "POST /api/users", ...]
             let mut route_list: Vec<Value> = routes_guard
                 .keys()
@@ -443,9 +444,9 @@ fn server_listen(
 
     // Extract routes from the instance
     let routes: Arc<FxHashMap<String, Value>> = if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
+        let inst_guard = inst.lock();
         if let Some(Value::Dictionary(routes_dict)) = inst_guard.fields.get("_routes") {
-            Arc::new(routes_dict.lock().unwrap().clone())
+            Arc::new(routes_dict.lock().clone())
         } else {
             Arc::new(FxHashMap::default())
         }
@@ -796,7 +797,7 @@ fn build_http_response_parts(result: &Value) -> (Bytes, Bytes) {
     // Extract status, body, and headers - avoid cloning body when possible
     let (status, body, headers): (u16, String, FxHashMap<String, String>) = match result {
         Value::Dictionary(dict) => {
-            let dict_guard = dict.lock().unwrap();
+            let dict_guard = dict.lock();
 
             let status = match dict_guard.get("status") {
                 Some(Value::Number(n)) => *n as u16,
@@ -812,7 +813,7 @@ fn build_http_response_parts(result: &Value) -> (Bytes, Bytes) {
 
             let headers: FxHashMap<String, String> =
                 if let Some(Value::Dictionary(hdrs)) = dict_guard.get("headers") {
-                    let hdrs_guard = hdrs.lock().unwrap();
+                    let hdrs_guard = hdrs.lock();
                     let mut h = FxHashMap::with_capacity_and_hasher(hdrs_guard.len(), Default::default());
                     for (k, v) in hdrs_guard.iter() {
                         h.insert(k.clone(), match v {

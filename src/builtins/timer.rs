@@ -3,7 +3,8 @@
 
 use crate::vm::value::{Class, NativeStaticFn, SaldFuture, Value};
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::Duration;
 use tokio::sync::oneshot;
 

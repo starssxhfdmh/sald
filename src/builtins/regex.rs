@@ -5,7 +5,8 @@ use super::{check_arity, check_arity_range, get_string_arg};
 use crate::vm::value::{Class, Instance, NativeInstanceFn, NativeStaticFn, Value};
 use regex::Regex as RustRegex;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 pub fn create_regex_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
@@ -92,7 +93,7 @@ fn regex_test(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let regex = get_regex_from_instance(&inst)?;
         let input = get_string_arg(&args[0], "string")?;
         
@@ -107,7 +108,7 @@ fn regex_match(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let regex = get_regex_from_instance(&inst)?;
         let input = get_string_arg(&args[0], "string")?;
         
@@ -134,7 +135,7 @@ fn regex_match_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let regex = get_regex_from_instance(&inst)?;
         let input = get_string_arg(&args[0], "string")?;
         
@@ -163,7 +164,7 @@ fn regex_replace(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let regex = get_regex_from_instance(&inst)?;
         let input = get_string_arg(&args[0], "string")?;
         let replacement = get_string_arg(&args[1], "replacement")?;
@@ -180,7 +181,7 @@ fn regex_replace_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let regex = get_regex_from_instance(&inst)?;
         let input = get_string_arg(&args[0], "string")?;
         let replacement = get_string_arg(&args[1], "replacement")?;
@@ -197,7 +198,7 @@ fn regex_split(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let regex = get_regex_from_instance(&inst)?;
         let input = get_string_arg(&args[0], "string")?;
         
@@ -216,7 +217,7 @@ fn regex_pattern(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         if let Some(pattern) = inst.fields.get("_pattern") {
             Ok(pattern.clone())
         } else {
@@ -232,7 +233,7 @@ fn regex_flags(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         if let Some(flags) = inst.fields.get("_flags") {
             Ok(flags.clone())
         } else {

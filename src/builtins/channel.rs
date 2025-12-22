@@ -6,7 +6,8 @@ use super::{check_arity, check_arity_range, get_number_arg};
 use crate::vm::value::{Class, Instance, NativeInstanceFn, NativeStaticFn, SaldFuture, Value};
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 /// Shared channel state
@@ -90,12 +91,12 @@ fn channel_send(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let state = get_channel_state(&inst)?;
         
         // Get sender and pending_count BEFORE entering async (to avoid holding lock across await)
         let (sender, pending_count) = {
-            let state_guard = state.lock().unwrap();
+            let state_guard = state.lock();
             if state_guard.closed {
                 return Err("Cannot send on closed channel".to_string());
             }
@@ -139,7 +140,7 @@ fn channel_receive(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let state = get_channel_state(&inst)?;
         
         let (tx, rx) = oneshot::channel();
@@ -147,7 +148,7 @@ fn channel_receive(recv: &Value, args: &[Value]) -> Result<Value, String> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 let (receiver_arc, pending_count) = {
-                    let state_guard = state.lock().unwrap();
+                    let state_guard = state.lock();
                     (state_guard.receiver.clone(), state_guard.pending_count.clone())
                 };
                 
@@ -180,9 +181,9 @@ fn channel_try_receive(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let state = get_channel_state(&inst)?;
-        let state_guard = state.lock().unwrap();
+        let state_guard = state.lock();
         
         if let Some(receiver_arc) = &state_guard.receiver {
             // Try to get lock without blocking
@@ -208,9 +209,9 @@ fn channel_close(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let state = get_channel_state(&inst)?;
-        let mut state_guard = state.lock().unwrap();
+        let mut state_guard = state.lock();
         
         state_guard.closed = true;
         state_guard.sender = None; // Drop sender to close channel
@@ -227,9 +228,9 @@ fn channel_is_closed(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     
     if let Value::Instance(inst) = recv {
-        let inst = inst.lock().unwrap();
+        let inst = inst.lock();
         let state = get_channel_state(&inst)?;
-        let state_guard = state.lock().unwrap();
+        let state_guard = state.lock();
         
         // Channel is truly "closed" only when:
         // 1. close() has been called (closed flag is true)

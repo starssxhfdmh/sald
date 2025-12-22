@@ -3,7 +3,8 @@
 
 use crate::vm::Value;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 /// Trait for calling Values (functions/closures) from native functions
 pub trait ValueCaller {

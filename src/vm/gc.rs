@@ -15,7 +15,8 @@
 
 use rustc_hash::FxHashSet;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
+use parking_lot::Mutex;
 
 /// GC configuration
 const INITIAL_THRESHOLD: usize = 10000; // Object count (lower = more frequent GC)
@@ -99,23 +100,17 @@ impl TrackedObject {
         match self {
             TrackedObject::Array(w) => {
                 if let Some(arc) = w.upgrade() {
-                    if let Ok(mut arr) = arc.lock() {
-                        arr.clear();
-                    }
+                    arc.lock().clear();
                 }
             }
             TrackedObject::Dictionary(w) => {
                 if let Some(arc) = w.upgrade() {
-                    if let Ok(mut dict) = arc.lock() {
-                        dict.clear();
-                    }
+                    arc.lock().clear();
                 }
             }
             TrackedObject::Instance(w) => {
                 if let Some(arc) = w.upgrade() {
-                    if let Ok(mut inst) = arc.lock() {
-                        inst.fields.clear();
-                    }
+                    arc.lock().fields.clear();
                 }
             }
         }
@@ -281,10 +276,9 @@ impl GcHeap {
             Value::Function(func) => {
                 // Trace upvalues (handled at collection level)
                 for upvalue in &func.upvalues {
-                    if let Ok(uv) = upvalue.lock() {
-                        if uv.closed.is_some() {
-                            // Closed upvalue contains a value that should be traced
-                        }
+                    let uv = upvalue.lock();
+                    if uv.closed.is_some() {
+                        // Closed upvalue contains a value that should be traced
                     }
                 }
             }

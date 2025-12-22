@@ -6,7 +6,8 @@ use super::{check_arity, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, SaldFuture, Value};
 use rustc_hash::FxHashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
 /// Resolve a path relative to the project root

@@ -5,7 +5,8 @@
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeInstanceFn, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 pub fn create_string_class() -> Class {
     let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();

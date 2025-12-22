@@ -6,7 +6,7 @@ use crate::compiler::Compiler;
 use crate::lexer::Scanner;
 use crate::parser::Parser;
 use crate::vm::VM;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 // Captured output for WASM (since we can't use stdout)
 static WASM_OUTPUT: Mutex<Vec<String>> = Mutex::new(Vec::new());

@@ -752,35 +752,29 @@ fn format_value(value: &sald_core::vm::Value, depth: usize) -> String {
         }
         Value::String(s) => format!("'{}'", s).green().to_string(),
         Value::Array(arr) => {
-            if let Ok(arr) = arr.lock() {
-                if arr.is_empty() {
-                    "[]".to_string()
-                } else if arr.len() <= 5 && depth < 2 {
-                    let items: Vec<String> = arr.iter()
-                        .map(|v| format_value(v, depth + 1))
-                        .collect();
-                    format!("[ {} ]", items.join(", "))
-                } else {
-                    format!("[Array({})]", arr.len()).bright_black().to_string()
-                }
+            let arr = arr.lock();
+            if arr.is_empty() {
+                "[]".to_string()
+            } else if arr.len() <= 5 && depth < 2 {
+                let items: Vec<String> = arr.iter()
+                    .map(|v| format_value(v, depth + 1))
+                    .collect();
+                format!("[ {} ]", items.join(", "))
             } else {
-                "[<locked>]".bright_black().to_string()
+                format!("[Array({})]", arr.len()).bright_black().to_string()
             }
         }
         Value::Dictionary(dict) => {
-            if let Ok(dict) = dict.lock() {
-                if dict.is_empty() {
-                    "{}".to_string()
-                } else if dict.len() <= 3 && depth < 2 {
-                    let items: Vec<String> = dict.iter()
-                        .map(|(k, v)| format!("{}: {}", k.cyan(), format_value(v, depth + 1)))
-                        .collect();
-                    format!("{{ {} }}", items.join(", "))
-                } else {
-                    format!("{{Object({} keys)}}", dict.len()).bright_black().to_string()
-                }
+            let dict = dict.lock();
+            if dict.is_empty() {
+                "{}".to_string()
+            } else if dict.len() <= 3 && depth < 2 {
+                let items: Vec<String> = dict.iter()
+                    .map(|(k, v)| format!("{}: {}", k.cyan(), format_value(v, depth + 1)))
+                    .collect();
+                format!("{{ {} }}", items.join(", "))
             } else {
-                "{<locked>}".bright_black().to_string()
+                format!("{{Object({} keys)}}", dict.len()).bright_black().to_string()
             }
         }
         Value::Function(f) => format!("[Function: {}]", f.name).cyan().to_string(),
@@ -795,19 +789,16 @@ fn format_value(value: &sald_core::vm::Value, depth: usize) -> String {
         }
         Value::Class(c) => format!("[Class: {}]", c.name).magenta().to_string(),
         Value::Instance(inst) => {
-            if let Ok(inst) = inst.lock() {
-                if inst.fields.is_empty() {
-                    format!("{} {{}}", inst.class_name.magenta())
-                } else if inst.fields.len() <= 3 && depth < 1 {
-                    let fields: Vec<String> = inst.fields.iter()
-                        .map(|(k, v)| format!("{}: {}", k, format_value(v, depth + 1)))
-                        .collect();
-                    format!("{} {{ {} }}", inst.class_name.magenta(), fields.join(", "))
-                } else {
-                    format!("{} {{...}}", inst.class_name.magenta())
-                }
+            let inst = inst.lock();
+            if inst.fields.is_empty() {
+                format!("{} {{}}", inst.class_name.magenta())
+            } else if inst.fields.len() <= 3 && depth < 1 {
+                let fields: Vec<String> = inst.fields.iter()
+                    .map(|(k, v)| format!("{}: {}", k, format_value(v, depth + 1)))
+                    .collect();
+                format!("{} {{ {} }}", inst.class_name.magenta(), fields.join(", "))
             } else {
-                "<instance locked>".bright_black().to_string()
+                format!("{} {{...}}", inst.class_name.magenta())
             }
         }
         Value::Future(_) => "[Future]".bright_black().to_string(),

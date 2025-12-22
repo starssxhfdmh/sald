@@ -4,7 +4,8 @@
 
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use sysinfo::System;
 
 pub fn create_system_class() -> Class {

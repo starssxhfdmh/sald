@@ -6,7 +6,8 @@ use super::{check_arity, check_arity_range, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use serde::Serialize;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 pub fn create_json_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
@@ -87,14 +88,14 @@ fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
             .ok_or_else(|| "Cannot convert number to JSON".to_string()),
         Value::String(s) => Ok(serde_json::Value::String((**s).clone())),
         Value::Array(arr) => {
-            let guard = arr.lock().unwrap();
+            let guard = arr.lock();
             let json_arr: Result<Vec<serde_json::Value>, String> =
                 guard.iter().map(sald_value_to_json).collect();
             Ok(serde_json::Value::Array(json_arr?))
         }
         Value::Dictionary(dict) => {
             let mut map = serde_json::Map::new();
-            let guard = dict.lock().unwrap();
+            let guard = dict.lock();
             for (key, val) in guard.iter() {
                 map.insert(key.clone(), sald_value_to_json(val)?);
             }
@@ -139,7 +140,7 @@ fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
         }
         Value::Array(arr) => {
             buf.push('[');
-            let guard = arr.lock().unwrap();
+            let guard = arr.lock();
             let mut first = true;
             for item in guard.iter() {
                 if !first { buf.push(','); }
@@ -151,7 +152,7 @@ fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
         }
         Value::Dictionary(dict) => {
             buf.push('{');
-            let guard = dict.lock().unwrap();
+            let guard = dict.lock();
             let mut first = true;
             for (key, val) in guard.iter() {
                 if !first { buf.push(','); }

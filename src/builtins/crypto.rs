@@ -4,8 +4,8 @@
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
-
+use std::sync::Arc;
+use parking_lot::Mutex;
 use base64::{Engine, engine::general_purpose};
 use hmac::{Hmac, Mac};
 use sha2::{Sha256, Sha512, Digest};

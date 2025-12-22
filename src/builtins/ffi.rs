@@ -37,7 +37,8 @@ use std::alloc::{alloc, Layout};
 use rustc_hash::FxHashMap;
 use std::ffi::{c_void, CStr, CString};
 use std::ptr;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
+use parking_lot::{Mutex, RwLock};
 
 // ==================== Type System ====================
 
@@ -144,14 +145,14 @@ static GLOBAL_CALLER_VTABLE: Mutex<Vec<SendConstPtr>> = Mutex::new(Vec::new());
 static ALLOCATION_SIZES: Mutex<Option<FxHashMap<usize, usize>>> = Mutex::new(None);
 
 fn init_allocations() {
-    let mut allocs = ALLOCATION_SIZES.lock().unwrap();
+    let mut allocs = ALLOCATION_SIZES.lock();
     if allocs.is_none() {
         *allocs = Some(FxHashMap::default());
     }
 }
 
 fn init_registry() {
-    let mut reg = CALLBACK_REGISTRY.write().unwrap();
+    let mut reg = CALLBACK_REGISTRY.write();
     if reg.is_none() {
         *reg = Some(FxHashMap::default());
     }
@@ -186,7 +187,7 @@ unsafe impl Send for ClosureData {}
 unsafe impl Sync for ClosureData {}
 
 fn init_closure_registry() {
-    let mut reg = CLOSURE_REGISTRY.write().unwrap();
+    let mut reg = CLOSURE_REGISTRY.write();
     if reg.is_none() {
         *reg = Some(FxHashMap::default());
     }
@@ -204,7 +205,7 @@ extern "C" fn closure_handler(
     
     // Get callback info
     let (callback_fn, arg_types, return_type) = {
-        let reg = CALLBACK_REGISTRY.read().unwrap();
+        let reg = CALLBACK_REGISTRY.read();
         if let Some(ref map) = *reg {
             if let Some(info) = map.get(&callback_id) {
                 (info.func.clone(), info.arg_types.clone(), info.return_type.clone())
@@ -222,8 +223,8 @@ extern "C" fn closure_handler(
     
     // Get global caller from top of stack
     let (data_ptr, vtable_ptr) = {
-        let ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
-        let vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+        let ptr_guard = GLOBAL_CALLER_PTR.lock();
+        let vtable_guard = GLOBAL_CALLER_VTABLE.lock();
         match (ptr_guard.last(), vtable_guard.last()) {
             (Some(SendPtr(p)), Some(SendConstPtr(v))) => (*p, *v),
             _ => {
@@ -301,10 +302,10 @@ extern "C" fn closure_handler(
 
 fn register_callback(func: Value, arg_types: Vec<CType>, return_type: CType) -> i64 {
     init_registry();
-    let mut id_guard = NEXT_CALLBACK_ID.lock().unwrap();
+    let mut id_guard = NEXT_CALLBACK_ID.lock();
     let id = *id_guard;
     *id_guard += 1;
-    let mut reg = CALLBACK_REGISTRY.write().unwrap();
+    let mut reg = CALLBACK_REGISTRY.write();
     if let Some(ref mut map) = *reg {
         map.insert(id, CallbackInfo { func, arg_types, return_type });
     }
@@ -312,18 +313,16 @@ fn register_callback(func: Value, arg_types: Vec<CType>, return_type: CType) -> 
 }
 
 fn unregister_callback(id: i64) {
-    if let Ok(mut reg) = CALLBACK_REGISTRY.write() {
-        if let Some(ref mut map) = *reg {
-            map.remove(&id);
-        }
+    let mut reg = CALLBACK_REGISTRY.write();
+    if let Some(ref mut map) = *reg {
+        map.remove(&id);
     }
 }
 
 fn get_callback(id: i64) -> Option<Value> {
-    if let Ok(reg) = CALLBACK_REGISTRY.read() {
-        if let Some(ref map) = *reg {
-            return map.get(&id).map(|info| info.func.clone());
-        }
+    let reg = CALLBACK_REGISTRY.read();
+    if let Some(ref map) = *reg {
+        return map.get(&id).map(|info| info.func.clone());
     }
     None
 }
@@ -337,16 +336,16 @@ fn set_global_caller(caller: &mut dyn ValueCaller) {
     };
 
     // Push onto stack for nested/reentrant call support
-    let mut ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
-    let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+    let mut ptr_guard = GLOBAL_CALLER_PTR.lock();
+    let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock();
     ptr_guard.push(SendPtr(data_ptr));
     vtable_guard.push(SendConstPtr(vtable_ptr));
 }
 
 fn clear_global_caller() {
     // Pop from stack (restore previous caller if any)
-    let mut ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
-    let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+    let mut ptr_guard = GLOBAL_CALLER_PTR.lock();
+    let mut vtable_guard = GLOBAL_CALLER_VTABLE.lock();
     ptr_guard.pop();
     vtable_guard.pop();
 }
@@ -362,8 +361,8 @@ pub extern "C" fn sald_invoke_callback(callback_id: i64, arg_count: i64, args: *
     };
 
     let (data_ptr, vtable_ptr) = {
-        let ptr_guard = GLOBAL_CALLER_PTR.lock().unwrap();
-        let vtable_guard = GLOBAL_CALLER_VTABLE.lock().unwrap();
+        let ptr_guard = GLOBAL_CALLER_PTR.lock();
+        let vtable_guard = GLOBAL_CALLER_VTABLE.lock();
         match (ptr_guard.last(), vtable_guard.last()) {
             (Some(SendPtr(p)), Some(SendConstPtr(v))) => (*p, *v),
             _ => {
@@ -603,7 +602,7 @@ pub fn create_ffi_namespace() -> Value {
 
     Value::Namespace {
         name: "Ffi".to_string(),
-        members: Arc::new(Mutex::new(members)),
+        members: Arc::new(RwLock::new(members)),
         module_globals: None,
     }
 }
@@ -631,7 +630,8 @@ fn ffi_alloc(args: &[Value]) -> Result<Value, String> {
         
         // Track allocation size for proper deallocation
         init_allocations();
-        if let Ok(mut allocs) = ALLOCATION_SIZES.lock() {
+        {
+            let mut allocs = ALLOCATION_SIZES.lock();
             if let Some(ref mut map) = *allocs {
                 map.insert(ptr as usize, size);
             }
@@ -656,7 +656,7 @@ fn ffi_free(args: &[Value]) -> Result<Value, String> {
     
     // Get allocation size and free
     let size = {
-        let mut allocs = ALLOCATION_SIZES.lock().unwrap();
+        let mut allocs = ALLOCATION_SIZES.lock();
         if let Some(ref mut map) = *allocs {
             map.remove(&ptr_val)
         } else {
@@ -958,7 +958,7 @@ fn library_call(
     // Parse options dict
     let options = if args.len() > 1 {
         match &args[1] {
-            Value::Dictionary(dict) => dict.lock().unwrap().clone(),
+            Value::Dictionary(dict) => dict.lock().clone(),
             _ => return Err("Second argument must be an options dictionary".to_string()),
         }
     } else {
@@ -976,14 +976,14 @@ fn library_call(
     // Parse arguments
     let (call_values, arg_types) = match options.get("args") {
         Some(Value::Array(arr)) => {
-            let arr_guard = arr.lock().unwrap();
+            let arr_guard = arr.lock();
             let mut values = Vec::new();
             let mut types = Vec::new();
 
             for (idx, arg_dict) in arr_guard.iter().enumerate() {
                 match arg_dict {
                     Value::Dictionary(d) => {
-                        let d_guard = d.lock().unwrap();
+                        let d_guard = d.lock();
                         
                         let type_str = match d_guard.get("type") {
                             Some(Value::String(s)) => s.to_string(),
@@ -1015,7 +1015,7 @@ fn library_call(
     let result = if let Value::Instance(inst) = recv {
         // Get handle pointer and release Instance lock immediately
         let lib_ptr = {
-            let inst_guard = inst.lock().unwrap();
+            let inst_guard = inst.lock();
             if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
                 let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
                 if ptr.is_null() {
@@ -1033,7 +1033,7 @@ fn library_call(
             
             // Get function pointer while holding the library lock
             let func_ptr = {
-                let lib_guard = lib_mutex.lock().unwrap();
+                let lib_guard = lib_mutex.lock();
 
                 let fn_name_c = CString::new(fn_name.as_str())
                     .map_err(|_| "Invalid function name")?;
@@ -1071,7 +1071,7 @@ fn library_symbol(recv: &Value, args: &[Value]) -> Result<Value, String> {
     };
 
     if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
+        let inst_guard = inst.lock();
         if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
             let ptr = *ptr as usize as *const Mutex<FfiLibrary>;
             if ptr.is_null() {
@@ -1080,7 +1080,7 @@ fn library_symbol(recv: &Value, args: &[Value]) -> Result<Value, String> {
 
             unsafe {
                 let lib_mutex = &*ptr;
-                let lib_guard = lib_mutex.lock().unwrap();
+                let lib_guard = lib_mutex.lock();
 
                 let symbol_name_c = CString::new(symbol_name.as_str())
                     .map_err(|_| "Invalid symbol name")?;
@@ -1101,7 +1101,7 @@ fn library_symbol(recv: &Value, args: &[Value]) -> Result<Value, String> {
 
 fn library_close(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
-        let mut inst_guard = inst.lock().unwrap();
+        let mut inst_guard = inst.lock();
 
         if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
             let ptr = *ptr as usize as *mut Mutex<FfiLibrary>;
@@ -1121,7 +1121,7 @@ fn library_close(recv: &Value, _args: &[Value]) -> Result<Value, String> {
 
 fn library_path(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
+        let inst_guard = inst.lock();
         if let Some(path) = inst_guard.fields.get("_path") {
             return Ok(path.clone());
         }
@@ -1161,14 +1161,14 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
     }
 
     let options = match &args[0] {
-        Value::Dictionary(dict) => dict.lock().unwrap().clone(),
+        Value::Dictionary(dict) => dict.lock().clone(),
         _ => return Err("Ffi.Callback expects an options dictionary".to_string()),
     };
 
     // Parse argument types
     let arg_types: Vec<CType> = match options.get("args") {
         Some(Value::Array(arr)) => {
-            let arr_guard = arr.lock().unwrap();
+            let arr_guard = arr.lock();
             let mut types = Vec::new();
             for (idx, t) in arr_guard.iter().enumerate() {
                 match t {
@@ -1223,7 +1223,7 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
     
     // Store closure data to keep it alive
     {
-        let mut reg = CLOSURE_REGISTRY.write().unwrap();
+        let mut reg = CLOSURE_REGISTRY.write();
         if let Some(ref mut map) = *reg {
             map.insert(callback_id, ClosureData {
                 cif,
@@ -1248,7 +1248,7 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
 /// Get the pointer to pass to C code
 fn callback_ptr(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
+        let inst_guard = inst.lock();
         
         if let Some(Value::Boolean(true)) = inst_guard.fields.get("_released") {
             return Err("Callback has been released".to_string());
@@ -1265,7 +1265,7 @@ fn callback_ptr(recv: &Value, _args: &[Value]) -> Result<Value, String> {
 /// Get the callback ID
 fn callback_id(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
-        let inst_guard = inst.lock().unwrap();
+        let inst_guard = inst.lock();
         
         if let Some(Value::Boolean(true)) = inst_guard.fields.get("_released") {
             return Err("Callback has been released".to_string());
@@ -1281,7 +1281,7 @@ fn callback_id(recv: &Value, _args: &[Value]) -> Result<Value, String> {
 /// Release the callback (unregister from registry)
 fn callback_release(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
-        let mut inst_guard = inst.lock().unwrap();
+        let mut inst_guard = inst.lock();
         
         if let Some(Value::Boolean(true)) = inst_guard.fields.get("_released") {
             return Ok(Value::Null); // Already released
@@ -1292,7 +1292,8 @@ fn callback_release(recv: &Value, _args: &[Value]) -> Result<Value, String> {
             unregister_callback(callback_id);
             
             // Also remove from closure registry to free the closure
-            if let Ok(mut reg) = CLOSURE_REGISTRY.write() {
+            {
+                let mut reg = CLOSURE_REGISTRY.write();
                 if let Some(ref mut map) = *reg {
                     map.remove(&callback_id);
                 }
@@ -1341,7 +1342,7 @@ unsafe fn call_with_types(
         let converted = match val {
             // Handle callback instance - extract the id for passing to C
             Value::Instance(inst) => {
-                let inst_guard = inst.lock().unwrap();
+                let inst_guard = inst.lock();
                 if let Some(Value::Number(id)) = inst_guard.fields.get("_id") {
                     ConvertedArg {
                         ffi_type: FfiType::u64(),

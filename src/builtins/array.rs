@@ -6,7 +6,8 @@ use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::caller::{CallableNativeInstanceFn, ValueCaller};
 use crate::vm::value::{Class, NativeInstanceFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 pub fn create_array_class() -> Class {
     let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
@@ -79,7 +80,7 @@ fn array_constructor(args: &[Value]) -> Result<Value, String> {
 fn array_length(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        Ok(Value::Number(arr.lock().unwrap().len() as f64))
+        Ok(Value::Number(arr.lock().len() as f64))
     } else {
         Err("Receiver must be an array".to_string())
     }
@@ -88,7 +89,7 @@ fn array_length(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_push(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Array(arr) = recv {
-        let mut arr = arr.lock().unwrap();
+        let mut arr = arr.lock();
         arr.push(args[0].clone());
         Ok(Value::Number(arr.len() as f64)) // Return new length like JavaScript
     } else {
@@ -99,7 +100,7 @@ fn array_push(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_pop(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        Ok(arr.lock().unwrap().pop().unwrap_or(Value::Null))
+        Ok(arr.lock().pop().unwrap_or(Value::Null))
     } else {
         Err("Receiver must be an array".to_string())
     }
@@ -109,7 +110,7 @@ fn array_pop(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_shift(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        let mut guard = arr.lock().unwrap();
+        let mut guard = arr.lock();
         if guard.is_empty() {
             Ok(Value::Null)
         } else {
@@ -126,7 +127,7 @@ fn array_unshift(recv: &Value, args: &[Value]) -> Result<Value, String> {
         return Err("Expected at least 1 argument".to_string());
     }
     if let Value::Array(arr) = recv {
-        let mut guard = arr.lock().unwrap();
+        let mut guard = arr.lock();
         // Add all arguments to the beginning in order
         for (i, arg) in args.iter().enumerate() {
             guard.insert(i, arg.clone());
@@ -142,7 +143,7 @@ fn array_remove_at(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let idx = get_number_arg(&args[0], "index")? as i64;
     if let Value::Array(arr) = recv {
-        let mut guard = arr.lock().unwrap();
+        let mut guard = arr.lock();
         let len = guard.len() as i64;
         // Handle negative indices
         let actual_idx = if idx < 0 { len + idx } else { idx };
@@ -164,7 +165,7 @@ fn array_splice(recv: &Value, args: &[Value]) -> Result<Value, String> {
     let start = get_number_arg(&args[0], "start")? as i64;
     
     if let Value::Array(arr) = recv {
-        let mut guard = arr.lock().unwrap();
+        let mut guard = arr.lock();
         let len = guard.len() as i64;
         
         // Normalize start index
@@ -209,7 +210,7 @@ fn array_splice(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_first(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        Ok(arr.lock().unwrap().first().cloned().unwrap_or(Value::Null))
+        Ok(arr.lock().first().cloned().unwrap_or(Value::Null))
     } else {
         Err("Receiver must be an array".to_string())
     }
@@ -218,7 +219,7 @@ fn array_first(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_last(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        Ok(arr.lock().unwrap().last().cloned().unwrap_or(Value::Null))
+        Ok(arr.lock().last().cloned().unwrap_or(Value::Null))
     } else {
         Err("Receiver must be an array".to_string())
     }
@@ -228,7 +229,7 @@ fn array_get(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Array(arr) = recv {
         let idx = get_number_arg(&args[0], "index")? as usize;
-        Ok(arr.lock().unwrap().get(idx).cloned().unwrap_or(Value::Null))
+        Ok(arr.lock().get(idx).cloned().unwrap_or(Value::Null))
     } else {
         Err("Receiver must be an array".to_string())
     }
@@ -238,7 +239,7 @@ fn array_set(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     if let Value::Array(arr) = recv {
         let idx = get_number_arg(&args[0], "index")? as usize;
-        let mut arr = arr.lock().unwrap();
+        let mut arr = arr.lock();
         if idx < arr.len() {
             arr[idx] = args[1].clone();
             drop(arr);
@@ -258,7 +259,7 @@ fn array_set(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_contains(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Array(arr) = recv {
-        let found = arr.lock().unwrap().iter().any(|v| v == &args[0]);
+        let found = arr.lock().iter().any(|v| v == &args[0]);
         Ok(Value::Boolean(found))
     } else {
         Err("Receiver must be an array".to_string())
@@ -268,7 +269,7 @@ fn array_contains(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Array(arr) = recv {
-        let idx = arr.lock().unwrap().iter().position(|v| v == &args[0]);
+        let idx = arr.lock().iter().position(|v| v == &args[0]);
         match idx {
             Some(i) => Ok(Value::Number(i as f64)),
             None => Ok(Value::Number(-1.0)),
@@ -284,7 +285,6 @@ fn array_join(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let sep = get_string_arg(&args[0], "separator")?;
         let items: Vec<String> = arr
             .lock()
-            .unwrap()
             .iter()
             .map(|v| format!("{}", v))
             .collect();
@@ -297,7 +297,7 @@ fn array_join(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_reverse(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        arr.lock().unwrap().reverse();
+        arr.lock().reverse();
         Ok(recv.clone()) // Return the array for method chaining
     } else {
         Err("Receiver must be an array".to_string())
@@ -309,7 +309,6 @@ fn array_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if let Value::Array(arr) = recv {
         let items: Vec<String> = arr
             .lock()
-            .unwrap()
             .iter()
             .map(|v| format!("{}", v))
             .collect();
@@ -324,7 +323,7 @@ fn array_slice(recv: &Value, args: &[Value]) -> Result<Value, String> {
         return Err(format!("Expected 1-2 arguments but got {}", args.len()));
     }
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let len = arr_ref.len() as i64;
 
         let start = get_number_arg(&args[0], "start")? as i64;
@@ -356,8 +355,8 @@ fn array_concat(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Array(arr) = recv {
         if let Value::Array(other) = &args[0] {
-            let mut result = arr.lock().unwrap().clone();
-            result.extend(other.lock().unwrap().iter().cloned());
+            let mut result = arr.lock().clone();
+            result.extend(other.lock().iter().cloned());
             Ok(Value::Array(Arc::new(Mutex::new(result))))
         } else {
             Err(format!(
@@ -373,7 +372,7 @@ fn array_concat(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_clear(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        arr.lock().unwrap().clear();
+        arr.lock().clear();
         Ok(recv.clone()) // Return array for chaining
     } else {
         Err("Receiver must be an array".to_string())
@@ -383,7 +382,7 @@ fn array_clear(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_is_empty(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        Ok(Value::Boolean(arr.lock().unwrap().is_empty()))
+        Ok(Value::Boolean(arr.lock().is_empty()))
     } else {
         Err("Receiver must be an array".to_string())
     }
@@ -393,7 +392,7 @@ fn array_is_empty(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_keys(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        let len = arr.lock().unwrap().len();
+        let len = arr.lock().len();
         let keys: Vec<Value> = (0..len).map(|i| Value::Number(i as f64)).collect();
         Ok(Value::Array(Arc::new(Mutex::new(keys))))
     } else {
@@ -409,7 +408,7 @@ fn array_map(recv: &Value, args: &[Value], caller: &mut dyn ValueCaller) -> Resu
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let mut result = Vec::with_capacity(arr_ref.len());
 
         for item in arr_ref.iter() {
@@ -433,7 +432,7 @@ fn array_filter(
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let mut result = Vec::new();
 
         for item in arr_ref.iter() {
@@ -459,7 +458,7 @@ fn array_for_each(
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
 
         for item in arr_ref.iter() {
             caller.call(callback, vec![item.clone()])?;
@@ -483,7 +482,7 @@ fn array_reduce(
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
 
         if arr_ref.is_empty() && args.len() == 1 {
             return Err("Cannot reduce empty array with no initial value".to_string());
@@ -511,7 +510,7 @@ fn array_find(recv: &Value, args: &[Value], caller: &mut dyn ValueCaller) -> Res
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
 
         for item in arr_ref.iter() {
             let call_result = caller.call(callback, vec![item.clone()])?;
@@ -536,7 +535,7 @@ fn array_find_index(
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
 
         for (i, item) in arr_ref.iter().enumerate() {
             let call_result = caller.call(callback, vec![item.clone()])?;
@@ -557,7 +556,7 @@ fn array_some(recv: &Value, args: &[Value], caller: &mut dyn ValueCaller) -> Res
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
 
         for item in arr_ref.iter() {
             let call_result = caller.call(callback, vec![item.clone()])?;
@@ -582,7 +581,7 @@ fn array_every(
     let callback = &args[0];
 
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
 
         for item in arr_ref.iter() {
             let call_result = caller.call(callback, vec![item.clone()])?;
@@ -604,7 +603,7 @@ fn array_sort(recv: &Value, args: &[Value], caller: &mut dyn ValueCaller) -> Res
     }
 
     if let Value::Array(arr) = recv {
-        let mut arr_mut = arr.lock().unwrap();
+        let mut arr_mut = arr.lock();
 
         if args.is_empty() {
             // Default sort: convert to string and compare
@@ -649,7 +648,7 @@ fn array_at(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Array(arr) = recv {
         let idx = get_number_arg(&args[0], "index")? as i64;
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let len = arr_ref.len() as i64;
         let actual_idx = if idx < 0 { len + idx } else { idx };
         if actual_idx < 0 || actual_idx >= len {
@@ -669,7 +668,7 @@ fn array_fill(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
     if let Value::Array(arr) = recv {
         let value = args[0].clone();
-        let mut arr_mut = arr.lock().unwrap();
+        let mut arr_mut = arr.lock();
         let len = arr_mut.len() as i64;
         
         let start = if args.len() > 1 {
@@ -702,7 +701,7 @@ fn flatten_array(arr: &[Value], depth: i64, result: &mut Vec<Value>) {
     for item in arr {
         if depth > 0 {
             if let Value::Array(inner) = item {
-                let inner_ref = inner.lock().unwrap();
+                let inner_ref = inner.lock();
                 flatten_array(&inner_ref, depth - 1, result);
                 continue;
             }
@@ -722,7 +721,7 @@ fn array_flat(recv: &Value, args: &[Value]) -> Result<Value, String> {
         } else {
             get_number_arg(&args[0], "depth")? as i64
         };
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let mut result = Vec::new();
         flatten_array(&arr_ref, depth, &mut result);
         Ok(Value::Array(Arc::new(Mutex::new(result))))
@@ -735,7 +734,7 @@ fn array_flat(recv: &Value, args: &[Value]) -> Result<Value, String> {
 fn array_to_reversed(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let mut result: Vec<Value> = arr_ref.clone();
         result.reverse();
         Ok(Value::Array(Arc::new(Mutex::new(result))))
@@ -754,14 +753,14 @@ fn array_flat_map(
     let callback = &args[0];
     
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let mut result = Vec::new();
         
         for item in arr_ref.iter() {
             let mapped = caller.call(callback, vec![item.clone()])?;
             // Flatten one level if result is array
             if let Value::Array(inner) = mapped {
-                let inner_ref = inner.lock().unwrap();
+                let inner_ref = inner.lock();
                 result.extend(inner_ref.iter().cloned());
             } else {
                 result.push(mapped);
@@ -784,7 +783,7 @@ fn array_to_sorted(
     }
     
     if let Value::Array(arr) = recv {
-        let arr_ref = arr.lock().unwrap();
+        let arr_ref = arr.lock();
         let mut result: Vec<Value> = arr_ref.clone();
         
         if args.is_empty() {

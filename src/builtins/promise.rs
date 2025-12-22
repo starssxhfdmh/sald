@@ -5,7 +5,8 @@
 use super::check_arity;
 use crate::vm::value::{Class, NativeStaticFn, SaldFuture, Value};
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
 pub fn create_promise_class() -> Class {
@@ -26,7 +27,7 @@ fn promise_all(args: &[Value]) -> Result<Value, String> {
     
     let futures = match &args[0] {
         Value::Array(arr) => {
-            let arr = arr.lock().unwrap();
+            let arr = arr.lock();
             arr.clone()
         }
         _ => return Err("Promise.all() expects an array of futures".to_string()),
@@ -45,7 +46,7 @@ fn promise_all(args: &[Value]) -> Result<Value, String> {
             match future_val {
                 Value::Future(fut) => {
                     let receiver = {
-                        let mut fut_guard = fut.lock().unwrap();
+                        let mut fut_guard = fut.lock();
                         fut_guard.take()
                     };
 
@@ -119,7 +120,7 @@ fn promise_race(args: &[Value]) -> Result<Value, String> {
     
     let futures = match &args[0] {
         Value::Array(arr) => {
-            let arr = arr.lock().unwrap();
+            let arr = arr.lock();
             arr.clone()
         }
         _ => return Err("Promise.race() expects an array of futures".to_string()),
@@ -139,7 +140,7 @@ fn promise_race(args: &[Value]) -> Result<Value, String> {
             match future_val {
                 Value::Future(fut) => {
                     let receiver = {
-                        let mut fut_guard = fut.lock().unwrap();
+                        let mut fut_guard = fut.lock();
                         fut_guard.take()
                     };
 
@@ -152,7 +153,7 @@ fn promise_race(args: &[Value]) -> Result<Value, String> {
                             };
 
                             // Try to send result (first one wins)
-                            if let Some(sender) = tx_clone.lock().unwrap().take() {
+                            if let Some(sender) = tx_clone.lock().take() {
                                 let _ = sender.send(result);
                             }
                         });
@@ -160,7 +161,7 @@ fn promise_race(args: &[Value]) -> Result<Value, String> {
                 }
                 // Non-future values resolve immediately (and win the race)
                 other => {
-                    if let Some(sender) = tx_clone.lock().unwrap().take() {
+                    if let Some(sender) = tx_clone.lock().take() {
                         let _ = sender.send(Ok(other));
                     }
                     break;

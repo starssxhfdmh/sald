@@ -1,0 +1,17 @@
+// Fibonacci benchmark for Sald
+
+// Recursive Fibonacci
+fun fib(n) {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+let n = 35
+Console.println($"Calculating fib({n})...")
+
+let start = Timer.now()
+let result = fib(n)
+let elapsed = Timer.now() - start
+
+Console.println($"fib({n}) = {result}")
+Console.println($"Time: {elapsed}ms")

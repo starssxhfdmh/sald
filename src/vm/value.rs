@@ -5,7 +5,8 @@
 use crate::compiler::Chunk;
 use rustc_hash::FxHashMap;
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::{Mutex, RwLock};
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::oneshot;
@@ -68,9 +69,9 @@ pub enum Value {
     /// For imported modules with alias, module_globals stores the original globals context
     Namespace {
         name: String,
-        members: Arc<Mutex<FxHashMap<String, Value>>>,
+        members: Arc<RwLock<FxHashMap<String, Value>>>,
         /// Optional: for imported modules, stores the module's globals for proper function scoping
-        module_globals: Option<Arc<std::sync::RwLock<FxHashMap<String, Value>>>>,
+        module_globals: Option<Arc<RwLock<FxHashMap<String, Value>>>>,
     },
     /// Enum value: holds variants as a HashMap
     Enum {
@@ -100,10 +101,9 @@ impl Value {
             Value::BoundMethod { .. } => "BoundMethod",
             Value::Class(_) => "Class",
             Value::Instance(inst) => {
-                if let Ok(inst) = inst.lock() {
-                    if !inst.class_name.is_empty() {
-                        return "Instance";
-                    }
+                let inst = inst.lock();
+                if !inst.class_name.is_empty() {
+                    return "Instance";
                 }
                 "Instance"
             }
@@ -121,18 +121,12 @@ impl Value {
             Value::Number(n) => *n != 0.0,
             Value::String(s) => !s.is_empty(),
             Value::Array(arr) => {
-                if let Ok(arr) = arr.lock() {
-                    !arr.is_empty()
-                } else {
-                    true
-                }
+                let arr = arr.lock();
+                !arr.is_empty()
             }
             Value::Dictionary(dict) => {
-                if let Ok(dict) = dict.lock() {
-                    !dict.is_empty()
-                } else {
-                    true
-                }
+                let dict = dict.lock();
+                !dict.is_empty()
             }
             _ => true,
         }
@@ -194,23 +188,17 @@ impl fmt::Display for Value {
             }
             Value::String(s) => write!(f, "{}", s),
             Value::Array(arr) => {
-                if let Ok(arr) = arr.lock() {
-                    let items: Vec<String> = arr.iter().map(|v| format!("{}", v)).collect();
-                    write!(f, "[{}]", items.join(", "))
-                } else {
-                    write!(f, "[<locked>]")
-                }
+                let arr = arr.lock();
+                let items: Vec<String> = arr.iter().map(|v| format!("{}", v)).collect();
+                write!(f, "[{}]", items.join(", "))
             }
             Value::Dictionary(dict) => {
-                if let Ok(dict) = dict.lock() {
-                    let items: Vec<String> = dict
-                        .iter()
-                        .map(|(k, v)| format!("\"{}\": {}", k, v))
-                        .collect();
-                    write!(f, "{{{}}}", items.join(", "))
-                } else {
-                    write!(f, "{{<locked>}}")
-                }
+                let dict = dict.lock();
+                let items: Vec<String> = dict
+                    .iter()
+                    .map(|(k, v)| format!("\"{}\": {}", k, v))
+                    .collect();
+                write!(f, "{{{}}}", items.join(", "))
             }
             Value::Function(func) => write!(f, "<fn {}>", func.name),
             Value::NativeFunction { class_name, .. } => write!(f, "<native fn {}>", class_name),
@@ -218,11 +206,8 @@ impl fmt::Display for Value {
             Value::BoundMethod { method, .. } => write!(f, "<bound method {}>", method.name),
             Value::Class(class) => write!(f, "<class {}>", class.name),
             Value::Instance(inst) => {
-                if let Ok(inst) = inst.lock() {
-                    write!(f, "<{} instance>", inst.class_name)
-                } else {
-                    write!(f, "<instance locked>")
-                }
+                let inst = inst.lock();
+                write!(f, "<{} instance>", inst.class_name)
             }
             Value::Future(_) => write!(f, "<Future>"),
             Value::Namespace { name, .. } => write!(f, "<namespace {}>", name),

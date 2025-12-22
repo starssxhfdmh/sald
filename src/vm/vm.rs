@@ -4,7 +4,8 @@
 // Implements suspend/resume for true non-blocking async
 
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
+use parking_lot::{Mutex, RwLock};
 
 use crate::builtins;
 use crate::compiler::chunk::{Chunk, Constant};
@@ -281,7 +282,7 @@ fn op_define_global(vm: &mut VM) -> ControlFlow {
     match vm.read_string_constant(idx) {
         Ok(name) => {
             if let Some(value) = vm.stack.pop() {
-                vm.globals.write().unwrap().insert(name, value);
+                vm.globals.write().insert(name, value);
             }
             ControlFlow::Continue
         }
@@ -294,7 +295,7 @@ fn op_get_global(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     match vm.read_string_constant(idx) {
         Ok(name) => {
-            let value = vm.globals.read().unwrap().get(&name).cloned();
+            let value = vm.globals.read().get(&name).cloned();
             match value {
                 Some(v) => {
                     vm.stack.push(v);
@@ -315,14 +316,14 @@ fn op_set_global(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     match vm.read_string_constant(idx) {
         Ok(name) => {
-            if !vm.globals.read().unwrap().contains_key(&name) {
+            if !vm.globals.read().contains_key(&name) {
                 return ControlFlow::Error(vm.create_error(
                     ErrorKind::NameError,
                     &format!("Undefined variable '{}'", name),
                 ));
             }
             if let Some(value) = vm.stack.last().cloned() {
-                vm.globals.write().unwrap().insert(name, value);
+                vm.globals.write().insert(name, value);
             }
             ControlFlow::Continue
         }
@@ -367,9 +368,30 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             }
             return ControlFlow::Continue;
         }
-        (Value::String(a), Value::String(b)) => Value::String(Arc::new(format!("{}{}", a, b))),
-        (Value::String(a), b) => Value::String(Arc::new(format!("{}{}", a, b))),
-        (a, Value::String(b)) => Value::String(Arc::new(format!("{}{}", a, b))),
+        // Optimized string concatenation - avoid format! overhead
+        (Value::String(a_str), Value::String(b_str)) => {
+            // Pre-allocate exact capacity
+            let mut result = String::with_capacity(a_str.len() + b_str.len());
+            result.push_str(a_str);
+            result.push_str(b_str);
+            Value::String(Arc::new(result))
+        }
+        (Value::String(a_str), b) => {
+            // Write directly to buffer - no intermediate allocation!
+            use std::fmt::Write;
+            let mut result = String::with_capacity(a_str.len() + 32); // estimate for non-string
+            result.push_str(a_str);
+            let _ = write!(result, "{}", b);
+            Value::String(Arc::new(result))
+        }
+        (a, Value::String(b_str)) => {
+            // Write directly to buffer - no intermediate allocation!
+            use std::fmt::Write;
+            let mut result = String::with_capacity(32 + b_str.len()); // estimate for non-string
+            let _ = write!(result, "{}", a);
+            result.push_str(b_str);
+            Value::String(Arc::new(result))
+        }
         _ => {
             let a_type = a.type_name();
             let b_type = b.type_name();
@@ -840,7 +862,7 @@ fn op_import_as(vm: &mut VM) -> ControlFlow {
 fn op_get_upvalue(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     let upvalue = vm.current_frame().function.upvalues[idx].clone();
-    let upvalue_ref = upvalue.lock().unwrap();
+    let upvalue_ref = upvalue.lock();
     let value = if let Some(ref closed) = upvalue_ref.closed {
         (**closed).clone()
     } else {
@@ -855,7 +877,7 @@ fn op_set_upvalue(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     let value = vm.stack.last().cloned().unwrap_or(Value::Null);
     let upvalue = vm.current_frame().function.upvalues[idx].clone();
-    let mut upvalue_ref = upvalue.lock().unwrap();
+    let mut upvalue_ref = upvalue.lock();
     if upvalue_ref.closed.is_some() {
         upvalue_ref.closed = Some(Box::new(value));
     } else {
@@ -915,7 +937,7 @@ fn op_await(vm: &mut VM) -> ControlFlow {
     let value = vm.stack.pop().unwrap_or(Value::Null);
     match value {
         Value::Future(future_arc) => {
-            let mut guard = future_arc.lock().unwrap();
+            let mut guard = future_arc.lock();
             if let Some(future) = guard.take() {
                 drop(guard);
                 return ControlFlow::Suspend(future.receiver);
@@ -1169,7 +1191,7 @@ impl ValueCaller for VM {
     }
 
     fn get_globals(&self) -> FxHashMap<String, Value> {
-        self.globals.read().unwrap().clone()
+        self.globals.read().clone()
     }
 
     fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> {
@@ -1200,7 +1222,7 @@ impl ValueCaller for VM {
     }
 
     fn get_globals(&self) -> FxHashMap<String, Value> {
-        self.globals.read().unwrap().clone()
+        self.globals.read().clone()
     }
 
     fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> {
@@ -1260,7 +1282,7 @@ impl VM {
 
     pub fn set_args(&mut self, args: Vec<String>) { self.args = args; }
     pub fn set_gc_stats_enabled(&mut self, enabled: bool) { self.gc_stats_enabled = enabled; }
-    pub fn get_globals(&self) -> FxHashMap<String, Value> { self.globals.read().unwrap().clone() }
+    pub fn get_globals(&self) -> FxHashMap<String, Value> { self.globals.read().clone() }
     pub fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> { self.globals.clone() }
     pub fn gc_stats(&self) -> super::gc::GcStats { self.gc.get_stats() }
 
@@ -1278,7 +1300,7 @@ impl VM {
     pub fn collect_garbage(&mut self) {
         let mut roots: Vec<&Value> = Vec::new();
         for value in &self.stack { roots.push(value); }
-        let globals_guard = self.globals.read().unwrap();
+        let globals_guard = self.globals.read();
         for value in globals_guard.values() { roots.push(value); }
         self.gc.collect(roots);
         if self.gc_stats_enabled {
@@ -1530,7 +1552,7 @@ impl VM {
 
     fn capture_upvalue(&mut self, location: usize) -> Arc<Mutex<UpvalueObj>> {
         for upvalue in &self.open_upvalues {
-            if upvalue.lock().unwrap().location == location {
+            if upvalue.lock().location == location {
                 return upvalue.clone();
             }
         }
@@ -1541,10 +1563,10 @@ impl VM {
 
     fn close_upvalues(&mut self, last: usize) {
         self.open_upvalues.retain(|upvalue| {
-            let location = upvalue.lock().unwrap().location;
+            let location = upvalue.lock().location;
             if location >= last {
                 let value = self.stack.get(location).cloned().unwrap_or(Value::Null);
-                upvalue.lock().unwrap().closed = Some(Box::new(value));
+                upvalue.lock().closed = Some(Box::new(value));
                 false
             } else {
                 true
@@ -1568,7 +1590,7 @@ impl VM {
             match arg {
                 Value::SpreadMarker(boxed_value) => {
                     if let Value::Array(arr) = *boxed_value {
-                        for elem in arr.lock().unwrap().iter() { expanded_args.push(elem.clone()); }
+                        for elem in arr.lock().iter() { expanded_args.push(elem.clone()); }
                     } else {
                         expanded_args.push(*boxed_value);
                     }
@@ -1796,7 +1818,7 @@ impl VM {
         let receiver = self.stack.get(self.stack.len() - arg_count - 1).cloned().unwrap_or(Value::Null);
         match receiver {
             Value::Instance(ref instance) => {
-                let class = instance.lock().unwrap().class.clone();
+                let class = instance.lock().class.clone();
                 
                 // Check private access BEFORE calling the method
                 if Self::is_private(name) && !self.is_in_class(&class.name) {
@@ -1806,7 +1828,7 @@ impl VM {
                     ));
                 }
                 
-                if let Some(field) = instance.lock().unwrap().fields.get(name).cloned() {
+                if let Some(field) = instance.lock().fields.get(name).cloned() {
                     let stack_idx = self.stack.len() - arg_count - 1;
                     self.stack[stack_idx] = field;
                     return self.call_value(arg_count);
@@ -1863,7 +1885,7 @@ impl VM {
             }
             Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::Null | Value::Array(_) | Value::Dictionary(_) => {
                 let class_name = builtins::get_builtin_class_name(&receiver);
-                let class = if let Some(Value::Class(c)) = self.globals.read().unwrap().get(class_name).cloned() { c }
+                let class = if let Some(Value::Class(c)) = self.globals.read().get(class_name).cloned() { c }
                 else { return Err(self.create_error(ErrorKind::RuntimeError, &format!("Built-in class '{}' not found", class_name))); };
                 if let Some(callable_method) = class.callable_native_instance_methods.get(name).copied() {
                     let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
@@ -1893,7 +1915,7 @@ impl VM {
                     ));
                 }
                 
-                if let Ok(m) = members.lock() {
+                if let Some(m) = members.try_read() {
                     if let Some(member) = m.get(name).cloned() {
                         drop(m);
                         let stack_idx = self.stack.len() - arg_count - 1;
@@ -1928,7 +1950,7 @@ impl VM {
         let obj = self.stack.pop().unwrap_or(Value::Null);
         match obj {
             Value::Instance(instance) => {
-                let inst_guard = instance.lock().unwrap();
+                let inst_guard = instance.lock();
                 let class_name = inst_guard.class.name.clone();
                 
                 // Check private access for fields and methods
@@ -1973,7 +1995,7 @@ impl VM {
             Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::Null | Value::Array(_) | Value::Dictionary(_) => {
                 let class_name = builtins::get_builtin_class_name(&obj);
                 let method_result = {
-                    let globals_guard = self.globals.read().unwrap();
+                    let globals_guard = self.globals.read();
                     if let Some(Value::Class(class)) = globals_guard.get(class_name) {
                         if let Some(method) = class.native_instance_methods.get(name) {
                             Ok((*method, name.to_string()))
@@ -1996,7 +2018,8 @@ impl VM {
                     ));
                 }
                 
-                if let Ok(m) = members.lock() {
+                {
+                    let m = members.read();
                     if let Some(value) = m.get(name) {
                         self.stack.push(value.clone());
                     } else {
@@ -2020,7 +2043,7 @@ impl VM {
         let value = self.stack.pop().unwrap_or(Value::Null);
         let obj = self.stack.pop().unwrap_or(Value::Null);
         if let Value::Instance(instance) = obj {
-            let class_name = instance.lock().unwrap().class.name.clone();
+            let class_name = instance.lock().class.name.clone();
             
             // Check private access
             if Self::is_private(name) && !self.is_in_class(&class_name) {
@@ -2030,7 +2053,7 @@ impl VM {
                 ));
             }
             
-            instance.lock().unwrap().fields.insert(name.to_string(), value.clone());
+            instance.lock().fields.insert(name.to_string(), value.clone());
             self.stack.push(value);
             Ok(())
         } else {
@@ -2044,7 +2067,7 @@ impl VM {
         match (&object, &index) {
             (Value::Array(arr), Value::Number(idx)) => {
                 let idx = *idx as usize;
-                let arr = arr.lock().unwrap();
+                let arr = arr.lock();
                 if idx < arr.len() { self.stack.push(arr[idx].clone()); }
                 else { return Err(self.create_error(ErrorKind::IndexError, &format!("Index {} out of bounds for array of length {}", idx, arr.len()))); }
             }
@@ -2056,7 +2079,7 @@ impl VM {
                 } else { return Err(self.create_error(ErrorKind::IndexError, &format!("Index {} out of bounds for string of length {}", idx, s.len()))); }
             }
             (Value::Dictionary(dict), Value::String(key)) => {
-                let value = dict.lock().unwrap().get(key.as_str()).cloned().unwrap_or(Value::Null);
+                let value = dict.lock().get(key.as_str()).cloned().unwrap_or(Value::Null);
                 self.stack.push(value);
             }
             _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Cannot index '{}' with '{}'", object.type_name(), index.type_name()))),
@@ -2071,12 +2094,12 @@ impl VM {
         match (&object, &index) {
             (Value::Array(arr), Value::Number(idx)) => {
                 let idx = *idx as usize;
-                let mut arr = arr.lock().unwrap();
+                let mut arr = arr.lock();
                 if idx < arr.len() { arr[idx] = value.clone(); self.stack.push(value); }
                 else { return Err(self.create_error(ErrorKind::IndexError, &format!("Index {} out of bounds for array of length {}", idx, arr.len()))); }
             }
             (Value::Dictionary(dict), Value::String(key)) => {
-                dict.lock().unwrap().insert(key.to_string(), value.clone());
+                dict.lock().insert(key.to_string(), value.clone());
                 self.stack.push(value);
             }
             _ => return Err(self.create_error(ErrorKind::TypeError, &format!("Cannot set index on '{}' with '{}'", object.type_name(), index.type_name()))),
@@ -2097,7 +2120,7 @@ impl VM {
         for (key, value) in pairs {
             if let (Value::Null, Value::SpreadMarker(spread_value)) = (&key, &value) {
                 if let Value::Dictionary(dict) = spread_value.as_ref() {
-                    for (k, v) in dict.lock().unwrap().iter() { map.insert(k.clone(), v.clone()); }
+                    for (k, v) in dict.lock().iter() { map.insert(k.clone(), v.clone()); }
                 } else { return Err(self.create_error(ErrorKind::TypeError, "Can only spread dictionaries with **")); }
             } else {
                 let key_str = match key {
@@ -2136,7 +2159,7 @@ impl VM {
                 return Err(self.create_error(ErrorKind::TypeError, "Namespace member keys must be strings"));
             }
         }
-        self.stack.push(Value::Namespace { name: String::new(), members: Arc::new(Mutex::new(members)), module_globals: None });
+        self.stack.push(Value::Namespace { name: String::new(), members: Arc::new(RwLock::new(members)), module_globals: None });
         Ok(())
     }
 
@@ -2197,7 +2220,7 @@ impl VM {
     fn handle_get_super(&mut self, method_name: &str) -> SaldResult<()> {
         let receiver = self.stack.pop().unwrap_or(Value::Null);
         if let Value::Instance(ref instance) = receiver {
-            let class = instance.lock().unwrap().class.clone();
+            let class = instance.lock().class.clone();
             if let Some(ref superclass) = class.superclass {
                 if let Some(method) = superclass.methods.get(method_name) {
                     if let Value::Function(func) = method {
@@ -2223,10 +2246,10 @@ impl VM {
         let imported_globals = self.import_and_execute(&resolved_path)?;
         if module_workspace.is_some() { crate::pop_module_workspace(); }
         for (name, value) in imported_globals {
-            let globals_guard = self.globals.read().unwrap();
+            let globals_guard = self.globals.read();
             let should_insert = !globals_guard.contains_key(&name) || !matches!(globals_guard.get(&name), Some(Value::Class(_)));
             drop(globals_guard);
-            if should_insert { self.globals.write().unwrap().insert(name, value); }
+            if should_insert { self.globals.write().insert(name, value); }
         }
         Ok(())
     }
@@ -2253,11 +2276,11 @@ impl VM {
             }
         }
         // Use Namespace with stored module_globals so functions can access their original scope
-        self.globals.write().unwrap().insert(
+        self.globals.write().insert(
             alias.to_string(),
             Value::Namespace {
                 name: alias.to_string(),
-                members: Arc::new(Mutex::new(module_fields)),
+                members: Arc::new(RwLock::new(module_fields)),
                 module_globals: Some(module_globals_arc),
             }
         );
@@ -2358,7 +2381,7 @@ impl VM {
                 ExecutionResult::Error(e) => { crate::pop_script_dir(); self.stack = saved_stack; self.frames = saved_frames; self.file = saved_file; self.source = saved_source; self.globals = saved_globals; return Err(e); }
             }
         }
-        let imported_globals = std::mem::take(&mut *self.globals.write().unwrap());
+        let imported_globals = std::mem::take(&mut *self.globals.write());
         crate::pop_script_dir();
         self.stack = saved_stack;
         self.frames = saved_frames;
@@ -2410,7 +2433,7 @@ impl VM {
             }
         }
         // Clone the globals content but keep the Arc alive
-        let imported_globals = self.globals.read().unwrap().clone();
+        let imported_globals = self.globals.read().clone();
         crate::pop_script_dir();
         self.stack = saved_stack;
         self.frames = saved_frames;
@@ -2457,7 +2480,7 @@ impl VM {
     pub async fn call_global(&mut self, name: &str, args: Vec<Value>) -> SaldResult<Value> {
         // Look up the function in globals
         let func = {
-            let globals = self.globals.read().unwrap();
+            let globals = self.globals.read();
             globals.get(name).cloned()
         };
         
