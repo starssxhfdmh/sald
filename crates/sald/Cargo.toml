@@ -1,0 +1,16 @@
+[package]
+name = "sald-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "sald"
+path = "src/main.rs"
+
+[dependencies]
+sald-core = { path = "../sald-core" }
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.1"
+tokio = { version = "1", features = ["full"] }
+reedline = "0.38"
+ptree = "0.1"

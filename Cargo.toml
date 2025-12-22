@@ -1,75 +1,13 @@
-[package]
-name = "sald"
+[workspace]
+members = [
+    "crates/sald-core",
+    "crates/sald",
+    "crates/sald-lsp",
+    "crates/salad",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.3.13"
 edition = "2021"
-description = "Sald Programming Language - A fast, class-based interpreter"
 authors = ["starssxproject"]
-
-[lib]
-name = "sald_core"
-path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-thiserror = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-parking_lot = "0.12"
-rustc-hash = "1.1"
-smallvec = "1.11"
-regex = "1.10"
-
-# WASM-only dependencies
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-getrandom = { version = "0.2", features = ["js"] }
-chrono = { version = "0.4", features = ["wasmbind"] }
-
-# Native-only dependencies (not available in WASM)
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-colored = "2.1"
-clap = { version = "4.4", features = ["derive"] }
-ptree = "0.4"
-reqwest = { version = "0.11", features = ["json", "multipart"] }
-tokio = { version = "1", features = ["full"] }
-bytes = "1"
-futures = "0.3"
-chrono = "0.4"
-rand = "0.9"
-reedline = "0.38"
-libloading = "0.8"
-libffi = "3.2"
-sysinfo = "0.32"
-tower-lsp = "0.20"
-dashmap = "5"
-hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
-opener = "0.7"
-dirs = "5"
-zip = "2.2"
-sha2 = "0.10"
-sha1 = "0.10"
-md5 = "0.7"
-hmac = "0.12"
-uuid = { version = "1.0", features = ["v4"] }
-base64 = "0.22"
-hex = "0.4"
-
-# Native-only binaries
-[[bin]]
-name = "sald"
-path = "src/bin/sald.rs"
-
-[[bin]]
-name = "sald-lsp"
-path = "src/bin/sald-lsp.rs"
-
-[[bin]]
-name = "salad"
-path = "src/bin/salad.rs"
-
-[profile.release]
-opt-level = 3       
-lto = "fat"          
-codegen-units = 1
-# panic = abort // avoid segfaults during release builds
-debug = false
