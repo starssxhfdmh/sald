@@ -161,12 +161,10 @@ fn init_registry() {
 // Storage for libffi closures - must be kept alive while callback is in use
 static CLOSURE_REGISTRY: RwLock<Option<FxHashMap<i64, ClosureData>>> = RwLock::new(None);
 
+#[allow(dead_code)]
 struct ClosureData {
-    #[allow(dead_code)]
     cif: Cif,
-    #[allow(dead_code)]
     closure: libffi::middle::Closure<'static>,
-    #[allow(dead_code)]
     code_ptr: usize,  // Store as usize to avoid lifetime issues
     callback_id_ptr: *mut i64,  // Pointer to the leaked Box<i64> for cleanup
 }

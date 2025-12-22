@@ -5,7 +5,6 @@ use dashmap::DashMap;
 use tower_lsp::lsp_types::{Position, Range, Url};
 
 /// Symbol kind for LSP
-#[allow(unused)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolKind {
     Variable,

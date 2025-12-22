@@ -16,7 +16,6 @@ struct Scope {
 }
 
 #[derive(Debug, Clone)]
-#[allow(unused)]
 struct VarInfo {
     span: Span,
     is_const: bool,

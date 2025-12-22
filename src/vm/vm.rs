@@ -6,6 +6,7 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
+use smallvec::SmallVec;
 
 use crate::builtins;
 use crate::compiler::chunk::{Chunk, Constant};
@@ -105,7 +106,7 @@ pub struct VM {
     globals: Arc<RwLock<FxHashMap<String, Value>>>,
     file: String,
     source: String,
-    exception_handlers: Vec<ExceptionHandler>,
+    exception_handlers: SmallVec<[ExceptionHandler; 4]>,
     open_upvalues: Vec<Arc<Mutex<UpvalueObj>>>,
     gc: GcHeap,
     gc_counter: usize,
@@ -229,9 +230,8 @@ fn op_pop(vm: &mut VM) -> ControlFlow {
 
 #[inline(always)]
 fn op_dup(vm: &mut VM) -> ControlFlow {
-    let len = vm.stack.len();
-    if len > 0 {
-        let v = unsafe { vm.stack.get_unchecked(len - 1).clone() };
+    if !vm.stack.is_empty() {
+        let v = vm.peek_unchecked(0).clone();
         vm.stack.push(v);
     }
     ControlFlow::Continue
@@ -239,10 +239,9 @@ fn op_dup(vm: &mut VM) -> ControlFlow {
 
 #[inline(always)]
 fn op_dup_two(vm: &mut VM) -> ControlFlow {
-    let len = vm.stack.len();
-    if len >= 2 {
-        let b = unsafe { vm.stack.get_unchecked(len - 1).clone() };
-        let a = unsafe { vm.stack.get_unchecked(len - 2).clone() };
+    if vm.stack.len() >= 2 {
+        let b = vm.peek_unchecked(0).clone();
+        let a = vm.peek_unchecked(1).clone();
         vm.stack.push(a);
         vm.stack.push(b);
     }
@@ -281,7 +280,8 @@ fn op_define_global(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     match vm.read_string_constant(idx) {
         Ok(name) => {
-            if let Some(value) = vm.stack.pop() {
+            if !vm.stack.is_empty() {
+                let value = vm.pop_fast();
                 vm.globals.write().insert(name, value);
             }
             ControlFlow::Continue
@@ -322,7 +322,7 @@ fn op_set_global(vm: &mut VM) -> ControlFlow {
                     &format!("Undefined variable '{}'", name),
                 ));
             }
-            if let Some(value) = vm.stack.last().cloned() {
+            if let Some(value) = vm.peek().cloned() {
                 vm.globals.write().insert(name, value);
             }
             ControlFlow::Continue
@@ -344,9 +344,8 @@ fn op_get_local(vm: &mut VM) -> ControlFlow {
 fn op_set_local(vm: &mut VM) -> ControlFlow {
     let slot = vm.read_u16() as usize;
     let slots_start = vm.current_frame().slots_start;
-    let len = vm.stack.len();
-    if len > 0 {
-        let value = unsafe { vm.stack.get_unchecked(len - 1).clone() };
+    if !vm.stack.is_empty() {
+        let value = vm.peek_unchecked(0).clone();
         unsafe { *vm.stack.get_unchecked_mut(slots_start + slot) = value; }
     }
     ControlFlow::Continue
@@ -670,6 +669,7 @@ fn op_return(vm: &mut VM) -> ControlFlow {
     ControlFlow::Continue
 }
 
+#[inline(always)]
 fn op_closure(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     let constant = vm.current_frame().function.chunk.constants[idx].clone();
@@ -690,6 +690,7 @@ fn op_closure(vm: &mut VM) -> ControlFlow {
     ControlFlow::Continue
 }
 
+#[inline(always)]
 fn op_class(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     match vm.read_string_constant(idx) {
@@ -701,14 +702,17 @@ fn op_class(vm: &mut VM) -> ControlFlow {
     }
 }
 
+#[inline(always)]
 fn op_method(vm: &mut VM) -> ControlFlow {
     op_method_impl(vm, false)
 }
 
+#[inline(always)]
 fn op_static_method(vm: &mut VM) -> ControlFlow {
     op_method_impl(vm, true)
 }
 
+#[inline(always)]
 fn op_method_impl(vm: &mut VM, is_static: bool) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     let constant = vm.current_frame().function.chunk.constants[idx].clone();
@@ -1241,7 +1245,7 @@ impl VM {
             globals: Arc::new(RwLock::new(globals)),
             file: String::new(),
             source: String::new(),
-            exception_handlers: Vec::new(),
+            exception_handlers: SmallVec::new(),
             open_upvalues: Vec::new(),
             gc: GcHeap::new(),
             gc_counter: 0,
@@ -1259,7 +1263,7 @@ impl VM {
             globals,
             file: String::new(),
             source: String::new(),
-            exception_handlers: Vec::new(),
+            exception_handlers: SmallVec::new(),
             open_upvalues: Vec::new(),
             gc: GcHeap::new(),
             gc_counter: 0,
@@ -1309,9 +1313,38 @@ impl VM {
         }
     }
 
-    fn track_array(&mut self, arr: &Arc<Mutex<Vec<Value>>>) { self.gc.track_array(arr); }
-    fn track_dict(&mut self, dict: &Arc<Mutex<FxHashMap<String, Value>>>) { self.gc.track_dict(dict); }
-    fn track_instance(&mut self, inst: &Arc<Mutex<Instance>>) { self.gc.track_instance(inst); }
+    fn track_array(&mut self, arr: &Arc<Mutex<Vec<Value>>>) { 
+        self.gc.track_array(arr); 
+        self.maybe_collect_garbage();
+    }
+    fn track_dict(&mut self, dict: &Arc<Mutex<FxHashMap<String, Value>>>) { 
+        self.gc.track_dict(dict); 
+        self.maybe_collect_garbage();
+    }
+    fn track_instance(&mut self, inst: &Arc<Mutex<Instance>>) { 
+        self.gc.track_instance(inst); 
+        self.maybe_collect_garbage();
+    }
+
+    // ==================== Stack Helpers ====================
+
+    /// Peek at top value without removing
+    #[inline(always)]
+    fn peek(&self) -> Option<&Value> {
+        self.stack.last()
+    }
+
+    /// Peek at value at offset from top (0 = top, 1 = second from top, etc.) - UNSAFE
+    #[inline(always)]
+    fn peek_unchecked(&self, offset: usize) -> &Value {
+        unsafe { self.stack.get_unchecked(self.stack.len() - 1 - offset) }
+    }
+
+    /// Pop value from stack - UNSAFE, assumes stack is not empty
+    #[inline(always)]
+    fn pop_fast(&mut self) -> Value {
+        unsafe { self.stack.pop().unwrap_unchecked() }
+    }
 
     // ==================== Private Access Checking ====================
 
