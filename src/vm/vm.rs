@@ -631,10 +631,47 @@ fn op_return(vm: &mut VM) -> ControlFlow {
     } else {
         Value::Null
     };
+    
     let returning_frame_index = vm.frames.len() - 1;
     let frame = unsafe { vm.frames.pop().unwrap_unchecked() };
+    let slots_start = frame.slots_start;
+    
+    // Fast path: simple function return (most common in recursive code)
+    // - No saved globals (not a module function)
+    // - No file tracking (common case)
+    // - No init instance (not a constructor)
+    // - Check upvalues only if any open
+    let is_simple = frame.saved_globals.is_none() 
+        && frame.function.file.is_empty() 
+        && frame.init_instance.is_none();
+    
+    if is_simple {
+        // Clean up exception handlers for this frame
+        while let Some(handler) = vm.exception_handlers.last() {
+            if handler.frame_index >= returning_frame_index {
+                vm.exception_handlers.pop();
+            } else {
+                break;
+            }
+        }
+        
+        // Only close upvalues if there might be any
+        if !vm.open_upvalues.is_empty() {
+            vm.close_upvalues(slots_start);
+        }
+        
+        if vm.frames.is_empty() {
+            vm.stack.truncate(slots_start);
+            vm.stack.push(result.clone());
+            return ControlFlow::Return(result);
+        }
+        
+        vm.stack.truncate(slots_start);
+        vm.stack.push(result);
+        return ControlFlow::Continue;
+    }
 
-    // Restore saved globals if this frame had them (module function call)
+    // Slow path: complex function return
     if let Some(saved_globals) = frame.saved_globals {
         vm.globals = saved_globals;
     }
@@ -651,15 +688,15 @@ fn op_return(vm: &mut VM) -> ControlFlow {
         }
     }
 
-    vm.close_upvalues(frame.slots_start);
+    vm.close_upvalues(slots_start);
 
     if vm.frames.is_empty() {
-        vm.stack.truncate(frame.slots_start);
+        vm.stack.truncate(slots_start);
         vm.stack.push(result.clone());
         return ControlFlow::Return(result);
     }
 
-    vm.stack.truncate(frame.slots_start);
+    vm.stack.truncate(slots_start);
 
     if let Some(instance) = frame.init_instance {
         vm.stack.push(instance);
@@ -1523,7 +1560,8 @@ impl VM {
     /// Core threaded dispatch - single instruction execution
     #[inline(always)]
     fn execute_one_threaded(&mut self) -> ControlFlow {
-        self.maybe_collect_garbage();
+        // GC is now allocation-triggered (track_array, track_dict, track_instance)
+        // No per-instruction GC check needed - major performance win for recursive code
 
         let op = self.read_byte();
 
@@ -1684,6 +1722,19 @@ impl VM {
 
     #[inline(always)]
     fn call_function(&mut self, function: Arc<Function>, arg_count: usize) -> SaldResult<()> {
+        // Ultra-fast path: non-variadic, no defaults, exact arity match
+        // This is the common case for recursive functions like fib(n)
+        if !function.is_variadic && function.default_count == 0 && arg_count == function.arity {
+            // Skip all validation - we know it's correct
+            if self.frames.len() >= FRAMES_MAX {
+                return Err(self.create_error(ErrorKind::RuntimeError, "Stack overflow (too many call frames)"));
+            }
+            let slots_start = self.stack.len() - arg_count - 1;
+            if !function.file.is_empty() { crate::push_script_dir(&function.file); }
+            self.frames.push(CallFrame::new(function, slots_start));
+            return Ok(());
+        }
+        
         // Fast path: non-variadic function with exact or under arity (most common case)
         if !function.is_variadic {
             let required_arity = function.arity.saturating_sub(function.default_count);
