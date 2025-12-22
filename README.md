@@ -112,8 +112,3 @@ g.greet()
 ## License
 
 MIT License
-
-
-Apakah Anda ingin saya mengubah bahasanya menjadi full Inggris agar seragam dengan konten lainnya, atau tetap ada penjelasan bahasa Indonesianya?
-
-```
