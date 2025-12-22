@@ -105,7 +105,7 @@ function Download-WithProgress {
                 Write-Host "`r  [$bar] " -NoNewline
                 Write-Host ("{0,3}%" -f $percent) -NoNewline
                 Write-Host " $Name " -NoNewline -ForegroundColor Cyan
-                Write-Host "($sizeStr @ $speedStr, ETA $etaStr)    " -NoNewline -ForegroundColor Gray
+                Write-Host "($sizeStr @ $speedStr, ETA $etaStr)    " -NoNewline -ForegroundColor DarkGray
             }
         }
         
@@ -122,7 +122,7 @@ function Download-WithProgress {
         
         Write-Host "`r  [$bar] 100% " -NoNewline
         Write-Host "$Name " -NoNewline -ForegroundColor Cyan
-        Write-Host "($sizeStr @ $(Format-Speed $avgSpeed))        " -NoNewline -ForegroundColor Gray
+        Write-Host "($sizeStr @ $(Format-Speed $avgSpeed))        " -NoNewline -ForegroundColor DarkGray
         
         return $true
     }
@@ -137,10 +137,10 @@ function Main {
     Write-Host "sald" -ForegroundColor Green -NoNewline
     Write-Host " installer"
     Write-Host ""
-    Write-Host "  Platform: windows-x86_64" -ForegroundColor Gray
+    Write-Host "  Platform: windows-x86_64" -ForegroundColor DarkGray
 
     # Get latest version and asset info
-    Write-Host "  Fetching latest version..." -NoNewline -ForegroundColor Gray
+    Write-Host "  Fetching latest version..." -NoNewline -ForegroundColor DarkGray
     $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
     $Version = $Release.tag_name
     
@@ -160,14 +160,14 @@ function Main {
     }
     
     Clear-Line
-    Write-Host "  Version: $Version" -ForegroundColor Gray
+    Write-Host "  Version: $Version" -ForegroundColor DarkGray
     Write-Host ""
 
     # Create temp directory
     New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
 
     try {
-        Write-Host "  Downloading..." -ForegroundColor Gray
+        Write-Host "  Downloading..." -ForegroundColor DarkGray
         
         # Download sald
         $saldAsset = $Assets["sald-windows-x86_64.exe"]
@@ -190,20 +190,20 @@ function Main {
         $totalSize = $saldAsset.Size + $lspAsset.Size + $saladAsset.Size
         Write-Host "  " -NoNewline
         Write-Host "Downloaded" -ForegroundColor Green -NoNewline
-        Write-Host " 3 binaries ($(Format-FileSize $totalSize))" -ForegroundColor Gray
+        Write-Host " 3 binaries ($(Format-FileSize $totalSize))" -ForegroundColor DarkGray
 
         # Create install directory
         New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
         # Move binaries
-        Write-Host "  Installing..." -NoNewline -ForegroundColor Gray
+        Write-Host "  Installing..." -NoNewline -ForegroundColor DarkGray
         Move-Item -Path "$TempDir\sald.exe" -Destination "$BinDir\sald.exe" -Force
         Move-Item -Path "$TempDir\sald-lsp.exe" -Destination "$BinDir\sald-lsp.exe" -Force
         Move-Item -Path "$TempDir\salad.exe" -Destination "$BinDir\salad.exe" -Force
         Clear-Line
         Write-Host "  " -NoNewline
         Write-Host "Installed" -ForegroundColor Green -NoNewline
-        Write-Host " to $BinDir" -ForegroundColor Gray
+        Write-Host " to $BinDir" -ForegroundColor DarkGray
     }
     finally {
         # Cleanup temp
@@ -218,14 +218,14 @@ function Main {
         $env:Path = "$env:Path;$BinDir"
         Write-Host "  " -NoNewline
         Write-Host "Updated" -ForegroundColor Green -NoNewline
-        Write-Host " PATH" -ForegroundColor Gray
+        Write-Host " PATH" -ForegroundColor DarkGray
     }
 
     # Success message
     Write-Host ""
     Write-Host "Done" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Restart your terminal to use sald" -ForegroundColor Gray
+    Write-Host "  Restart your terminal to use sald" -ForegroundColor DarkGray
     Write-Host ""
 }
 
