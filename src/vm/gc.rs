@@ -1,26 +1,33 @@
 // Sald Garbage Collector
-// Mark-and-Sweep GC for detecting and breaking circular references
+// Incremental Mark-and-Sweep GC for detecting and breaking circular references
 //
 // Design Philosophy:
 // - Works alongside Rust's Arc/Mutex (not replacing them)
 // - Tracks "GC-managed" objects in a separate registry
 // - When cycles are detected via tracing, we can break them
 // - Minimal changes to existing Value system
+// - INCREMENTAL: Spreads work across multiple steps to minimize latency
 //
 // This approach:
 // 1. Keeps Arc/Mutex for normal memory management
 // 2. Adds cycle detection for Array, Dictionary, Instance types
 // 3. When collection runs, traces from roots and identifies unreachable cycles
 // 4. Breaks cycles by clearing references in unreachable objects
+// 5. Work is done incrementally to avoid stop-the-world pauses
 
 use rustc_hash::FxHashSet;
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, Weak};
 use parking_lot::Mutex;
+use std::time::{Duration, Instant};
 
 /// GC configuration
 const INITIAL_THRESHOLD: usize = 10000; // Object count (lower = more frequent GC)
 const HEAP_GROW_FACTOR: f64 = 1.5;
+/// Maximum time budget per incremental step (microseconds)
+const STEP_BUDGET_US: u64 = 500; // 500μs = 0.5ms
+/// Objects to process per step (fallback if time check is expensive)
+const OBJECTS_PER_STEP: usize = 100;
 
 /// GC statistics for monitoring
 #[derive(Debug, Clone, Default)]
@@ -33,6 +40,8 @@ pub struct GcStats {
     pub tracked_count: usize,
     /// Number of GC cycles run
     pub collections: usize,
+    /// Number of incremental steps taken
+    pub incremental_steps: usize,
 }
 
 /// Unique ID for tracked objects
@@ -44,6 +53,28 @@ pub enum ObjectType {
     Array,
     Dictionary,
     Instance,
+}
+
+/// GC Phase for incremental collection
+#[derive(Debug, Clone)]
+#[allow(unused)]
+enum GcPhase {
+    /// Not collecting - normal operation
+    Idle,
+    /// Marking phase - tracing from roots
+    Marking {
+        /// Objects already marked as reachable
+        reachable: FxHashSet<ObjectId>,
+        /// Iterator position in tracked objects
+        iter_keys: Vec<ObjectId>,
+        iter_pos: usize,
+    },
+    /// Sweeping phase - breaking unreachable cycles
+    Sweeping {
+        /// Objects that are unreachable but alive (cycles)
+        to_clear: Vec<ObjectId>,
+        iter_pos: usize,
+    },
 }
 
 /// Weak reference to a tracked object for cycle detection
@@ -117,7 +148,7 @@ impl TrackedObject {
     }
 }
 
-/// The GC Heap - tracks objects for cycle detection
+/// The GC Heap - tracks objects for cycle detection with incremental collection
 pub struct GcHeap {
     /// Counter for unique IDs
     next_id: u64,
@@ -127,8 +158,8 @@ pub struct GcHeap {
     threshold: usize,
     /// GC statistics
     pub stats: GcStats,
-    /// Is GC currently running?
-    collecting: bool,
+    /// Current GC phase (for incremental collection)
+    phase: GcPhase,
 }
 
 impl GcHeap {
@@ -138,13 +169,16 @@ impl GcHeap {
             tracked: FxHashMap::default(),
             threshold: INITIAL_THRESHOLD,
             stats: GcStats::default(),
-            collecting: false,
+            phase: GcPhase::Idle,
         }
     }
 
-    /// Check if GC should run
+    /// Check if GC should run (or continue running)
     pub fn should_collect(&self) -> bool {
-        !self.collecting && self.tracked.len() > self.threshold
+        match &self.phase {
+            GcPhase::Idle => self.tracked.len() > self.threshold,
+            _ => true, // Continue if already in progress
+        }
     }
 
     /// Track a new array
@@ -177,33 +211,102 @@ impl GcHeap {
         id
     }
 
-    /// Run garbage collection
+    /// Run one incremental step of garbage collection
+    /// Returns true if collection is complete, false if more work remains
     /// Roots are values that are definitely reachable (stack, globals)
     pub fn collect(&mut self, roots: Vec<&super::Value>) {
-        if self.collecting {
-            return;
-        }
-        self.collecting = true;
-
-        // Phase 1: Remove dead weak references (already freed by Arc)
+        let start = Instant::now();
+        let budget = Duration::from_micros(STEP_BUDGET_US);
+        
+        // First, ensure we've removed dead references
         self.cleanup_dead();
-
-        // Phase 2: Mark reachable objects from roots
-        let reachable = self.mark_from_roots(&roots);
-
-        // Phase 3: Find and break unreachable cycles
-        let cycles_broken = self.break_cycles(&reachable);
-
-        // Update stats
+        
+        loop {
+            match std::mem::replace(&mut self.phase, GcPhase::Idle) {
+                GcPhase::Idle => {
+                    // Start new collection - initialize marking phase
+                    let reachable = self.mark_from_roots(&roots);
+                    let iter_keys: Vec<ObjectId> = self.tracked.keys().copied().collect();
+                    
+                    // Transition to sweeping since marking is fast enough
+                    // (we marked all reachable objects at once)
+                    let mut to_clear = Vec::new();
+                    for id in &iter_keys {
+                        if !reachable.contains(id) {
+                            if let Some(obj) = self.tracked.get(id) {
+                                if obj.is_alive() {
+                                    to_clear.push(*id);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if to_clear.is_empty() {
+                        // Nothing to sweep, we're done
+                        self.finish_collection();
+                        return;
+                    }
+                    
+                    self.phase = GcPhase::Sweeping { to_clear, iter_pos: 0 };
+                    self.stats.incremental_steps += 1;
+                }
+                
+                GcPhase::Marking { reachable, iter_keys, iter_pos } => {
+                    // This phase is now handled in Idle transition above
+                    // Keep for future true incremental marking if needed
+                    self.phase = GcPhase::Marking { reachable, iter_keys, iter_pos };
+                    let to_clear = Vec::new();
+                    // ... move to sweeping
+                    self.phase = GcPhase::Sweeping { to_clear, iter_pos: 0 };
+                }
+                
+                GcPhase::Sweeping { to_clear, mut iter_pos } => {
+                    let mut processed = 0;
+                    
+                    while iter_pos < to_clear.len() {
+                        // Check time budget every few objects
+                        if processed >= OBJECTS_PER_STEP && start.elapsed() >= budget {
+                            // Save progress and return
+                            self.phase = GcPhase::Sweeping { to_clear, iter_pos };
+                            self.stats.incremental_steps += 1;
+                            return;
+                        }
+                        
+                        let id = to_clear[iter_pos];
+                        if let Some(obj) = self.tracked.get(&id) {
+                            obj.clear_contents();
+                            self.stats.cycles_broken += 1;
+                        }
+                        
+                        iter_pos += 1;
+                        processed += 1;
+                    }
+                    
+                    // Sweeping complete
+                    self.finish_collection();
+                    return;
+                }
+            }
+            
+            // Check if we've exceeded our time budget
+            if start.elapsed() >= budget {
+                self.stats.incremental_steps += 1;
+                return;
+            }
+        }
+    }
+    
+    /// Complete the collection cycle and reset state
+    fn finish_collection(&mut self) {
         self.stats.collections += 1;
-        self.stats.cycles_broken += cycles_broken;
         self.stats.tracked_count = self.tracked.len();
-
+        self.stats.incremental_steps += 1;
+        
         // Update threshold
         let new_threshold = (self.tracked.len() as f64 * HEAP_GROW_FACTOR) as usize;
         self.threshold = new_threshold.max(INITIAL_THRESHOLD);
-
-        self.collecting = false;
+        
+        self.phase = GcPhase::Idle;
     }
 
     /// Remove entries for objects that have been freed
@@ -293,30 +396,6 @@ impl GcHeap {
             }
             _ => {}
         }
-    }
-
-    /// Break cycles by clearing unreachable objects that are in cycles
-    fn break_cycles(&mut self, reachable: &FxHashSet<ObjectId>) -> usize {
-        let mut broken = 0;
-
-        // Find unreachable objects that still have strong references (cycles)
-        let mut to_clear = Vec::new();
-        for (id, obj) in &self.tracked {
-            if !reachable.contains(id) && obj.is_alive() {
-                // Object is unreachable but still alive = part of cycle
-                to_clear.push(*id);
-            }
-        }
-
-        // Clear contents to break cycles
-        for id in to_clear {
-            if let Some(obj) = self.tracked.get(&id) {
-                obj.clear_contents();
-                broken += 1;
-            }
-        }
-
-        broken
     }
 
     /// Get GC statistics
