@@ -20,6 +20,8 @@ BENCHMARKS = [
     ("06_dict", "Dictionary"),
     ("07_higher_order", "Higher-Order"),
     ("08_primes", "Primes"),
+    ("09_parallel", "Parallel"),
+    ("10_channel", "Channel"),
 ]
 
 def get_script_dir():
@@ -66,7 +68,7 @@ def run_all_benchmarks():
         sald_file = script_dir / f"{bench_id}.sald"
         if sald_file.exists():
             print(f"  Sald...", end=" ", flush=True)
-            time_ms = run_benchmark(f"sald {sald_file}", script_dir)
+            time_ms = run_benchmark(f"..\\target\\release\\sald.exe {sald_file}", script_dir)
             if time_ms is not None:
                 results["sald"][bench_name] = time_ms
                 print(f"{time_ms:.2f}ms")

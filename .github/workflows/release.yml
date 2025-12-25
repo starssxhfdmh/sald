@@ -63,41 +63,8 @@ jobs:
           name: salad-${{ matrix.suffix }}
           path: target/${{ matrix.target }}/release/salad${{ matrix.ext }}
 
-  build-vscode-extension:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        working-directory: lsp
-        run: npm install
-
-      - name: Compile TypeScript
-        working-directory: lsp
-        run: npm run compile
-
-      - name: Install vsce
-        run: npm install -g @vscode/vsce
-
-      - name: Package extension
-        working-directory: lsp
-        run: vsce package --out sald-language-support.vsix
-
-      - name: Upload VSCode extension
-        uses: actions/upload-artifact@v4
-        with:
-          name: sald-language-support
-          path: lsp/sald-language-support.vsix
-
   release:
-    needs: [build, build-vscode-extension]
+    needs: [build]
     runs-on: ubuntu-latest
     
     steps:
@@ -147,7 +114,7 @@ jobs:
           echo "| \`sald-lsp-windows-x86_64.exe\` | Language server for Windows |" >> CHANGELOG.md
           echo "| \`salad-linux-x86_64\` | Package manager for Linux |" >> CHANGELOG.md
           echo "| \`salad-windows-x86_64.exe\` | Package manager for Windows |" >> CHANGELOG.md
-          echo "| \`sald-language-support.vsix\` | VSCode extension (install via Extensions > Install from VSIX) |" >> CHANGELOG.md
+
           
           cat CHANGELOG.md
 
@@ -171,8 +138,7 @@ jobs:
           cp artifacts/sald-lsp-windows-x86_64/sald-lsp.exe release/sald-lsp-windows-x86_64.exe
           cp artifacts/salad-windows-x86_64/salad.exe release/salad-windows-x86_64.exe
           
-          # VSCode extension
-          cp artifacts/sald-language-support/sald-language-support.vsix release/sald-language-support.vsix
+
           
           ls -la release/
 
@@ -190,6 +156,6 @@ jobs:
             release/sald-windows-x86_64.exe
             release/sald-lsp-windows-x86_64.exe
             release/salad-windows-x86_64.exe
-            release/sald-language-support.vsix
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

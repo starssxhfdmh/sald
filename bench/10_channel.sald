@@ -1,0 +1,36 @@
+// Benchmark: Channel Communication
+// Tests: Thread-safe channel performance
+
+let MESSAGES = 10000
+let PRODUCERS = 4
+
+let ch = Channel(MESSAGES)  // Buffer size = message count to avoid blocking
+let received = 0
+
+// Sequential producer/consumer (Channel is synchronous in main thread)
+let start = Timer.now()
+
+// Produce all messages
+let perProducer = MESSAGES / PRODUCERS
+for p in 0..<PRODUCERS {
+    for i in 0..<perProducer {
+        ch.send(p * 10000 + i)
+    }
+}
+
+// Consume all messages
+while received < MESSAGES {
+    let msg = ch.tryReceive()
+    if msg != null {
+        received += 1
+    }
+}
+
+ch.close()
+
+let elapsed = Timer.now() - start
+
+Console.println($"Sent {MESSAGES} messages via {PRODUCERS} producers")
+Console.println($"Received: {received}")
+Console.println($"Time: {elapsed}ms")
+Console.println($"Throughput: {MESSAGES / elapsed * 1000} msg/sec")

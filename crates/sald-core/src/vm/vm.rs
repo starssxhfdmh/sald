@@ -990,11 +990,36 @@ fn op_throw(vm: &mut VM) -> ControlFlow {
 fn op_await(vm: &mut VM) -> ControlFlow {
     let value = vm.stack.pop().unwrap_or(Value::Null);
     match value {
-        Value::Future(_) => ControlFlow::Error(vm.create_error(
-            ErrorKind::RuntimeError,
-            "async/await is not supported in single-threaded mode",
-        )),
+        Value::Future(future_ref) => {
+            let handle_opt = future_ref.borrow_mut().take();
+            match handle_opt {
+                Some(receiver) => {
+                    // Block until result is ready
+                    match receiver.recv() {
+                        Ok(Ok(send_value)) => {
+                            vm.stack.push(send_value.to_value());
+                            ControlFlow::Continue
+                        }
+                        Ok(Err(err)) => {
+                            ControlFlow::Error(vm.create_error(ErrorKind::RuntimeError, &err))
+                        }
+                        Err(_) => {
+                            ControlFlow::Error(vm.create_error(
+                                ErrorKind::RuntimeError,
+                                "Async task failed: channel closed",
+                            ))
+                        }
+                    }
+                }
+                None => {
+                    // Future already consumed
+                    vm.stack.push(Value::Null);
+                    ControlFlow::Continue
+                }
+            }
+        }
         other => {
+            // Non-future values pass through
             vm.stack.push(other);
             ControlFlow::Continue
         }
@@ -1749,6 +1774,12 @@ impl VM {
 
     #[inline(always)]
     fn call_function(&mut self, function: Rc<Function>, arg_count: usize) -> SaldResult<()> {
+        // Check if async function - spawn to thread pool
+        #[cfg(not(target_arch = "wasm32"))]
+        if function.is_async {
+            return self.spawn_async_function(function, arg_count);
+        }
+
         if !function.is_variadic && function.default_count == 0 && arg_count == function.arity {
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(
@@ -1835,6 +1866,78 @@ impl VM {
             crate::push_script_dir(&function.file);
         }
         self.frames.push(CallFrame::new(function, slots_start));
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn spawn_async_function(&mut self, function: Rc<Function>, arg_count: usize) -> SaldResult<()> {
+        use crate::vm::value::SendValue;
+        use crossbeam_channel::bounded;
+        
+        // Pop arguments from stack and convert to SendValue
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            let val = self.stack.pop().unwrap_or(Value::Null);
+            match SendValue::from_value(&val) {
+                Ok(send_val) => args.push(send_val),
+                Err(e) => return Err(self.create_error(ErrorKind::TypeError, &e)),
+            }
+        }
+        args.reverse();
+        
+        // Pop function slot (callee placeholder)
+        self.stack.pop();
+        
+        // Create channel for result
+        let (tx, rx) = bounded::<Result<SendValue, String>>(1);
+        
+        // Clone what we need for the worker thread
+        let chunk = function.chunk.clone();
+        let arity = function.arity;
+        let func_name = function.name.clone();
+        
+        // Spawn to rayon thread pool
+        rayon::spawn(move || {
+            // Create isolated VM for this worker
+            let mut worker_vm = VM::new();
+            
+            // Create function and push to stack
+            let worker_func = Rc::new(Function::new(&func_name, arity, chunk));
+            worker_vm.stack.push(Value::Null); // placeholder
+            
+            // Push args
+            for arg in args {
+                worker_vm.stack.push(arg.to_value());
+            }
+            
+            // Set up call frame
+            let slots_start = 0;
+            worker_vm.frames.push(CallFrame::new(worker_func, slots_start));
+            
+            // Execute until complete
+            let result = loop {
+                if worker_vm.frames.is_empty() {
+                    break Ok(worker_vm.stack.pop().unwrap_or(Value::Null));
+                }
+                match worker_vm.execute_one_threaded() {
+                    ControlFlow::Continue => continue,
+                    ControlFlow::Return(v) => break Ok(v),
+                    ControlFlow::Error(e) => break Err(e.message),
+                }
+            };
+            
+            // Send result back
+            let send_result = match result {
+                Ok(val) => SendValue::from_value(&val),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(send_result);
+        });
+        
+        // Push Future with receiver
+        let future = Value::Future(Rc::new(RefCell::new(Some(rx))));
+        self.stack.push(future);
+        
         Ok(())
     }
 

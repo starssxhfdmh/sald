@@ -1,0 +1,59 @@
+// Benchmark: Parallel Async Tasks (Self-contained)
+// Tests: Multi-threaded async performance with isolated workers
+
+// Async function with inline computation (self-contained)
+async fun asyncCompute(n) {
+    let sum = 0
+    for i in 0..<n {
+        sum += i
+    }
+    return sum
+}
+
+// Heavy computation function (for sequential)
+fun compute(n) {
+    let sum = 0
+    for i in 0..<n {
+        sum += i
+    }
+    return sum
+}
+
+// Sequential benchmark
+fun runSequential(tasks, workload) {
+    let results = []
+    for _ in 0..<tasks {
+        results.push(compute(workload))
+    }
+    return results
+}
+
+let TASKS = 8
+let WORKLOAD = 100000
+
+// Run sequential
+let seqStart = Timer.now()
+let seqResults = runSequential(TASKS, WORKLOAD)
+let seqTime = Timer.now() - seqStart
+
+Console.println($"Sequential: {seqTime}ms")
+
+// Run parallel - spawn all async tasks first, then await
+let parStart = Timer.now()
+let futures = []
+for _ in 0..<TASKS {
+    futures.push(asyncCompute(WORKLOAD))
+}
+
+// Await all futures
+let parResults = []
+for f in futures {
+    parResults.push(await f)
+}
+let parTime = Timer.now() - parStart
+
+Console.println($"Parallel: {parTime}ms")
+Console.println($"Speedup: {seqTime / parTime}x")
+
+// For benchmark comparison output
+Console.println($"Time: {parTime}ms")

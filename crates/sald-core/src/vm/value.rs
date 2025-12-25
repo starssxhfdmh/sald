@@ -14,6 +14,74 @@ pub type NativeFn = fn(&[Value]) -> Value;
 
 pub struct SaldFuture;
 
+/// Thread-safe value for cross-thread communication  
+/// Contains only owned data - no Rc/RefCell
+#[derive(Clone, Debug)]
+pub enum SendValue {
+    Null,
+    Boolean(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<SendValue>),
+    Dictionary(std::collections::HashMap<String, SendValue>),
+}
+
+unsafe impl Send for SendValue {}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub type FutureHandle = crossbeam_channel::Receiver<Result<SendValue, String>>;
+
+#[cfg(target_arch = "wasm32")]
+pub type FutureHandle = std::rc::Rc<std::cell::RefCell<Option<Result<SendValue, String>>>>;
+
+impl SendValue {
+    pub fn from_value(value: &Value) -> Result<SendValue, String> {
+        match value {
+            Value::Null => Ok(SendValue::Null),
+            Value::Boolean(b) => Ok(SendValue::Boolean(*b)),
+            Value::Number(n) => Ok(SendValue::Number(*n)),
+            Value::String(s) => Ok(SendValue::String(s.to_string())),
+            Value::Array(arr) => {
+                let arr = arr.borrow();
+                let mut result = Vec::with_capacity(arr.len());
+                for v in arr.iter() {
+                    result.push(SendValue::from_value(v)?);
+                }
+                Ok(SendValue::Array(result))
+            }
+            Value::Dictionary(dict) => {
+                let dict = dict.borrow();
+                let mut result = std::collections::HashMap::with_capacity(dict.len());
+                for (k, v) in dict.iter() {
+                    result.insert(k.clone(), SendValue::from_value(v)?);
+                }
+                Ok(SendValue::Dictionary(result))
+            }
+            _ => Err(format!("Cannot send {} to async worker", value.type_name())),
+        }
+    }
+
+    pub fn to_value(self) -> Value {
+        match self {
+            SendValue::Null => Value::Null,
+            SendValue::Boolean(b) => Value::Boolean(b),
+            SendValue::Number(n) => Value::Number(n),
+            SendValue::String(s) => Value::String(std::rc::Rc::from(s)),
+            SendValue::Array(arr) => {
+                let values: Vec<Value> = arr.into_iter().map(|v| v.to_value()).collect();
+                Value::Array(std::rc::Rc::new(std::cell::RefCell::new(values)))
+            }
+            SendValue::Dictionary(dict) => {
+                let mut map = FxHashMap::default();
+                for (k, v) in dict {
+                    map.insert(k, v.to_value());
+                }
+                Value::Dictionary(std::rc::Rc::new(std::cell::RefCell::new(map)))
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum Value {
     Null,
@@ -42,7 +110,7 @@ pub enum Value {
     Class(Rc<Class>),
     Instance(Rc<RefCell<Instance>>),
 
-    Future(Rc<RefCell<Option<SaldFuture>>>),
+    Future(Rc<RefCell<Option<FutureHandle>>>),
 
     Namespace {
         name: String,
