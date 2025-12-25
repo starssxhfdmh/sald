@@ -1,14 +1,15 @@
-// Crypto built-in module
-// Provides cryptographic operations: hashing, HMAC, UUID, random, base64
+
+
+
 
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use base64::{engine::general_purpose, Engine};
 use hmac::{Hmac, Mac};
-use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 use sha2::{Digest, Sha256, Sha512};
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 type HmacSha256 = Hmac<Sha256>;
 type HmacSha512 = Hmac<Sha512>;
@@ -27,8 +28,8 @@ pub fn create_crypto_class() -> Class {
     Class::new_with_static("Crypto", static_methods)
 }
 
-/// Crypto.hash(algorithm, data) - Hash data with specified algorithm
-/// Supported algorithms: "sha256", "sha512", "md5", "sha1"
+
+
 fn crypto_hash(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     let algorithm = get_string_arg(&args[0], "algorithm")?.to_lowercase();
@@ -63,10 +64,10 @@ fn crypto_hash(args: &[Value]) -> Result<Value, String> {
         }
     };
 
-    Ok(Value::String(Arc::from(hash_hex)))
+    Ok(Value::String(Rc::from(hash_hex)))
 }
 
-/// Crypto.hmac(algorithm, key, data) - HMAC signing
+
 fn crypto_hmac(args: &[Value]) -> Result<Value, String> {
     check_arity(3, args.len())?;
     let algorithm = get_string_arg(&args[0], "algorithm")?.to_lowercase();
@@ -94,16 +95,16 @@ fn crypto_hmac(args: &[Value]) -> Result<Value, String> {
         }
     };
 
-    Ok(Value::String(Arc::from(hmac_hex)))
+    Ok(Value::String(Rc::from(hmac_hex)))
 }
 
-/// Crypto.uuid() - Generate UUID v4
+
 fn crypto_uuid(_args: &[Value]) -> Result<Value, String> {
     let id = uuid::Uuid::new_v4().to_string();
-    Ok(Value::String(Arc::from(id)))
+    Ok(Value::String(Rc::from(id)))
 }
 
-/// Crypto.randomBytes(length) - Generate array of random bytes
+
 fn crypto_random_bytes(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let length = get_number_arg(&args[0], "length")? as usize;
@@ -118,10 +119,10 @@ fn crypto_random_bytes(args: &[Value]) -> Result<Value, String> {
         .map(|_| Value::Number(rng.random::<u8>() as f64))
         .collect();
 
-    Ok(Value::Array(Arc::new(Mutex::new(bytes))))
+    Ok(Value::Array(Rc::new(RefCell::new(bytes))))
 }
 
-/// Crypto.randomInt(min, max) - Generate random integer in range [min, max]
+
 fn crypto_random_int(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     let min = get_number_arg(&args[0], "min")? as i64;
@@ -138,15 +139,15 @@ fn crypto_random_int(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Number(value as f64))
 }
 
-/// Crypto.base64Encode(data) - Encode string to base64
+
 fn crypto_base64_encode(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let data = get_string_arg(&args[0], "data")?;
     let encoded = general_purpose::STANDARD.encode(data.as_bytes());
-    Ok(Value::String(Arc::from(encoded)))
+    Ok(Value::String(Rc::from(encoded)))
 }
 
-/// Crypto.base64Decode(data) - Decode base64 to string
+
 fn crypto_base64_decode(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let data = get_string_arg(&args[0], "data")?;
@@ -157,5 +158,5 @@ fn crypto_base64_decode(args: &[Value]) -> Result<Value, String> {
 
     let decoded = String::from_utf8(bytes).map_err(|e| format!("UTF-8 decode error: {}", e))?;
 
-    Ok(Value::String(Arc::from(decoded)))
+    Ok(Value::String(Rc::from(decoded)))
 }

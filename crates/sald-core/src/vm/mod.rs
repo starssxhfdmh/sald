@@ -1,4 +1,4 @@
-// Sald Virtual Machine Module
+
 
 pub mod caller;
 pub mod gc;

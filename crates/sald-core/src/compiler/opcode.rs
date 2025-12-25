@@ -1,122 +1,122 @@
-// Sald Bytecode Instructions
 
-/// Bytecode operation codes
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum OpCode {
-    // Constants and stack operations
-    Constant, // Push constant onto stack
-    Pop,      // Pop top of stack
-    Dup,      // Duplicate top of stack
-    DupTwo,   // Duplicate top two elements: [a, b] -> [a, b, a, b]
-    Swap,     // Swap top two elements: [a, b] -> [b, a]
+    
+    Constant, 
+    Pop,      
+    Dup,      
+    DupTwo,   
+    Swap,     
 
-    // Literals
-    Null,  // Push null
-    True,  // Push true
-    False, // Push false
+    
+    Null,  
+    True,  
+    False, 
 
-    // Variables
-    DefineGlobal, // Define global variable
-    GetGlobal,    // Get global variable
-    SetGlobal,    // Set global variable
-    GetLocal,     // Get local variable
-    SetLocal,     // Set local variable
+    
+    DefineGlobal, 
+    GetGlobal,    
+    SetGlobal,    
+    GetLocal,     
+    SetLocal,     
 
-    // Arithmetic operations
-    Add,    // a + b
-    Sub,    // a - b
-    Mul,    // a * b
-    Div,    // a / b
-    Mod,    // a % b
-    Negate, // -a
+    
+    Add,    
+    Sub,    
+    Mul,    
+    Div,    
+    Mod,    
+    Negate, 
 
-    // Comparison operations
-    Equal,        // a == b
-    NotEqual,     // a != b
-    Less,         // a < b
-    LessEqual,    // a <= b
-    Greater,      // a > b
-    GreaterEqual, // a >= b
+    
+    Equal,        
+    NotEqual,     
+    Less,         
+    LessEqual,    
+    Greater,      
+    GreaterEqual, 
 
-    // Logical operations
-    Not, // !a
+    
+    Not, 
 
-    // Control flow
-    Jump,          // Unconditional jump
-    JumpIfFalse,   // Jump if top of stack is false
-    JumpIfTrue,    // Jump if top of stack is true
-    JumpIfNotNull, // Jump if top of stack is not null (for default params)
-    Loop,          // Jump backward (for loops)
+    
+    Jump,          
+    JumpIfFalse,   
+    JumpIfTrue,    
+    JumpIfNotNull, 
+    Loop,          
 
-    // Functions
-    Call,    // Call function
-    Return,  // Return from function
-    Closure, // Create closure
+    
+    Call,    
+    Return,  
+    Closure, 
 
-    // Classes and objects
-    Class,        // Define class
-    Method,       // Define method
-    StaticMethod, // Define static method
-    GetProperty,  // Get object property
-    SetProperty,  // Set object property
-    GetSelf,      // Get 'self' reference
-    Invoke,       // Optimized method call
+    
+    Class,        
+    Method,       
+    StaticMethod, 
+    GetProperty,  
+    SetProperty,  
+    GetSelf,      
+    Invoke,       
 
-    // Arrays
-    BuildArray, // Build array from stack elements
-    GetIndex,   // Get array/string element by index
-    SetIndex,   // Set array element by index
+    
+    BuildArray, 
+    GetIndex,   
+    SetIndex,   
 
-    // Dictionaries
-    BuildDict, // Build dictionary from stack key-value pairs
+    
+    BuildDict, 
 
-    // Namespaces and Enums
-    BuildNamespace, // Build namespace from stack key-value pairs
-    BuildEnum,      // Build enum from stack key-value pairs
+    
+    BuildNamespace, 
+    BuildEnum,      
 
-    // Inheritance
-    Inherit,  // Copy parent class methods to child
-    GetSuper, // Get method from superclass
+    
+    Inherit,  
+    GetSuper, 
 
-    // Imports
-    Import,   // Import file into global scope
-    ImportAs, // Import file as module with alias
+    
+    Import,   
+    ImportAs, 
 
-    // Upvalues (closures)
-    GetUpvalue,   // Get captured variable from closure
-    SetUpvalue,   // Set captured variable in closure
-    CloseUpvalue, // Close upvalue when variable goes out of scope
+    
+    GetUpvalue,   
+    SetUpvalue,   
+    CloseUpvalue, 
 
-    // Exception handling
-    TryStart, // Start try block, push exception handler (operand: catch jump offset)
-    TryEnd,   // End try block successfully, pop exception handler
-    Throw,    // Throw exception (value on stack)
+    
+    TryStart, 
+    TryEnd,   
+    Throw,    
 
-    // Async/Await
-    Await, // Await a Future value, block until resolved
+    
+    Await, 
 
-    // Spread
-    SpreadArray, // Mark value to be spread as arguments
+    
+    SpreadArray, 
 
-    // Bitwise operations
-    BitAnd,     // a & b
-    BitOr,      // a | b
-    BitXor,     // a ^ b
-    BitNot,     // ~a
-    LeftShift,  // a << b
-    RightShift, // a >> b
+    
+    BitAnd,     
+    BitOr,      
+    BitXor,     
+    BitNot,     
+    LeftShift,  
+    RightShift, 
 
-    // Range operations
-    BuildRangeInclusive, // start..end (inclusive)
-    BuildRangeExclusive, // start..<end (exclusive)
+    
+    BuildRangeInclusive, 
+    BuildRangeExclusive, 
 
-    // Self-recursion optimization
-    RecursiveCall, // Call current function directly (no stack push needed)
+    
+    RecursiveCall, 
 }
 
 impl OpCode {
-    /// Get the number of bytes this opcode reads as operands
+    
     pub fn operand_count(&self) -> usize {
         match self {
             OpCode::Constant
@@ -149,7 +149,7 @@ impl OpCode {
             | OpCode::GetUpvalue
             | OpCode::SetUpvalue
             | OpCode::TryStart
-            | OpCode::RecursiveCall => 2, // u16 operand
+            | OpCode::RecursiveCall => 2, 
 
             _ => 0,
         }

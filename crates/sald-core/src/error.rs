@@ -1,11 +1,11 @@
-// Sald Error Handling Module
-// Provides comprehensive error reporting with line numbers, spans, and stack traces
+
+
 
 #[cfg(not(target_arch = "wasm32"))]
 use colored::*;
 use std::fmt;
 
-/// Represents a position in the source code
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub line: usize,
@@ -33,7 +33,7 @@ impl Default for Position {
     }
 }
 
-/// Represents a span in the source code (start to end position)
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: Position,
@@ -75,7 +75,7 @@ impl Default for Span {
     }
 }
 
-/// Types of errors in Sald
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorKind {
     SyntaxError,
@@ -111,7 +111,7 @@ impl fmt::Display for ErrorKind {
     }
 }
 
-/// A stack frame for error traces
+
 #[derive(Debug, Clone)]
 pub struct StackFrame {
     pub function_name: String,
@@ -149,7 +149,7 @@ impl fmt::Display for StackFrame {
     }
 }
 
-/// Main error type for Sald
+
 #[derive(Debug, Clone)]
 pub struct SaldError {
     pub kind: ErrorKind,
@@ -198,12 +198,12 @@ impl SaldError {
         self.stack_trace.push(frame);
     }
 
-    /// Format the error for display (with colors for native)
+    
     #[cfg(not(target_arch = "wasm32"))]
     pub fn format(&self) -> String {
         let mut output = String::new();
 
-        // Error header: SyntaxError: message at file:line:column
+        
         let header = format!(
             "{}: {} at {}:{}:{}",
             self.kind.to_string().red().bold(),
@@ -215,7 +215,7 @@ impl SaldError {
         output.push_str(&header);
         output.push('\n');
 
-        // Source context (show 3 lines: before, error line, after)
+        
         if !self.source_lines.is_empty() {
             let error_line = self.span.start.line;
             let start_line = if error_line > 1 { error_line - 1 } else { 1 };
@@ -231,7 +231,7 @@ impl SaldError {
                     if line_num == error_line {
                         output.push_str(&format!("{} {}\n", line_num_str.red(), line_content));
 
-                        // Add caret pointing to the error
+                        
                         let spaces = " ".repeat(6 + self.span.start.column);
                         let caret_len = if self.span.end.column > self.span.start.column {
                             self.span.end.column - self.span.start.column + 1
@@ -247,15 +247,15 @@ impl SaldError {
             }
         }
 
-        // Help message
+        
         if let Some(ref help) = self.help {
             output.push_str(&format!("\n      {}: {}\n", "Help".cyan().bold(), help));
         }
 
-        // Stack trace (limit to 10 frames)
+        
         if !self.stack_trace.is_empty() {
             output.push_str(&format!("\n{}:\n", "Stack trace".yellow().bold()));
-            // Show first few frames
+            
             for frame in self.stack_trace.iter() {
                 output.push_str(&format!("{}\n", frame));
             }
@@ -264,12 +264,12 @@ impl SaldError {
         output
     }
 
-    /// Format the error for display (plain text for WASM)
+    
     #[cfg(target_arch = "wasm32")]
     pub fn format(&self) -> String {
         let mut output = String::new();
 
-        // Error header: SyntaxError: message at file:line:column
+        
         let header = format!(
             "{}: {} at {}:{}:{}",
             self.kind,
@@ -281,7 +281,7 @@ impl SaldError {
         output.push_str(&header);
         output.push('\n');
 
-        // Source context
+        
         if !self.source_lines.is_empty() {
             let error_line = self.span.start.line;
             let start_line = if error_line > 1 { error_line - 1 } else { 1 };
@@ -310,12 +310,12 @@ impl SaldError {
             }
         }
 
-        // Help message
+        
         if let Some(ref help) = self.help {
             output.push_str(&format!("\n      Help: {}\n", help));
         }
 
-        // Stack trace
+        
         if !self.stack_trace.is_empty() {
             output.push_str("\nStack trace:\n");
             for frame in self.stack_trace.iter() {
@@ -326,14 +326,14 @@ impl SaldError {
         output
     }
 
-    /// Format the error with options (native with colors)
+    
     #[cfg(not(target_arch = "wasm32"))]
     pub fn format_with_options(&self, full_trace: bool) -> String {
         if full_trace {
-            // Use full trace - show all stack frames
+            
             let mut output = String::new();
 
-            // Error header
+            
             let header = format!(
                 "{}: {} at {}:{}:{}",
                 self.kind.to_string().red().bold(),
@@ -345,7 +345,7 @@ impl SaldError {
             output.push_str(&header);
             output.push('\n');
 
-            // Source context
+            
             if !self.source_lines.is_empty() {
                 let error_line = self.span.start.line;
                 let start = error_line.saturating_sub(2);
@@ -377,12 +377,12 @@ impl SaldError {
                 }
             }
 
-            // Help
+            
             if let Some(ref help) = self.help {
                 output.push_str(&format!("\n      {}: {}\n", "Help".cyan().bold(), help));
             }
 
-            // Full stack trace
+            
             if !self.stack_trace.is_empty() {
                 output.push_str(&format!("\n{}:\n", "Stack trace".yellow().bold()));
                 for frame in &self.stack_trace {
@@ -396,7 +396,7 @@ impl SaldError {
         }
     }
 
-    /// Format the error with options (WASM plain text)
+    
     #[cfg(target_arch = "wasm32")]
     pub fn format_with_options(&self, _full_trace: bool) -> String {
         self.format()
@@ -411,10 +411,10 @@ impl fmt::Display for SaldError {
 
 impl std::error::Error for SaldError {}
 
-/// Result type for Sald operations
+
 pub type SaldResult<T> = Result<T, SaldError>;
 
-// Convenience constructors for common errors
+
 impl SaldError {
     pub fn syntax_error(message: impl Into<String>, span: Span, file: impl Into<String>) -> Self {
         Self::new(ErrorKind::SyntaxError, message, span, file)

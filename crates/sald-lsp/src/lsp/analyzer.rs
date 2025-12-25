@@ -1,5 +1,5 @@
-// Semantic Analyzer for Sald LSP
-// Detects runtime-like errors statically: undefined variables, type mismatches, etc.
+
+
 
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
@@ -9,7 +9,7 @@ use super::symbols::span_to_range;
 use sald_core::ast::{Expr, FunctionDef, LambdaBody, Pattern, Program, Stmt, SwitchArrayElement};
 use sald_core::error::Span;
 
-/// Scope for tracking local variables
+
 #[derive(Debug, Clone)]
 struct Scope {
     variables: FxHashMap<String, VarInfo>,
@@ -22,26 +22,26 @@ struct VarInfo {
     is_used: bool,
 }
 
-/// Semantic Analyzer
+
 pub struct SemanticAnalyzer {
     scopes: Vec<Scope>,
     diagnostics: Vec<Diagnostic>,
     defined_classes: FxHashSet<String>,
     defined_functions: FxHashSet<String>,
-    has_imports: bool, // If file has imports, be lenient with undefined checks
-    in_class: bool,    // Track if we're inside a class method
-    externally_used: FxHashSet<String>, // Symbols used by other files
+    has_imports: bool, 
+    in_class: bool,    
+    externally_used: FxHashSet<String>, 
 }
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
         let mut defined_classes = FxHashSet::default();
-        // Built-in classes
+        
         for cls in &[
             "Console", "Math", "File", "Timer", "Date", "Json", "Path", "Process", "Http", "Type",
             "System", "Array", "Dict", "String", "Ffi", "Number",
-            "Boolean", // Type conversion classes
-            "Regex", "Channel", "Promise", "Crypto", // Additional builtins
+            "Boolean", 
+            "Regex", "Channel", "Promise", "Crypto", 
         ] {
             defined_classes.insert(cls.to_string());
         }
@@ -59,12 +59,12 @@ impl SemanticAnalyzer {
         }
     }
 
-    /// Set symbols that are used by other files (don't warn as unused)
+    
     pub fn set_externally_used_symbols(&mut self, symbols: FxHashSet<String>) {
         self.externally_used = symbols;
     }
 
-    /// Add symbols from imported modules so they don't trigger undefined errors
+    
     pub fn add_imported_symbols(&mut self, symbols: &[super::symbols::Symbol]) {
         for sym in symbols {
             match sym.kind {
@@ -75,23 +75,23 @@ impl SemanticAnalyzer {
                     self.defined_functions.insert(sym.name.clone());
                 }
                 super::symbols::SymbolKind::Namespace | super::symbols::SymbolKind::Enum => {
-                    // Namespaces and enums are accessed like classes
+                    
                     self.defined_classes.insert(sym.name.clone());
                 }
                 super::symbols::SymbolKind::Variable | super::symbols::SymbolKind::Constant => {
-                    // Add as global variable in root scope
+                    
                     self.scopes[0].variables.insert(
                         sym.name.clone(),
                         VarInfo {
                             span: sald_core::error::Span::default(),
                             is_const: matches!(sym.kind, super::symbols::SymbolKind::Constant),
-                            is_used: true, // Don't warn about unused imports
+                            is_used: true, 
                         },
                     );
                 }
                 _ => {}
             }
-            // Also register children (for nested namespaces/classes)
+            
             self.add_imported_symbols(&sym.children);
         }
     }
@@ -100,28 +100,28 @@ impl SemanticAnalyzer {
         self.diagnostics.clear();
         self.has_imports = false;
 
-        // First pass: collect top-level declarations and check for imports
+        
         for stmt in &program.statements {
             self.collect_declaration(stmt);
         }
 
-        // Second pass: analyze
+        
         for stmt in &program.statements {
             self.analyze_stmt(stmt);
         }
 
-        // Check for unused variables in global scope
+        
         self.check_unused_in_current_scope();
 
         std::mem::take(&mut self.diagnostics)
     }
 
-    /// Check for unused variables in the current scope (without popping)
+    
     fn check_unused_in_current_scope(&mut self) {
         if let Some(scope) = self.scopes.last() {
             for (name, info) in &scope.variables {
-                // Skip underscore-prefixed vars (convention for intentionally unused)
-                // Skip symbols used in other files
+                
+                
                 if !info.is_used && !name.starts_with('_') && !self.externally_used.contains(name) {
                     self.diagnostics.push(Diagnostic {
                         range: span_to_range(&info.span),
@@ -144,7 +144,7 @@ impl SemanticAnalyzer {
                 self.defined_classes.insert(def.name.clone());
             }
             Stmt::Namespace { name, body, .. } => {
-                // Namespace itself is a valid identifier
+                
                 self.defined_classes.insert(name.clone());
                 for s in body {
                     self.collect_declaration(s);
@@ -154,7 +154,7 @@ impl SemanticAnalyzer {
                 self.defined_classes.insert(name.clone());
             }
             Stmt::Import { .. } => {
-                // Mark that this file has imports - be lenient with undefined checks
+                
                 self.has_imports = true;
             }
             _ => {}
@@ -172,10 +172,10 @@ impl SemanticAnalyzer {
     }
 
     fn pop_scope(&mut self) {
-        // Check for unused variables before popping
+        
         if let Some(scope) = self.scopes.last() {
             for (name, info) in &scope.variables {
-                // Skip underscore-prefixed vars and externally used
+                
                 if !info.is_used && !name.starts_with('_') && !self.externally_used.contains(name) {
                     self.diagnostics.push(Diagnostic {
                         range: span_to_range(&info.span),
@@ -191,7 +191,7 @@ impl SemanticAnalyzer {
     }
 
     fn define_var(&mut self, name: &str, span: &Span, is_const: bool) {
-        // Allow variable redefinition in Sald (unlike JS let)
+        
         self.current_scope_mut().variables.insert(
             name.to_string(),
             VarInfo {
@@ -203,10 +203,10 @@ impl SemanticAnalyzer {
     }
 
     fn resolve_var(&mut self, name: &str) -> Option<bool> {
-        // IMPORTANT: Check local scopes FIRST for proper lexical scoping!
-        // Local variables should shadow global classes/functions.
+        
+        
 
-        // Search scopes from innermost to outermost
+        
         for scope in self.scopes.iter_mut().rev() {
             if let Some(info) = scope.variables.get_mut(name) {
                 info.is_used = true;
@@ -214,17 +214,17 @@ impl SemanticAnalyzer {
             }
         }
 
-        // Check built-in constants and special variables
+        
         if matches!(name, "true" | "false" | "null" | "self" | "super") {
             return Some(false);
         }
 
-        // Check global classes/namespaces (from imports or definitions)
+        
         if self.defined_classes.contains(name) {
             return Some(false);
         }
 
-        // Check defined functions (from imports or definitions)
+        
         if self.defined_functions.contains(name) {
             return Some(false);
         }
@@ -240,7 +240,7 @@ impl SemanticAnalyzer {
                 initializer,
                 span: _,
             } => {
-                // Analyze value first
+                
                 if let Some(val) = initializer {
                     self.analyze_expr(val);
                 }
@@ -251,9 +251,9 @@ impl SemanticAnalyzer {
                 initializer,
                 span: _,
             } => {
-                // Analyze initializer first
+                
                 self.analyze_expr(initializer);
-                // Define all pattern variables
+                
                 for elem in &pattern.elements {
                     match elem {
                         sald_core::ast::ArrayPatternElement::Variable {
@@ -331,7 +331,7 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::Class { def } => {
-                // Mark that we're inside a class
+                
                 let was_in_class = self.in_class;
                 self.in_class = true;
                 for method in &def.methods {
@@ -362,8 +362,8 @@ impl SemanticAnalyzer {
                 self.pop_scope();
             }
             Stmt::Import { .. } => {
-                // Import statements introduce globals from external files
-                // We can't fully analyze without loading them
+                
+                
             }
             Stmt::Break { .. }
             | Stmt::Continue { .. }
@@ -375,12 +375,12 @@ impl SemanticAnalyzer {
     fn analyze_function(&mut self, def: &FunctionDef) {
         self.push_scope();
 
-        // Define parameters (including 'self' implicitly for methods)
+        
         for param in &def.params {
             self.define_var(&param.name, &param.span, false);
         }
 
-        // Analyze body
+        
         for stmt in &def.body {
             self.analyze_stmt(stmt);
         }
@@ -391,12 +391,12 @@ impl SemanticAnalyzer {
     fn analyze_pattern(&mut self, pattern: &Pattern) {
         match pattern {
             Pattern::Literal { .. } => {
-                // Literals don't need analysis
+                
             }
             Pattern::Binding { name, guard, span } => {
-                // Define the binding variable
+                
                 self.define_var(name, span, false);
-                // Analyze guard expression if present
+                
                 if let Some(guard_expr) = guard {
                     self.analyze_expr(guard_expr);
                 }
@@ -419,12 +419,12 @@ impl SemanticAnalyzer {
                 }
             }
             Pattern::Range { start, end, .. } => {
-                // Analyze start and end expressions
+                
                 self.analyze_expr(start);
                 self.analyze_expr(end);
             }
             Pattern::Expression { expr, .. } => {
-                // Analyze the expression (e.g., Enum.Member)
+                
                 self.analyze_expr(expr);
             }
         }
@@ -433,17 +433,17 @@ impl SemanticAnalyzer {
     fn analyze_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Identifier { name, span } => {
-                // First check if variable is defined in local scope
+                
                 if self.resolve_var(name).is_some() {
-                    return; // Variable exists locally, all good
+                    return; 
                 }
 
-                // Skip undefined check for known classes/namespaces/functions
+                
                 if self.defined_classes.contains(name) || self.defined_functions.contains(name) {
                     return;
                 }
 
-                // Report undefined variable
+                
                 self.diagnostics.push(Diagnostic {
                     range: span_to_range(span),
                     severity: Some(DiagnosticSeverity::ERROR),
@@ -458,7 +458,7 @@ impl SemanticAnalyzer {
                 span,
                 ..
             } => {
-                // Check if assigning to const
+                
                 if let Expr::Identifier { name, .. } = target.as_ref() {
                     if let Some(is_const) = self.resolve_var(name) {
                         if is_const {
@@ -590,9 +590,9 @@ impl SemanticAnalyzer {
             Expr::Throw { value, .. } => {
                 self.analyze_expr(value);
             }
-            // Literals don't need analysis
+            
             Expr::Literal { .. } | Expr::Break { .. } | Expr::Continue { .. } => {}
-            // Self/super must be inside a class
+            
             Expr::SelfExpr { span } => {
                 if !self.in_class {
                     self.diagnostics.push(Diagnostic {

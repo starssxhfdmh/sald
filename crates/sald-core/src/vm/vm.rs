@@ -1,12 +1,11 @@
-// Sald Virtual Machine - Threaded Code Implementation
-// Stack-based VM with dispatch table for fast execution
-// Uses Arc/Mutex for thread-safe async support
-// Implements suspend/resume for true non-blocking async
 
-use parking_lot::{Mutex, RwLock};
+
+
+
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::builtins;
 use crate::compiler::chunk::{Chunk, Constant};
@@ -18,47 +17,34 @@ use crate::vm::caller::ValueCaller;
 use crate::vm::gc::GcHeap;
 use crate::vm::value::{Class, Function, Instance, UpvalueObj, Value};
 
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::oneshot;
-
 const STACK_MAX: usize = 65536;
 const FRAMES_MAX: usize = 4096;
 
-// Start small, grow as needed - avoids over-allocation for simple scripts
+
 const STACK_INIT: usize = 256;
 const FRAMES_INIT: usize = 64;
 
-/// Result of VM execution - supports suspend/resume for async
-#[cfg(not(target_arch = "wasm32"))]
-pub enum ExecutionResult {
-    Completed(Value),
-    Suspended {
-        receiver: oneshot::Receiver<Result<Value, String>>,
-    },
-    Error(SaldError),
-}
 
-#[cfg(target_arch = "wasm32")]
 pub enum ExecutionResult {
     Completed(Value),
     Error(SaldError),
 }
 
-/// Call frame for function execution
+
 #[derive(Clone)]
 struct CallFrame {
-    function: Arc<Function>,
+    function: Rc<Function>,
     ip: usize,
     slots_start: usize,
     init_instance: Option<Value>,
-    /// Class context for private access checking (Some if this is an instance method)
+    
     class_context: Option<String>,
-    /// Saved globals for module function calls - restore when this frame pops
-    saved_globals: Option<Arc<RwLock<FxHashMap<String, Value>>>>,
+    
+    saved_globals: Option<Rc<RefCell<FxHashMap<String, Value>>>>,
 }
 
 impl CallFrame {
-    fn new(function: Arc<Function>, slots_start: usize) -> Self {
+    fn new(function: Rc<Function>, slots_start: usize) -> Self {
         Self {
             function,
             ip: 0,
@@ -69,7 +55,7 @@ impl CallFrame {
         }
     }
 
-    fn new_with_class(function: Arc<Function>, slots_start: usize, class_name: String) -> Self {
+    fn new_with_class(function: Rc<Function>, slots_start: usize, class_name: String) -> Self {
         Self {
             function,
             ip: 0,
@@ -81,7 +67,7 @@ impl CallFrame {
     }
 
     fn new_init_with_class(
-        function: Arc<Function>,
+        function: Rc<Function>,
         slots_start: usize,
         instance: Value,
         class_name: String,
@@ -125,32 +111,31 @@ struct ExceptionHandler {
     catch_ip: usize,
 }
 
-/// The Sald Virtual Machine with Threaded Code Dispatch
+
 pub struct VM {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
-    globals: Arc<RwLock<FxHashMap<String, Value>>>,
+    globals: Rc<RefCell<FxHashMap<String, Value>>>,
     file: String,
     source: String,
     exception_handlers: SmallVec<[ExceptionHandler; 4]>,
-    open_upvalues: Vec<Arc<Mutex<UpvalueObj>>>,
+    open_upvalues: Vec<Rc<RefCell<UpvalueObj>>>,
     gc: GcHeap,
     gc_counter: usize,
     gc_stats_enabled: bool,
     pending_module_workspace: Option<std::path::PathBuf>,
     args: Vec<String>,
-    /// Stack of namespace names for private access checking
+    
     namespace_context: Vec<String>,
 }
 
-// ==================== Dispatch Table ====================
 
-/// Control flow result from opcode handlers
+
+
 #[cfg(not(target_arch = "wasm32"))]
 enum ControlFlow {
     Continue,
     Return(Value),
-    Suspend(oneshot::Receiver<Result<Value, String>>),
     Error(SaldError),
 }
 
@@ -161,83 +146,83 @@ enum ControlFlow {
     Error(SaldError),
 }
 
-/// Opcode handler function type
+
 type OpHandler = fn(&mut VM) -> ControlFlow;
 
-/// Single unified dispatch table - 69 opcodes (0-68)
+
 static DISPATCH: [OpHandler; 69] = [
-    op_constant,              // 0
-    op_pop,                   // 1
-    op_dup,                   // 2
-    op_dup_two,               // 3
-    op_swap,                  // 4
-    op_null,                  // 5
-    op_true,                  // 6
-    op_false,                 // 7
-    op_define_global,         // 8
-    op_get_global,            // 9
-    op_set_global,            // 10
-    op_get_local,             // 11
-    op_set_local,             // 12
-    op_add,                   // 13
-    op_sub,                   // 14
-    op_mul,                   // 15
-    op_div,                   // 16
-    op_mod,                   // 17
-    op_negate,                // 18
-    op_equal,                 // 19
-    op_not_equal,             // 20
-    op_less,                  // 21
-    op_less_equal,            // 22
-    op_greater,               // 23
-    op_greater_equal,         // 24
-    op_not,                   // 25
-    op_jump,                  // 26
-    op_jump_if_false,         // 27
-    op_jump_if_true,          // 28
-    op_jump_if_not_null,      // 29
-    op_loop,                  // 30
-    op_call,                  // 31
-    op_return,                // 32
-    op_closure,               // 33
-    op_class,                 // 34
-    op_method,                // 35
-    op_static_method,         // 36
-    op_get_property,          // 37
-    op_set_property,          // 38
-    op_get_self,              // 39
-    op_invoke,                // 40
-    op_build_array,           // 41
-    op_get_index,             // 42
-    op_set_index,             // 43
-    op_build_dict,            // 44
-    op_build_namespace,       // 45
-    op_build_enum,            // 46
-    op_inherit,               // 47
-    op_get_super,             // 48
-    op_import,                // 49
-    op_import_as,             // 50
-    op_get_upvalue,           // 51
-    op_set_upvalue,           // 52
-    op_close_upvalue,         // 53
-    op_try_start,             // 54
-    op_try_end,               // 55
-    op_throw,                 // 56
-    op_await,                 // 57
-    op_spread_array,          // 58
-    op_bit_and,               // 59
-    op_bit_or,                // 60
-    op_bit_xor,               // 61
-    op_bit_not,               // 62
-    op_left_shift,            // 63
-    op_right_shift,           // 64
-    op_build_range_inclusive, // 65
-    op_build_range_exclusive, // 66
-    op_recursive_call,        // 67 = RecursiveCall
-    op_nop,                   // 68 (unused, for safety)
+    op_constant,              
+    op_pop,                   
+    op_dup,                   
+    op_dup_two,               
+    op_swap,                  
+    op_null,                  
+    op_true,                  
+    op_false,                 
+    op_define_global,         
+    op_get_global,            
+    op_set_global,            
+    op_get_local,             
+    op_set_local,             
+    op_add,                   
+    op_sub,                   
+    op_mul,                   
+    op_div,                   
+    op_mod,                   
+    op_negate,                
+    op_equal,                 
+    op_not_equal,             
+    op_less,                  
+    op_less_equal,            
+    op_greater,               
+    op_greater_equal,         
+    op_not,                   
+    op_jump,                  
+    op_jump_if_false,         
+    op_jump_if_true,          
+    op_jump_if_not_null,      
+    op_loop,                  
+    op_call,                  
+    op_return,                
+    op_closure,               
+    op_class,                 
+    op_method,                
+    op_static_method,         
+    op_get_property,          
+    op_set_property,          
+    op_get_self,              
+    op_invoke,                
+    op_build_array,           
+    op_get_index,             
+    op_set_index,             
+    op_build_dict,            
+    op_build_namespace,       
+    op_build_enum,            
+    op_inherit,               
+    op_get_super,             
+    op_import,                
+    op_import_as,             
+    op_get_upvalue,           
+    op_set_upvalue,           
+    op_close_upvalue,         
+    op_try_start,             
+    op_try_end,               
+    op_throw,                 
+    op_await,                 
+    op_spread_array,          
+    op_bit_and,               
+    op_bit_or,                
+    op_bit_xor,               
+    op_bit_not,               
+    op_left_shift,            
+    op_right_shift,           
+    op_build_range_inclusive, 
+    op_build_range_exclusive, 
+    op_recursive_call,        
+    op_nop,                   
 ];
 
-// ==================== Opcode Handlers ====================
+
 
 #[inline(always)]
 fn op_constant(vm: &mut VM) -> ControlFlow {
@@ -309,7 +294,7 @@ fn op_define_global(vm: &mut VM) -> ControlFlow {
         Ok(name) => {
             if !vm.stack.is_empty() {
                 let value = vm.pop_fast();
-                vm.globals.write().insert(name, value);
+                vm.globals.borrow_mut().insert(name, value);
             }
             ControlFlow::Continue
         }
@@ -322,7 +307,7 @@ fn op_get_global(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     match vm.read_string_constant(idx) {
         Ok(name) => {
-            let value = vm.globals.read().get(&name).cloned();
+            let value = vm.globals.borrow().get(&name).cloned();
             match value {
                 Some(v) => {
                     vm.stack.push(v);
@@ -343,14 +328,14 @@ fn op_set_global(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     match vm.read_string_constant(idx) {
         Ok(name) => {
-            if !vm.globals.read().contains_key(&name) {
+            if !vm.globals.borrow().contains_key(&name) {
                 return ControlFlow::Error(vm.create_error(
                     ErrorKind::NameError,
                     &format!("Undefined variable '{}'", name),
                 ));
             }
             if let Some(value) = vm.peek().cloned() {
-                vm.globals.write().insert(name, value);
+                vm.globals.borrow_mut().insert(name, value);
             }
             ControlFlow::Continue
         }
@@ -390,7 +375,7 @@ fn op_add(vm: &mut VM) -> ControlFlow {
     let a = unsafe { vm.stack.get_unchecked(len - 2) };
     let result = match (a, b) {
         (Value::Number(av), Value::Number(bv)) => {
-            // Fast path: in-place for numbers
+            
             let r = av + bv;
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 2) = Value::Number(r);
@@ -398,29 +383,29 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             }
             return ControlFlow::Continue;
         }
-        // Optimized string concatenation - avoid format! overhead
+        
         (Value::String(a_str), Value::String(b_str)) => {
-            // Pre-allocate exact capacity
+            
             let mut result = String::with_capacity(a_str.len() + b_str.len());
             result.push_str(a_str);
             result.push_str(b_str);
-            Value::String(Arc::from(result))
+            Value::String(Rc::from(result))
         }
         (Value::String(a_str), b) => {
-            // Write directly to buffer - no intermediate allocation!
+            
             use std::fmt::Write;
-            let mut result = String::with_capacity(a_str.len() + 32); // estimate for non-string
+            let mut result = String::with_capacity(a_str.len() + 32); 
             result.push_str(a_str);
             let _ = write!(result, "{}", b);
-            Value::String(Arc::from(result))
+            Value::String(Rc::from(result))
         }
         (a, Value::String(b_str)) => {
-            // Write directly to buffer - no intermediate allocation!
+            
             use std::fmt::Write;
-            let mut result = String::with_capacity(32 + b_str.len()); // estimate for non-string
+            let mut result = String::with_capacity(32 + b_str.len()); 
             let _ = write!(result, "{}", a);
             result.push_str(b_str);
-            Value::String(Arc::from(result))
+            Value::String(Rc::from(result))
         }
         _ => {
             let a_type = a.type_name();
@@ -431,7 +416,7 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             ));
         }
     };
-    // Slow path for strings: use in-place mutation too
+    
     unsafe {
         *vm.stack.get_unchecked_mut(len - 2) = result;
         vm.stack.set_len(len - 1);
@@ -524,7 +509,7 @@ fn op_negate(vm: &mut VM) -> ControlFlow {
     let v = unsafe { vm.stack.get_unchecked(len - 1) };
     match v {
         Value::Number(n) => {
-            // In-place mutation
+            
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 1) = Value::Number(-n);
             }
@@ -682,17 +667,17 @@ fn op_return(vm: &mut VM) -> ControlFlow {
     let frame = unsafe { vm.frames.pop().unwrap_unchecked() };
     let slots_start = frame.slots_start;
 
-    // Fast path: simple function return (most common in recursive code)
-    // - No saved globals (not a module function)
-    // - No file tracking (common case)
-    // - No init instance (not a constructor)
-    // - Check upvalues only if any open
+    
+    
+    
+    
+    
     let is_simple = frame.saved_globals.is_none()
         && frame.function.file.is_empty()
         && frame.init_instance.is_none();
 
     if is_simple {
-        // Clean up exception handlers for this frame
+        
         while let Some(handler) = vm.exception_handlers.last() {
             if handler.frame_index >= returning_frame_index {
                 vm.exception_handlers.pop();
@@ -701,7 +686,7 @@ fn op_return(vm: &mut VM) -> ControlFlow {
             }
         }
 
-        // Only close upvalues if there might be any
+        
         if !vm.open_upvalues.is_empty() {
             vm.close_upvalues(slots_start);
         }
@@ -717,7 +702,7 @@ fn op_return(vm: &mut VM) -> ControlFlow {
         return ControlFlow::Continue;
     }
 
-    // Slow path: complex function return
+    
     if let Some(saved_globals) = frame.saved_globals {
         vm.globals = saved_globals;
     }
@@ -768,7 +753,7 @@ fn op_closure(vm: &mut VM) -> ControlFlow {
             };
             function.upvalues.push(upvalue);
         }
-        vm.stack.push(Value::Function(Arc::new(function)));
+        vm.stack.push(Value::Function(Rc::new(function)));
     }
     ControlFlow::Continue
 }
@@ -778,7 +763,7 @@ fn op_class(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     match vm.read_string_constant(idx) {
         Ok(name) => {
-            vm.stack.push(Value::Class(Arc::new(Class::new(&name))));
+            vm.stack.push(Value::Class(Rc::new(Class::new(&name))));
             ControlFlow::Continue
         }
         Err(e) => ControlFlow::Error(e),
@@ -800,9 +785,9 @@ fn op_method_impl(vm: &mut VM, is_static: bool) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     let constant = vm.current_frame().function.chunk.constants[idx].clone();
     if let Constant::Function(ref func_const) = constant {
-        let function = Arc::new(Function::from_constant(func_const));
+        let function = Rc::new(Function::from_constant(func_const));
         if let Some(Value::Class(class)) = vm.stack.last().cloned() {
-            let class_mut = Arc::as_ptr(&class) as *mut Class;
+            let class_mut = Rc::as_ptr(&class) as *mut Class;
             unsafe {
                 if is_static {
                     (*class_mut)
@@ -867,7 +852,7 @@ fn op_build_array(vm: &mut VM) -> ControlFlow {
         elements.push(vm.stack.pop().unwrap_or(Value::Null));
     }
     elements.reverse();
-    let arr = Arc::new(Mutex::new(elements));
+    let arr = Rc::new(RefCell::new(elements));
     vm.track_array(&arr);
     vm.stack.push(Value::Array(arr));
     ControlFlow::Continue
@@ -956,7 +941,7 @@ fn op_import_as(vm: &mut VM) -> ControlFlow {
 fn op_get_upvalue(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     let upvalue = vm.current_frame().function.upvalues[idx].clone();
-    let upvalue_ref = upvalue.lock();
+    let upvalue_ref = upvalue.borrow();
     let value = if let Some(ref closed) = upvalue_ref.closed {
         (**closed).clone()
     } else {
@@ -971,7 +956,7 @@ fn op_set_upvalue(vm: &mut VM) -> ControlFlow {
     let idx = vm.read_u16() as usize;
     let value = vm.stack.last().cloned().unwrap_or(Value::Null);
     let upvalue = vm.current_frame().function.upvalues[idx].clone();
-    let mut upvalue_ref = upvalue.lock();
+    let mut upvalue_ref = upvalue.borrow_mut();
     if upvalue_ref.closed.is_some() {
         upvalue_ref.closed = Some(Box::new(value));
     } else {
@@ -1033,16 +1018,12 @@ fn op_throw(vm: &mut VM) -> ControlFlow {
 fn op_await(vm: &mut VM) -> ControlFlow {
     let value = vm.stack.pop().unwrap_or(Value::Null);
     match value {
-        Value::Future(future_arc) => {
-            let mut guard = future_arc.lock();
-            if let Some(future) = guard.take() {
-                drop(guard);
-                return ControlFlow::Suspend(future.receiver);
-            } else {
-                return ControlFlow::Error(
-                    vm.create_error(ErrorKind::RuntimeError, "Future has already been consumed"),
-                );
-            }
+        Value::Future(_) => {
+            
+            
+            ControlFlow::Error(
+                vm.create_error(ErrorKind::RuntimeError, "async/await is not supported in single-threaded mode")
+            )
         }
         other => {
             vm.stack.push(other);
@@ -1137,16 +1118,16 @@ fn op_nop(_vm: &mut VM) -> ControlFlow {
     ControlFlow::Continue
 }
 
-/// Recursive call - ultra fast self-recursive function call
-/// Directly reuses current frame's function, no stack manipulation for function value
+
+
 #[inline(always)]
 fn op_recursive_call(vm: &mut VM) -> ControlFlow {
     let arg_count = vm.read_u16() as usize;
 
-    // Get current function directly from frame
+    
     let function = vm.current_frame().function.clone();
 
-    // Ultra-fast path: we know this is non-variadic, exact arity for recursive calls
+    
     if vm.frames.len() >= FRAMES_MAX {
         return ControlFlow::Error(vm.create_error(
             ErrorKind::RuntimeError,
@@ -1154,9 +1135,9 @@ fn op_recursive_call(vm: &mut VM) -> ControlFlow {
         ));
     }
 
-    // Compiler already pushed null placeholder BEFORE args, so stack is:
-    // [..., null, arg1, arg2, ...]
-    // slots_start = len - arg_count - 1 (pointing to the null placeholder)
+    
+    
+    
     let slots_start = vm.stack.len() - arg_count - 1;
     if !function.file.is_empty() {
         crate::push_script_dir(&function.file);
@@ -1166,7 +1147,7 @@ fn op_recursive_call(vm: &mut VM) -> ControlFlow {
     ControlFlow::Continue
 }
 
-// ==================== Helper Functions ====================
+
 
 #[inline(always)]
 fn binary_num_op(vm: &mut VM, op: fn(f64, f64) -> f64) -> ControlFlow {
@@ -1179,7 +1160,7 @@ fn binary_num_op(vm: &mut VM, op: fn(f64, f64) -> f64) -> ControlFlow {
     match (a, b) {
         (Value::Number(av), Value::Number(bv)) => {
             let result = op(*av, *bv);
-            // In-place: write result to a's slot, then pop b
+            
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 2) = Value::Number(result);
                 vm.stack.set_len(len - 1);
@@ -1208,7 +1189,7 @@ fn comparison_op(vm: &mut VM, op: fn(f64, f64) -> bool) -> ControlFlow {
     match (a, b) {
         (Value::Number(av), Value::Number(bv)) => {
             let result = op(*av, *bv);
-            // In-place: write result to a's slot, then pop b
+            
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 2) = Value::Boolean(result);
                 vm.stack.set_len(len - 1);
@@ -1298,7 +1279,7 @@ fn shift_op(vm: &mut VM, op: fn(i64, u32) -> i64) -> ControlFlow {
     }
 }
 
-// ==================== ValueCaller Implementation ====================
+
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ValueCaller for VM {
@@ -1317,28 +1298,16 @@ impl ValueCaller for VM {
             match self.execute_one_threaded() {
                 ControlFlow::Continue => continue,
                 ControlFlow::Return(v) => return Ok(v),
-                ControlFlow::Suspend(receiver) => {
-                    let result = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(receiver)
-                    });
-                    match result {
-                        Ok(Ok(value)) => {
-                            self.stack.push(value);
-                        }
-                        Ok(Err(e)) => return Err(e),
-                        Err(_) => return Err("Future was cancelled".to_string()),
-                    }
-                }
                 ControlFlow::Error(e) => return Err(e.message),
             }
         }
     }
 
     fn get_globals(&self) -> FxHashMap<String, Value> {
-        self.globals.read().clone()
+        self.globals.borrow().clone()
     }
 
-    fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> {
+    fn get_shared_globals(&self) -> Rc<RefCell<FxHashMap<String, Value>>> {
         self.globals.clone()
     }
 }
@@ -1366,15 +1335,15 @@ impl ValueCaller for VM {
     }
 
     fn get_globals(&self) -> FxHashMap<String, Value> {
-        self.globals.read().clone()
+        self.globals.borrow().clone()
     }
 
-    fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> {
+    fn get_shared_globals(&self) -> Rc<RefCell<FxHashMap<String, Value>>> {
         self.globals.clone()
     }
 }
 
-// ==================== VM Implementation ====================
+
 
 impl VM {
     pub fn new() -> Self {
@@ -1382,7 +1351,7 @@ impl VM {
         Self {
             stack: Vec::with_capacity(STACK_INIT),
             frames: Vec::with_capacity(FRAMES_INIT),
-            globals: Arc::new(RwLock::new(globals)),
+            globals: Rc::new(RefCell::new(globals)),
             file: String::new(),
             source: String::new(),
             exception_handlers: SmallVec::new(),
@@ -1396,7 +1365,7 @@ impl VM {
         }
     }
 
-    pub fn new_with_shared_globals(globals: Arc<RwLock<FxHashMap<String, Value>>>) -> Self {
+    pub fn new_with_shared_globals(globals: Rc<RefCell<FxHashMap<String, Value>>>) -> Self {
         Self {
             stack: Vec::with_capacity(STACK_INIT),
             frames: Vec::with_capacity(FRAMES_INIT),
@@ -1414,7 +1383,7 @@ impl VM {
         }
     }
 
-    /// Reset VM state for reuse (avoids reallocation)
+    
     #[inline]
     pub fn reset(&mut self) {
         self.stack.clear();
@@ -1431,9 +1400,9 @@ impl VM {
         self.gc_stats_enabled = enabled;
     }
     pub fn get_globals(&self) -> FxHashMap<String, Value> {
-        self.globals.read().clone()
+        self.globals.borrow().clone()
     }
-    pub fn get_shared_globals(&self) -> Arc<RwLock<FxHashMap<String, Value>>> {
+    pub fn get_shared_globals(&self) -> Rc<RefCell<FxHashMap<String, Value>>> {
         self.globals.clone()
     }
     pub fn gc_stats(&self) -> super::gc::GcStats {
@@ -1456,7 +1425,7 @@ impl VM {
         for value in &self.stack {
             roots.push(value);
         }
-        let globals_guard = self.globals.read();
+        let globals_guard = self.globals.borrow();
         for value in globals_guard.values() {
             roots.push(value);
         }
@@ -1470,52 +1439,52 @@ impl VM {
         }
     }
 
-    fn track_array(&mut self, arr: &Arc<Mutex<Vec<Value>>>) {
+    fn track_array(&mut self, arr: &Rc<RefCell<Vec<Value>>>) {
         self.gc.track_array(arr);
         self.maybe_collect_garbage();
     }
-    fn track_dict(&mut self, dict: &Arc<Mutex<FxHashMap<String, Value>>>) {
+    fn track_dict(&mut self, dict: &Rc<RefCell<FxHashMap<String, Value>>>) {
         self.gc.track_dict(dict);
         self.maybe_collect_garbage();
     }
-    fn track_instance(&mut self, inst: &Arc<Mutex<Instance>>) {
+    fn track_instance(&mut self, inst: &Rc<RefCell<Instance>>) {
         self.gc.track_instance(inst);
         self.maybe_collect_garbage();
     }
 
-    // ==================== Stack Helpers ====================
+    
 
-    /// Peek at top value without removing
+    
     #[inline(always)]
     fn peek(&self) -> Option<&Value> {
         self.stack.last()
     }
 
-    /// Peek at value at offset from top (0 = top, 1 = second from top, etc.) - UNSAFE
+    
     #[inline(always)]
     fn peek_unchecked(&self, offset: usize) -> &Value {
         unsafe { self.stack.get_unchecked(self.stack.len() - 1 - offset) }
     }
 
-    /// Pop value from stack - UNSAFE, assumes stack is not empty
+    
     #[inline(always)]
     fn pop_fast(&mut self) -> Value {
         unsafe { self.stack.pop().unwrap_unchecked() }
     }
 
-    // ==================== Private Access Checking ====================
+    
 
-    /// Check if identifier is private (starts with _)
+    
     #[inline(always)]
     fn is_private(name: &str) -> bool {
         name.starts_with('_') && name.len() > 1
     }
 
-    /// Check if we're currently inside the given class (or any parent class in the call stack)
-    /// Also checks the function's compile-time class_context for closures defined inside methods
+    
+    
     #[inline(always)]
     fn is_in_class(&self, class_name: &str) -> bool {
-        // Check if any frame in the call stack has the matching class context (runtime)
+        
         for frame in self.frames.iter().rev() {
             if let Some(ref ctx) = frame.class_context {
                 if ctx == class_name {
@@ -1524,8 +1493,8 @@ impl VM {
             }
         }
 
-        // Check if current function was defined in this class (compile-time context)
-        // This handles closures/lambdas defined inside class methods
+        
+        
         if let Some(frame) = self.frames.last() {
             if let Some(ref class_ctx) = frame.function.class_context {
                 if class_ctx == class_name {
@@ -1537,12 +1506,12 @@ impl VM {
         false
     }
 
-    /// Check if we're currently inside the given namespace
-    /// Checks both the runtime namespace context stack AND the current function's
-    /// compile-time namespace context (for functions defined inside namespaces)
+    
+    
+    
     #[inline(always)]
     fn is_in_namespace(&self, namespace_name: &str) -> bool {
-        // Check runtime namespace context stack
+        
         if self
             .namespace_context
             .last()
@@ -1552,16 +1521,16 @@ impl VM {
             return true;
         }
 
-        // Check if current function was defined in this namespace
-        // This handles the case when a namespace function is called from outside
+        
+        
         if let Some(frame) = self.frames.last() {
             if let Some(ref ns_ctx) = frame.function.namespace_context {
-                // The ns_ctx is fully qualified (e.g., "Spark.Template")
-                // The namespace_name might be just "Template" (runtime name)
-                // Check various matching conditions:
-                // 1. Exact match (e.g., "Template" == "Template")
-                // 2. Ends with the namespace (e.g., "Spark.Template" ends with ".Template" or is "Template")
-                // 3. Starts with namespace (for child access, e.g., "Template.Inner" can access "Template")
+                
+                
+                
+                
+                
+                
                 if ns_ctx == namespace_name
                     || ns_ctx.ends_with(&format!(".{}", namespace_name))
                     || ns_ctx.starts_with(&format!("{}.", namespace_name))
@@ -1574,31 +1543,31 @@ impl VM {
         false
     }
 
-    /// Main entry point - async execution with event loop (native only)
+    
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn run(&mut self, chunk: Chunk, file: &str, source: &str) -> SaldResult<Value> {
+    pub fn run(&mut self, chunk: Chunk, file: &str, source: &str) -> SaldResult<Value> {
         self.file = file.to_string();
         self.source = source.to_string();
         crate::push_script_dir(file);
 
         let mut main_function = Function::new("<script>", 0, chunk);
         main_function.file = file.to_string();
-        let main_function = Arc::new(main_function);
+        let main_function = Rc::new(main_function);
 
         let slots_start = self.stack.len();
         self.stack.push(Value::Null);
         self.frames.push(CallFrame::new(main_function, slots_start));
 
-        let result = self.run_event_loop().await;
+        let result = self.run_sync_loop();
         crate::pop_script_dir();
         result
     }
 
-    /// Main entry point - synchronous execution (WASM)
+    
     #[cfg(target_arch = "wasm32")]
     pub fn run(&mut self, chunk: &Chunk) -> SaldResult<Value> {
         let mut main_function = Function::new("<script>", 0, chunk.clone());
-        let main_function = Arc::new(main_function);
+        let main_function = Rc::new(main_function);
 
         let slots_start = self.stack.len();
         self.stack.push(Value::Null);
@@ -1608,7 +1577,7 @@ impl VM {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn run_handler(
+    pub fn run_handler(
         &mut self,
         handler: Value,
         arg: Value,
@@ -1618,10 +1587,10 @@ impl VM {
             crate::push_script_dir(dir);
         }
         self.stack.push(Value::Null);
-        self.stack.push(handler); // handler consumed, no clone needed
+        self.stack.push(handler); 
         self.stack.push(arg);
         self.call_value(1)?;
-        let result = self.run_event_loop().await;
+        let result = self.run_sync_loop();
         if script_dir.is_some() {
             crate::pop_script_dir();
         }
@@ -1629,31 +1598,18 @@ impl VM {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    async fn run_event_loop(&mut self) -> SaldResult<Value> {
+    fn run_sync_loop(&mut self) -> SaldResult<Value> {
         loop {
-            match self.execute_until_suspend() {
+            match self.execute_until_complete_native() {
                 ExecutionResult::Completed(value) => return Ok(value),
-                ExecutionResult::Suspended { receiver } => match receiver.await {
-                    Ok(Ok(value)) => {
-                        self.stack.push(value);
-                    }
-                    Ok(Err(e)) => {
-                        self.handle_native_error(e)?;
-                    }
-                    Err(_) => {
-                        return Err(
-                            self.create_error(ErrorKind::RuntimeError, "Future was cancelled")
-                        )
-                    }
-                },
                 ExecutionResult::Error(e) => return Err(e),
             }
         }
     }
 
-    /// Execute with threaded dispatch until suspend or complete (native)
+    
     #[cfg(not(target_arch = "wasm32"))]
-    fn execute_until_suspend(&mut self) -> ExecutionResult {
+    fn execute_until_complete_native(&mut self) -> ExecutionResult {
         loop {
             if self.frames.is_empty() {
                 return ExecutionResult::Completed(self.stack.pop().unwrap_or(Value::Null));
@@ -1661,7 +1617,6 @@ impl VM {
             match self.execute_one_threaded() {
                 ControlFlow::Continue => continue,
                 ControlFlow::Return(v) => return ExecutionResult::Completed(v),
-                ControlFlow::Suspend(receiver) => return ExecutionResult::Suspended { receiver },
                 ControlFlow::Error(e) => {
                     if !self.exception_handlers.is_empty() {
                         if let Err(handler_err) = self.handle_native_error(e.message.clone()) {
@@ -1675,7 +1630,7 @@ impl VM {
         }
     }
 
-    /// Execute until complete (WASM - no suspend support)
+    
     #[cfg(target_arch = "wasm32")]
     fn execute_until_complete(&mut self) -> SaldResult<Value> {
         loop {
@@ -1696,15 +1651,15 @@ impl VM {
         }
     }
 
-    /// Core threaded dispatch - single instruction execution
+    
     #[inline(always)]
     fn execute_one_threaded(&mut self) -> ControlFlow {
-        // GC is now allocation-triggered (track_array, track_dict, track_instance)
-        // No per-instruction GC check needed - major performance win for recursive code
+        
+        
 
         let op = self.read_byte();
 
-        // Single dispatch table lookup - no branching
+        
         if op < 69 {
             unsafe { DISPATCH.get_unchecked(op as usize)(self) }
         } else {
@@ -1714,7 +1669,7 @@ impl VM {
         }
     }
 
-    // ==================== Stack Operations ====================
+    
 
     #[inline(always)]
     fn push_fast(&mut self, value: Value) -> SaldResult<()> {
@@ -1749,9 +1704,9 @@ impl VM {
         let constant = &self.current_frame().function.chunk.constants[idx];
         match constant {
             Constant::Number(n) => Value::Number(*n),
-            Constant::String(s) => Value::String(s.clone()),
-            Constant::Function(f) => Value::Function(Arc::new(Function::from_constant(f))),
-            Constant::Class(c) => Value::Class(Arc::new(Class::new(&c.name))),
+            Constant::String(s) => Value::String(Rc::from(s.as_ref())),
+            Constant::Function(f) => Value::Function(Rc::new(Function::from_constant(f))),
+            Constant::Class(c) => Value::Class(Rc::new(Class::new(&c.name))),
         }
     }
 
@@ -1762,23 +1717,23 @@ impl VM {
         }
     }
 
-    fn capture_upvalue(&mut self, location: usize) -> Arc<Mutex<UpvalueObj>> {
+    fn capture_upvalue(&mut self, location: usize) -> Rc<RefCell<UpvalueObj>> {
         for upvalue in &self.open_upvalues {
-            if upvalue.lock().location == location {
+            if upvalue.borrow().location == location {
                 return upvalue.clone();
             }
         }
-        let upvalue = Arc::new(Mutex::new(UpvalueObj::new(location)));
+        let upvalue = Rc::new(RefCell::new(UpvalueObj::new(location)));
         self.open_upvalues.push(upvalue.clone());
         upvalue
     }
 
     fn close_upvalues(&mut self, last: usize) {
         self.open_upvalues.retain(|upvalue| {
-            let location = upvalue.lock().location;
-            if location >= last {
-                let value = self.stack.get(location).cloned().unwrap_or(Value::Null);
-                upvalue.lock().closed = Some(Box::new(value));
+            let mut guard = upvalue.borrow_mut();
+            if guard.location >= last {
+                let value = self.stack.get(guard.location).cloned().unwrap_or(Value::Null);
+                guard.closed = Some(Box::new(value));
                 false
             } else {
                 true
@@ -1809,7 +1764,7 @@ impl VM {
             match arg {
                 Value::SpreadMarker(boxed_value) => {
                     if let Value::Array(arr) = *boxed_value {
-                        for elem in arr.lock().iter() {
+                        for elem in arr.borrow().iter() {
                             expanded_args.push(elem.clone());
                         }
                     } else {
@@ -1824,21 +1779,21 @@ impl VM {
         Ok(new_count)
     }
 
-    // ==================== Call Methods ====================
+    
 
     fn call_value(&mut self, arg_count: usize) -> SaldResult<()> {
         let callee_idx = self.stack.len() - arg_count - 1;
         let callee = unsafe { self.stack.get_unchecked(callee_idx) };
 
-        // Fast path: if callee is a function, handle directly without cloning for type check
+        
         match callee {
             Value::Function(function) => {
-                // Check if this is a recursive call to the same function (common in fib)
-                // If so, we can reuse the Arc from current frame instead of cloning from stack
+                
+                
                 let func_to_call = if !self.frames.is_empty() {
                     let current_func = &self.current_frame().function;
-                    if Arc::ptr_eq(current_func, function) {
-                        // Recursive call - reuse the Arc from current frame
+                    if Rc::ptr_eq(current_func, function) {
+                        
                         current_func.clone()
                     } else {
                         function.clone()
@@ -1876,11 +1831,13 @@ impl VM {
     }
 
     #[inline(always)]
-    fn call_function(&mut self, function: Arc<Function>, arg_count: usize) -> SaldResult<()> {
-        // Ultra-fast path: non-variadic, no defaults, exact arity match
-        // This is the common case for recursive functions like fib(n)
+    fn call_function(&mut self, function: Rc<Function>, arg_count: usize) -> SaldResult<()> {
+        
+
+        
+        
         if !function.is_variadic && function.default_count == 0 && arg_count == function.arity {
-            // Skip all validation - we know it's correct
+            
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(
                     ErrorKind::RuntimeError,
@@ -1895,7 +1852,7 @@ impl VM {
             return Ok(());
         }
 
-        // Fast path: non-variadic function with exact or under arity (most common case)
+        
         if !function.is_variadic {
             let required_arity = function.arity.saturating_sub(function.default_count);
             if arg_count < required_arity {
@@ -1917,13 +1874,13 @@ impl VM {
                 ));
             }
 
-            // Push null for missing default args
+            
             let missing = function.arity - arg_count;
             for _ in 0..missing {
                 self.stack.push(Value::Null);
             }
 
-            // FRAMES_MAX check inlined for fast path
+            
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(
                     ErrorKind::RuntimeError,
@@ -1939,7 +1896,7 @@ impl VM {
             return Ok(());
         }
 
-        // Slow path: variadic functions
+        
         let min_arity = function.arity.saturating_sub(1);
         if arg_count < min_arity {
             return Err(self.create_error(
@@ -1957,7 +1914,7 @@ impl VM {
         }
         variadic_args.reverse();
         self.stack
-            .push(Value::Array(Arc::new(Mutex::new(variadic_args))));
+            .push(Value::Array(Rc::new(RefCell::new(variadic_args))));
         let effective_arg_count = min_arity + 1;
         if self.frames.len() >= FRAMES_MAX {
             return Err(self.create_error(
@@ -1973,14 +1930,18 @@ impl VM {
         Ok(())
     }
 
-    /// Call a user-defined function with class context for private access checking
+    
+    
+
+
+    
     fn call_function_with_class(
         &mut self,
-        function: Arc<Function>,
+        function: Rc<Function>,
         arg_count: usize,
         class_name: String,
     ) -> SaldResult<()> {
-        // Fast path: non-variadic functions
+        
         if !function.is_variadic {
             let required_arity = function.arity.saturating_sub(function.default_count);
             if arg_count < required_arity {
@@ -2002,7 +1963,7 @@ impl VM {
                 ));
             }
 
-            // Push null for missing default args
+            
             let missing = function.arity - arg_count;
             for _ in 0..missing {
                 self.stack.push(Value::Null);
@@ -2024,7 +1985,7 @@ impl VM {
             return Ok(());
         }
 
-        // Slow path: variadic functions
+        
         let min_arity = function.arity.saturating_sub(1);
         if arg_count < min_arity {
             return Err(self.create_error(
@@ -2042,7 +2003,7 @@ impl VM {
         }
         variadic_args.reverse();
         self.stack
-            .push(Value::Array(Arc::new(Mutex::new(variadic_args))));
+            .push(Value::Array(Rc::new(RefCell::new(variadic_args))));
         let effective_arg_count = min_arity + 1;
         if self.frames.len() >= FRAMES_MAX {
             return Err(self.create_error(
@@ -2058,7 +2019,7 @@ impl VM {
             .push(CallFrame::new_with_class(function, slots_start, class_name));
         Ok(())
     }
-    fn call_class(&mut self, class: Arc<Class>, arg_count: usize) -> SaldResult<()> {
+    fn call_class(&mut self, class: Rc<Class>, arg_count: usize) -> SaldResult<()> {
         if let Some(constructor) = class.constructor {
             let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
             self.stack.pop();
@@ -2073,14 +2034,14 @@ impl VM {
                 }
             }
         } else {
-            let instance = Arc::new(Mutex::new(Instance::new(class.clone())));
+            let instance = Rc::new(RefCell::new(Instance::new(class.clone())));
             self.track_instance(&instance);
             let instance_value = Value::Instance(instance.clone());
             let stack_idx = self.stack.len() - arg_count - 1;
             self.stack[stack_idx] = instance_value.clone();
             if let Some(init) = class.methods.get("init") {
                 if let Value::Function(init_fn) = init {
-                    // Use class context for private access in constructor
+                    
                     self.call_function_init_with_class(
                         init_fn.clone(),
                         arg_count,
@@ -2140,7 +2101,7 @@ impl VM {
     fn call_bound_method(
         &mut self,
         receiver: Value,
-        method: Arc<Function>,
+        method: Rc<Function>,
         arg_count: usize,
     ) -> SaldResult<()> {
         let args: Vec<Value> = self.stack.drain(self.stack.len() - arg_count..).collect();
@@ -2152,10 +2113,10 @@ impl VM {
         self.call_function(method, arg_count)
     }
 
-    /// Call init constructor with class context for private access checking
+    
     fn call_function_init_with_class(
         &mut self,
-        function: Arc<Function>,
+        function: Rc<Function>,
         arg_count: usize,
         instance: Value,
         class_name: String,
@@ -2201,7 +2162,7 @@ impl VM {
         Ok(())
     }
 
-    // ==================== Invoke Method ====================
+    
 
     fn invoke(&mut self, name: &str, arg_count: usize) -> SaldResult<()> {
         let receiver = self
@@ -2211,9 +2172,13 @@ impl VM {
             .unwrap_or(Value::Null);
         match receiver {
             Value::Instance(ref instance) => {
-                let class = instance.lock().class.clone();
+                
+                let (class, field) = {
+                    let guard = instance.borrow();
+                    (guard.class.clone(), guard.fields.get(name).cloned())
+                };
 
-                // Check private access BEFORE calling the method
+                
                 if Self::is_private(name) && !self.is_in_class(&class.name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2224,14 +2189,14 @@ impl VM {
                     ));
                 }
 
-                if let Some(field) = instance.lock().fields.get(name).cloned() {
+                if let Some(field) = field {
                     let stack_idx = self.stack.len() - arg_count - 1;
                     self.stack[stack_idx] = field;
                     return self.call_value(arg_count);
                 }
                 if let Some(method) = class.methods.get(name).cloned() {
                     if let Value::Function(func) = method {
-                        // Use class context for private access checking
+                        
                         return self.call_function_with_class(func, arg_count, class.name.clone());
                     }
                 }
@@ -2273,7 +2238,7 @@ impl VM {
                 ))
             }
             Value::Class(class) => {
-                // Check private access for static methods
+                
                 if Self::is_private(name) && !self.is_in_class(&class.name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2319,7 +2284,7 @@ impl VM {
             | Value::Dictionary(_) => {
                 let class_name = builtins::get_builtin_class_name(&receiver);
                 let class =
-                    if let Some(Value::Class(c)) = self.globals.read().get(class_name).cloned() {
+                    if let Some(Value::Class(c)) = self.globals.borrow().get(class_name).cloned() {
                         c
                     } else {
                         return Err(self.create_error(
@@ -2370,7 +2335,7 @@ impl VM {
                 name: ns_name,
                 module_globals,
             } => {
-                // Check private access for namespace members
+                
                 if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2381,37 +2346,35 @@ impl VM {
                     ));
                 }
 
-                if let Some(m) = members.try_read() {
-                    if let Some(member) = m.get(name).cloned() {
-                        drop(m);
-                        let stack_idx = self.stack.len() - arg_count - 1;
-                        self.stack[stack_idx] = member.clone();
+                let m = members.borrow();
+                if let Some(member) = m.get(name).cloned() {
+                    drop(m);
+                    let stack_idx = self.stack.len() - arg_count - 1;
+                    self.stack[stack_idx] = member.clone();
 
-                        // If this namespace has stored module globals, swap to them for function execution
-                        if let Some(ref module_globals_arc) = module_globals {
-                            if matches!(member, Value::Function(_)) {
-                                let saved_globals = std::mem::replace(
-                                    &mut self.globals,
-                                    module_globals_arc.clone(),
-                                );
-                                let result = self.call_value(arg_count);
-                                // Store saved_globals in the just-pushed frame so Return can restore
-                                if result.is_ok() && !self.frames.is_empty() {
-                                    self.frames.last_mut().unwrap().saved_globals =
-                                        Some(saved_globals);
-                                }
-                                return result;
+                    
+                    if let Some(ref module_globals_rc) = module_globals {
+                        if matches!(member, Value::Function(_)) {
+                            let saved_globals = std::mem::replace(
+                                &mut self.globals,
+                                module_globals_rc.clone(),
+                            );
+                            let result = self.call_value(arg_count);
+                            
+                            if result.is_ok() && !self.frames.is_empty() {
+                                self.frames.last_mut().unwrap().saved_globals =
+                                    Some(saved_globals);
                             }
+                            return result;
                         }
-
-                        return self.call_value(arg_count);
                     }
-                    return Err(self.create_error(
-                        ErrorKind::AttributeError,
-                        &format!("Namespace '{}' has no member '{}'", ns_name, name),
-                    ));
+
+                    return self.call_value(arg_count);
                 }
-                Err(self.create_error(ErrorKind::RuntimeError, "Failed to lock namespace"))
+                Err(self.create_error(
+                    ErrorKind::AttributeError,
+                    &format!("Namespace '{}' has no member '{}'", ns_name, name),
+                ))
             }
             _ => Err(self.create_error(
                 ErrorKind::TypeError,
@@ -2423,16 +2386,16 @@ impl VM {
         }
     }
 
-    // ==================== Property Handlers ====================
+    
 
     fn handle_get_property(&mut self, name: &str) -> SaldResult<()> {
         let obj = self.stack.pop().unwrap_or(Value::Null);
         match obj {
             Value::Instance(instance) => {
-                let inst_guard = instance.lock();
+                let inst_guard = instance.borrow();
                 let class_name = inst_guard.class.name.clone();
 
-                // Check private access for fields and methods
+                
                 if Self::is_private(name) && !self.is_in_class(&class_name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2459,7 +2422,7 @@ impl VM {
                 }
             }
             Value::Class(class) => {
-                // Check private access for static members
+                
                 if Self::is_private(name) && !self.is_in_class(&class.name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2494,7 +2457,7 @@ impl VM {
             | Value::Dictionary(_) => {
                 let class_name = builtins::get_builtin_class_name(&obj);
                 let method_result = {
-                    let globals_guard = self.globals.read();
+                    let globals_guard = self.globals.borrow();
                     if let Some(Value::Class(class)) = globals_guard.get(class_name) {
                         if let Some(method) = class.native_instance_methods.get(name) {
                             Ok((*method, name.to_string()))
@@ -2521,7 +2484,7 @@ impl VM {
                 name: ns_name,
                 ..
             } => {
-                // Check private access for namespace members
+                
                 if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2533,7 +2496,7 @@ impl VM {
                 }
 
                 {
-                    let m = members.read();
+                    let m = members.borrow();
                     if let Some(value) = m.get(name) {
                         self.stack.push(value.clone());
                     } else {
@@ -2571,23 +2534,26 @@ impl VM {
         let value = self.stack.pop().unwrap_or(Value::Null);
         let obj = self.stack.pop().unwrap_or(Value::Null);
         if let Value::Instance(instance) = obj {
-            let class_name = instance.lock().class.name.clone();
-
-            // Check private access
-            if Self::is_private(name) && !self.is_in_class(&class_name) {
-                return Err(self.create_error(
-                    ErrorKind::AccessError,
-                    &format!(
-                        "Cannot access private member '{}' from outside class '{}'",
-                        name, class_name
-                    ),
-                ));
-            }
-
-            instance
-                .lock()
-                .fields
-                .insert(name.to_string(), value.clone());
+            
+            let class_name = {
+                let mut guard = instance.borrow_mut();
+                let class_name = guard.class.name.clone();
+                
+                
+                if Self::is_private(name) && !self.is_in_class(&class_name) {
+                    return Err(self.create_error(
+                        ErrorKind::AccessError,
+                        &format!(
+                            "Cannot access private member '{}' from outside class '{}'",
+                            name, class_name
+                        ),
+                    ));
+                }
+                
+                guard.fields.insert(name.to_string(), value.clone());
+                class_name
+            };
+            let _ = class_name; 
             self.stack.push(value);
             Ok(())
         } else {
@@ -2604,7 +2570,7 @@ impl VM {
         match (&object, &index) {
             (Value::Array(arr), Value::Number(idx)) => {
                 let idx = *idx as usize;
-                let arr = arr.lock();
+                let arr = arr.borrow();
                 if idx < arr.len() {
                     self.stack.push(arr[idx].clone());
                 } else {
@@ -2622,7 +2588,7 @@ impl VM {
                 let idx = *idx as usize;
                 if idx < s.len() {
                     let ch = s.chars().nth(idx).unwrap_or(' ');
-                    self.stack.push(Value::String(Arc::from(ch.to_string())));
+                    self.stack.push(Value::String(Rc::from(ch.to_string())));
                 } else {
                     return Err(self.create_error(
                         ErrorKind::IndexError,
@@ -2635,7 +2601,7 @@ impl VM {
                 }
             }
             (Value::Dictionary(dict), Value::String(key)) => {
-                let value = dict.lock().get(&**key).cloned().unwrap_or(Value::Null);
+                let value = dict.borrow().get(&**key).cloned().unwrap_or(Value::Null);
                 self.stack.push(value);
             }
             _ => {
@@ -2659,7 +2625,7 @@ impl VM {
         match (&object, &index) {
             (Value::Array(arr), Value::Number(idx)) => {
                 let idx = *idx as usize;
-                let mut arr = arr.lock();
+                let mut arr = arr.borrow_mut();
                 if idx < arr.len() {
                     arr[idx] = value.clone();
                     self.stack.push(value);
@@ -2675,7 +2641,7 @@ impl VM {
                 }
             }
             (Value::Dictionary(dict), Value::String(key)) => {
-                dict.lock().insert(key.to_string(), value.clone());
+                dict.borrow_mut().insert(key.to_string(), value.clone());
                 self.stack.push(value);
             }
             _ => {
@@ -2706,7 +2672,7 @@ impl VM {
         for (key, value) in pairs {
             if let (Value::Null, Value::SpreadMarker(spread_value)) = (&key, &value) {
                 if let Value::Dictionary(dict) = spread_value.as_ref() {
-                    for (k, v) in dict.lock().iter() {
+                    for (k, v) in dict.borrow().iter() {
                         map.insert(k.clone(), v.clone());
                     }
                 } else {
@@ -2726,7 +2692,7 @@ impl VM {
                 map.insert(key_str, value);
             }
         }
-        let dict = Arc::new(Mutex::new(map));
+        let dict = Rc::new(RefCell::new(map));
         self.track_dict(&dict);
         self.stack.push(Value::Dictionary(dict));
         Ok(())
@@ -2741,7 +2707,7 @@ impl VM {
             let key = self.stack.pop().unwrap_or(Value::Null);
             if let Value::String(s) = key {
                 let key_str = s.to_string();
-                // Set the name for nested namespaces/enums
+                
                 match &mut value {
                     Value::Namespace { name, .. } if name.is_empty() => {
                         *name = key_str.clone();
@@ -2761,7 +2727,7 @@ impl VM {
         }
         self.stack.push(Value::Namespace {
             name: String::new(),
-            members: Arc::new(RwLock::new(members)),
+            members: Rc::new(RefCell::new(members)),
             module_globals: None,
         });
         Ok(())
@@ -2784,7 +2750,7 @@ impl VM {
         }
         self.stack.push(Value::Enum {
             name: String::new(),
-            variants: Arc::new(variants),
+            variants: Rc::new(variants),
         });
         Ok(())
     }
@@ -2832,7 +2798,7 @@ impl VM {
                 }
             }
         }
-        let arr = Arc::new(Mutex::new(elements));
+        let arr = Rc::new(RefCell::new(elements));
         self.track_array(&arr);
         self.stack.push(Value::Array(arr));
         Ok(())
@@ -2856,7 +2822,7 @@ impl VM {
                     .insert(name.clone(), method.clone());
             }
             new_class.superclass = Some(superclass.clone());
-            self.stack.push(Value::Class(Arc::new(new_class)));
+            self.stack.push(Value::Class(Rc::new(new_class)));
             Ok(())
         } else {
             Err(self.create_error(
@@ -2872,7 +2838,7 @@ impl VM {
     fn handle_get_super(&mut self, method_name: &str) -> SaldResult<()> {
         let receiver = self.stack.pop().unwrap_or(Value::Null);
         if let Value::Instance(ref instance) = receiver {
-            let class = instance.lock().class.clone();
+            let class = instance.borrow().class.clone();
             if let Some(ref superclass) = class.superclass {
                 if let Some(method) = superclass.methods.get(method_name) {
                     if let Value::Function(func) = method {
@@ -2900,7 +2866,7 @@ impl VM {
         ))
     }
 
-    // ==================== Import Handlers ====================
+    
 
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_import(&mut self, import_path: &str) -> SaldResult<()> {
@@ -2914,12 +2880,12 @@ impl VM {
             crate::pop_module_workspace();
         }
         for (name, value) in imported_globals {
-            let globals_guard = self.globals.read();
+            let globals_guard = self.globals.borrow();
             let should_insert = !globals_guard.contains_key(&name)
                 || !matches!(globals_guard.get(&name), Some(Value::Class(_)));
             drop(globals_guard);
             if should_insert {
-                self.globals.write().insert(name, value);
+                self.globals.borrow_mut().insert(name, value);
             }
         }
         Ok(())
@@ -2944,8 +2910,8 @@ impl VM {
             crate::push_module_workspace(workspace);
         }
 
-        // Use the Arc version to preserve module globals for function scoping
-        let (imported_globals, module_globals_arc) =
+        
+        let (imported_globals, module_globals_rc) =
             self.import_and_execute_with_globals(&resolved_path)?;
 
         if module_workspace.is_some() {
@@ -2958,13 +2924,13 @@ impl VM {
                 module_fields.insert(name, value);
             }
         }
-        // Use Namespace with stored module_globals so functions can access their original scope
-        self.globals.write().insert(
+        
+        self.globals.borrow_mut().insert(
             alias.to_string(),
             Value::Namespace {
                 name: alias.to_string(),
-                members: Arc::new(RwLock::new(module_fields)),
-                module_globals: Some(module_globals_arc),
+                members: Rc::new(RefCell::new(module_fields)),
+                module_globals: Some(module_globals_rc),
             },
         );
         Ok(())
@@ -3182,44 +3148,15 @@ impl VM {
         let saved_file = std::mem::replace(&mut self.file, path.to_string());
         let saved_source = std::mem::replace(&mut self.source, String::new());
         crate::push_script_dir(path);
-        let import_globals = Arc::new(RwLock::new(builtins::create_builtin_classes()));
+        let import_globals = Rc::new(RefCell::new(builtins::create_builtin_classes()));
         let saved_globals = std::mem::replace(&mut self.globals, import_globals);
         let mut main_function = Function::new("<import>", 0, chunk);
         main_function.file = path.to_string();
         self.stack.push(Value::Null);
-        self.frames.push(CallFrame::new(Arc::new(main_function), 0));
+        self.frames.push(CallFrame::new(Rc::new(main_function), 0));
         loop {
-            match self.execute_until_suspend() {
+            match self.execute_until_complete_native() {
                 ExecutionResult::Completed(_) => break,
-                ExecutionResult::Suspended { receiver } => {
-                    match futures::executor::block_on(receiver) {
-                        Ok(Ok(value)) => {
-                            self.stack.push(value);
-                        }
-                        Ok(Err(e)) => {
-                            crate::pop_script_dir();
-                            self.stack = saved_stack;
-                            self.frames = saved_frames;
-                            self.file = saved_file;
-                            self.source = saved_source;
-                            self.globals = saved_globals;
-                            return Err(self.create_error(
-                                ErrorKind::ImportError,
-                                &format!("Import error: {}", e),
-                            ));
-                        }
-                        Err(_) => {
-                            crate::pop_script_dir();
-                            self.stack = saved_stack;
-                            self.frames = saved_frames;
-                            self.file = saved_file;
-                            self.source = saved_source;
-                            self.globals = saved_globals;
-                            return Err(self
-                                .create_error(ErrorKind::ImportError, "Import future cancelled"));
-                        }
-                    }
-                }
                 ExecutionResult::Error(e) => {
                     crate::pop_script_dir();
                     self.stack = saved_stack;
@@ -3231,7 +3168,7 @@ impl VM {
                 }
             }
         }
-        let imported_globals = std::mem::take(&mut *self.globals.write());
+        let imported_globals = std::mem::take(&mut *self.globals.borrow_mut());
         crate::pop_script_dir();
         self.stack = saved_stack;
         self.frames = saved_frames;
@@ -3241,15 +3178,15 @@ impl VM {
         Ok(imported_globals)
     }
 
-    /// Import and execute a module, returning both the globals HashMap AND the Arc
-    /// This preserves the module's globals context for proper function scoping in import-as
+    
+    
     #[cfg(not(target_arch = "wasm32"))]
     fn import_and_execute_with_globals(
         &mut self,
         path: &str,
     ) -> SaldResult<(
         FxHashMap<String, Value>,
-        Arc<RwLock<FxHashMap<String, Value>>>,
+        Rc<RefCell<FxHashMap<String, Value>>>,
     )> {
         let chunk = if path.ends_with(".saldc") {
             let data = std::fs::read(path).map_err(|e| {
@@ -3298,45 +3235,16 @@ impl VM {
         let saved_file = std::mem::replace(&mut self.file, path.to_string());
         let saved_source = std::mem::replace(&mut self.source, String::new());
         crate::push_script_dir(path);
-        let import_globals = Arc::new(RwLock::new(builtins::create_builtin_classes()));
-        let module_globals_arc = import_globals.clone(); // Keep a clone of the Arc
+        let import_globals = Rc::new(RefCell::new(builtins::create_builtin_classes()));
+        let module_globals_rc = import_globals.clone(); 
         let saved_globals = std::mem::replace(&mut self.globals, import_globals);
         let mut main_function = Function::new("<import>", 0, chunk);
         main_function.file = path.to_string();
         self.stack.push(Value::Null);
-        self.frames.push(CallFrame::new(Arc::new(main_function), 0));
+        self.frames.push(CallFrame::new(Rc::new(main_function), 0));
         loop {
-            match self.execute_until_suspend() {
+            match self.execute_until_complete_native() {
                 ExecutionResult::Completed(_) => break,
-                ExecutionResult::Suspended { receiver } => {
-                    match futures::executor::block_on(receiver) {
-                        Ok(Ok(value)) => {
-                            self.stack.push(value);
-                        }
-                        Ok(Err(e)) => {
-                            crate::pop_script_dir();
-                            self.stack = saved_stack;
-                            self.frames = saved_frames;
-                            self.file = saved_file;
-                            self.source = saved_source;
-                            self.globals = saved_globals;
-                            return Err(self.create_error(
-                                ErrorKind::ImportError,
-                                &format!("Import error: {}", e),
-                            ));
-                        }
-                        Err(_) => {
-                            crate::pop_script_dir();
-                            self.stack = saved_stack;
-                            self.frames = saved_frames;
-                            self.file = saved_file;
-                            self.source = saved_source;
-                            self.globals = saved_globals;
-                            return Err(self
-                                .create_error(ErrorKind::ImportError, "Import future cancelled"));
-                        }
-                    }
-                }
                 ExecutionResult::Error(e) => {
                     crate::pop_script_dir();
                     self.stack = saved_stack;
@@ -3348,15 +3256,15 @@ impl VM {
                 }
             }
         }
-        // Clone the globals content but keep the Arc alive
-        let imported_globals = self.globals.read().clone();
+        
+        let imported_globals = self.globals.borrow().clone();
         crate::pop_script_dir();
         self.stack = saved_stack;
         self.frames = saved_frames;
         self.file = saved_file;
         self.source = saved_source;
         self.globals = saved_globals;
-        Ok((imported_globals, module_globals_arc))
+        Ok((imported_globals, module_globals_rc))
     }
 
     fn create_error(&self, kind: ErrorKind, message: &str) -> SaldError {
@@ -3402,7 +3310,7 @@ impl VM {
             while self.stack.len() > handler.stack_size {
                 self.stack.pop();
             }
-            self.stack.push(Value::String(Arc::from(error_msg)));
+            self.stack.push(Value::String(Rc::from(error_msg)));
             self.current_frame_mut().ip = handler.catch_ip;
             Ok(())
         } else {
@@ -3413,29 +3321,29 @@ impl VM {
         }
     }
 
-    /// Call a global function by name (for test runner)
+    
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn call_global(&mut self, name: &str, args: Vec<Value>) -> SaldResult<Value> {
-        // Look up the function in globals
+    pub fn call_global(&mut self, name: &str, args: Vec<Value>) -> SaldResult<Value> {
+        
         let func = {
-            let globals = self.globals.read();
+            let globals = self.globals.borrow();
             globals.get(name).cloned()
         };
 
         match func {
             Some(Value::Function(f)) => {
-                // Push null as receiver placeholder
+                
                 self.stack.push(Value::Null);
-                // Push function
+                
                 self.stack.push(Value::Function(f.clone()));
-                // Push args
+                
                 for arg in &args {
                     self.stack.push(arg.clone());
                 }
-                // Call it
+                
                 self.call_value(args.len())?;
-                // Run event loop
-                self.run_event_loop().await
+                
+                self.run_sync_loop()
             }
             Some(other) => Err(self.create_error(
                 ErrorKind::TypeError,

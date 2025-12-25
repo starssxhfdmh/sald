@@ -1,10 +1,10 @@
-// Console built-in class
-// Provides: print, println, input, clear
+
+
 
 use super::check_arity;
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 
 pub fn create_console_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
@@ -66,7 +66,7 @@ fn console_println(args: &[Value]) -> Result<Value, String> {
 fn console_input(args: &[Value]) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // Optional prompt
+        
         if !args.is_empty() {
             print!("{}", args[0]);
             use std::io::Write;
@@ -79,7 +79,7 @@ fn console_input(args: &[Value]) -> Result<Value, String> {
             .map_err(|e| e.to_string())?;
 
         let trimmed = input.trim_end_matches('\n').trim_end_matches('\r');
-        Ok(Value::String(Arc::from(trimmed.to_string())))
+        Ok(Value::String(Rc::from(trimmed.to_string())))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -99,7 +99,7 @@ fn console_clear(args: &[Value]) -> Result<Value, String> {
         std::io::stdout().flush().ok();
     }
 
-    // In WASM, clear is a no-op (could be handled by JS)
+    
 
     Ok(Value::Null)
 }

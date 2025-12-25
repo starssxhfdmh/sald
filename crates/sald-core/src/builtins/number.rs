@@ -1,11 +1,11 @@
-// Number built-in class
-// Instance methods for number operations
-// Uses Arc for thread-safety
+
+
+
 
 use super::check_arity;
 use crate::vm::value::{Class, NativeInstanceFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 
 pub fn create_number_class() -> Class {
     let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
@@ -70,7 +70,7 @@ fn number_round(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-/// toFixed(decimals) - Format number to string with fixed decimal places
+
 fn number_to_fixed(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Number(n) = recv {
@@ -84,10 +84,10 @@ fn number_to_fixed(recv: &Value, args: &[Value]) -> Result<Value, String> {
             }
         };
 
-        // Cap at reasonable precision
+        
         let decimals = decimals.min(20);
 
-        Ok(Value::String(Arc::from(format!(
+        Ok(Value::String(Rc::from(format!(
             "{:.prec$}",
             n,
             prec = decimals
@@ -101,9 +101,9 @@ fn number_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::Number(n) = recv {
         if n.fract() == 0.0 {
-            Ok(Value::String(Arc::from(format!("{}", *n as i64))))
+            Ok(Value::String(Rc::from(format!("{}", *n as i64))))
         } else {
-            Ok(Value::String(Arc::from(format!("{}", n))))
+            Ok(Value::String(Rc::from(format!("{}", n))))
         }
     } else {
         Err("Receiver must be a number".to_string())

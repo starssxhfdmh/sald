@@ -1,28 +1,28 @@
-// Sald Token Definitions
+
 
 use crate::error::Span;
 use std::fmt;
 
-/// All token types in Sald
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    // Literals
+    
     Number(f64),
     String(String),
-    /// Format string parts: $"Hello, {expr}!" -> [FormatString { parts, exprs }]
-    FormatStringStart(String), // Start of format string (text before first {)
-    FormatStringPart(String), // Middle part (text between } and next {)
-    FormatStringEnd(String),  // End part (text after last })
-    /// Raw string literal: r"..." or r"""...""" - no escape processing
+    
+    FormatStringStart(String), 
+    FormatStringPart(String), 
+    FormatStringEnd(String),  
+    
     RawString(String),
     True,
     False,
     Null,
 
-    // Identifiers
+    
     Identifier(String),
 
-    // Keywords
+    
     Let,
     If,
     Else,
@@ -33,7 +33,7 @@ pub enum TokenKind {
     Class,
     For,
     In,
-    SelfKeyword, // 'self'
+    SelfKeyword, 
     Break,
     Continue,
     Extends,
@@ -47,70 +47,70 @@ pub enum TokenKind {
     Default,
     Async,
     Await,
-    Namespace,  // namespace
-    Const,      // const
-    Enum,       // enum
-    Interface,  // interface
-    Implements, // implements
+    Namespace,  
+    Const,      
+    Enum,       
+    Interface,  
+    Implements, 
 
-    // Operators
-    ThinArrow, // ->
-    Plus,      // +
-    Minus,     // -
-    Star,      // *
-    Slash,     // /
-    Percent,   // %
+    
+    ThinArrow, 
+    Plus,      
+    Minus,     
+    Star,      
+    Slash,     
+    Percent,   
 
-    // Comparison Operators
-    Equal,        // =
-    EqualEqual,   // ==
-    Bang,         // !
-    BangEqual,    // !=
-    Less,         // <
-    LessEqual,    // <=
-    Greater,      // >
-    GreaterEqual, // >=
+    
+    Equal,        
+    EqualEqual,   
+    Bang,         
+    BangEqual,    
+    Less,         
+    LessEqual,    
+    Greater,      
+    GreaterEqual, 
 
-    // Logical Operators
-    And, // &&
-    Or,  // ||
+    
+    And, 
+    Or,  
 
-    // Compound Assignment
-    PlusEqual,    // +=
-    MinusEqual,   // -=
-    StarEqual,    // *=
-    SlashEqual,   // /=
-    PercentEqual, // %=
+    
+    PlusEqual,    
+    MinusEqual,   
+    StarEqual,    
+    SlashEqual,   
+    PercentEqual, 
 
-    // Delimiters
-    LeftParen,        // (
-    RightParen,       // )
-    LeftBrace,        // {
-    RightBrace,       // }
-    LeftBracket,      // [
-    RightBracket,     // ]
-    Comma,            // ,
-    Dot,              // .
-    DotDot,           // .. (range inclusive)
-    DotDotLess,       // ..< (range exclusive)
-    DotDotDot,        // ... (variadic/spread)
-    Semicolon,        // ;
-    Colon,            // :
-    Question,         // ?
-    QuestionQuestion, // ??
-    QuestionDot,      // ?. (optional chaining)
-    Pipe,             // |
-    Arrow,            // =>
+    
+    LeftParen,        
+    RightParen,       
+    LeftBrace,        
+    RightBrace,       
+    LeftBracket,      
+    RightBracket,     
+    Comma,            
+    Dot,              
+    DotDot,           
+    DotDotLess,       
+    DotDotDot,        
+    Semicolon,        
+    Colon,            
+    Question,         
+    QuestionQuestion, 
+    QuestionDot,      
+    Pipe,             
+    Arrow,            
 
-    // Bitwise Operators
-    Ampersand,      // & (bitwise AND)
-    Caret,          // ^ (bitwise XOR)
-    Tilde,          // ~ (bitwise NOT)
-    LessLess,       // << (left shift)
-    GreaterGreater, // >> (right shift)
+    
+    Ampersand,      
+    Caret,          
+    Tilde,          
+    LessLess,       
+    GreaterGreater, 
 
-    // Special
-    At, // @ (decorator prefix)
+    
+    At, 
     Newline,
     Eof,
 }
@@ -208,7 +208,7 @@ impl fmt::Display for TokenKind {
     }
 }
 
-/// A token with its kind and position information
+
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,

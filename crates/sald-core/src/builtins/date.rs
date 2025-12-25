@@ -1,10 +1,11 @@
-// Date built-in class
-// Provides: now, timestamp, year, month, day, hour, minute, second, format
+
+
+
 
 use super::{check_arity, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn create_date_class() -> Class {
@@ -74,7 +75,7 @@ fn is_leap_year(year: i32) -> bool {
 fn date_now(args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     let (year, month, day, hour, minute, second, _) = get_current_datetime();
-    Ok(Value::String(Arc::from(format!(
+    Ok(Value::String(Rc::from(format!(
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         year, month, day, hour, minute, second
     ))))
@@ -135,5 +136,5 @@ fn date_format(args: &[Value]) -> Result<Value, String> {
         .replace("mm", &format!("{:02}", minute))
         .replace("ss", &format!("{:02}", second));
 
-    Ok(Value::String(Arc::from(result)))
+    Ok(Value::String(Rc::from(result)))
 }

@@ -1,11 +1,11 @@
-// Process built-in class
-// Provides: args, env, exit, exec
-// Uses Arc/Mutex for thread-safety
+
+
+
 
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub fn create_process_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
@@ -20,17 +20,17 @@ pub fn create_process_class() -> Class {
     Class::new_with_static("Process", static_methods)
 }
 
-/// Get command line arguments as array
+
 fn process_args(_args: &[Value]) -> Result<Value, String> {
     let args: Vec<Value> = std::env::args()
-        .skip(1) // Skip the executable name
-        .map(|s| Value::String(Arc::from(s)))
+        .skip(1) 
+        .map(|s| Value::String(Rc::from(s)))
         .collect();
 
-    Ok(Value::Array(Arc::new(Mutex::new(args))))
+    Ok(Value::Array(Rc::new(RefCell::new(args))))
 }
 
-/// Get environment variable
+
 fn process_env(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Expected 1 argument but got 0".to_string());
@@ -47,12 +47,12 @@ fn process_env(args: &[Value]) -> Result<Value, String> {
     };
 
     match std::env::var(&var_name) {
-        Ok(val) => Ok(Value::String(Arc::from(val))),
+        Ok(val) => Ok(Value::String(Rc::from(val))),
         Err(_) => Ok(Value::Null),
     }
 }
 
-/// Exit the process with given code
+
 fn process_exit(args: &[Value]) -> Result<Value, String> {
     let code = if args.is_empty() {
         0
@@ -71,7 +71,7 @@ fn process_exit(args: &[Value]) -> Result<Value, String> {
     std::process::exit(code);
 }
 
-/// Execute a shell command and return output
+
 fn process_exec(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Expected 1 argument but got 0".to_string());
@@ -87,7 +87,7 @@ fn process_exec(args: &[Value]) -> Result<Value, String> {
         }
     };
 
-    // Use shell to execute command
+    
     #[cfg(windows)]
     let output = std::process::Command::new("cmd")
         .args(["/C", &command])
@@ -103,28 +103,28 @@ fn process_exec(args: &[Value]) -> Result<Value, String> {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-            // Return stdout, or stderr if stdout is empty
+            
             if !stdout.is_empty() {
-                Ok(Value::String(Arc::from(stdout)))
+                Ok(Value::String(Rc::from(stdout)))
             } else if !stderr.is_empty() {
-                Ok(Value::String(Arc::from(stderr)))
+                Ok(Value::String(Rc::from(stderr)))
             } else {
-                Ok(Value::String(Arc::from(String::new())))
+                Ok(Value::String(Rc::from(String::new())))
             }
         }
         Err(e) => Err(e.to_string()),
     }
 }
 
-/// Get current working directory
+
 fn process_cwd(_args: &[Value]) -> Result<Value, String> {
     match std::env::current_dir() {
-        Ok(path) => Ok(Value::String(Arc::from(path.to_string_lossy().to_string()))),
+        Ok(path) => Ok(Value::String(Rc::from(path.to_string_lossy().to_string()))),
         Err(e) => Err(e.to_string()),
     }
 }
 
-/// Change current working directory
+
 fn process_chdir(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Expected 1 argument but got 0".to_string());

@@ -1,10 +1,10 @@
-// Sald Scanner (Lexer)
-// Converts source code into tokens
+
+
 
 use crate::error::{SaldError, SaldResult, Span};
 use crate::lexer::token::{Token, TokenKind};
 
-/// Scanner that tokenizes Sald source code
+
 pub struct Scanner {
     source: Vec<char>,
     tokens: Vec<Token>,
@@ -30,7 +30,7 @@ impl Scanner {
         }
     }
 
-    /// Scan all tokens from the source
+    
     pub fn scan_tokens(&mut self) -> SaldResult<Vec<Token>> {
         while !self.is_at_end() {
             self.start = self.current;
@@ -38,7 +38,7 @@ impl Scanner {
             self.scan_token()?;
         }
 
-        // Add EOF token
+        
         self.tokens.push(Token::new(
             TokenKind::Eof,
             "",
@@ -52,7 +52,7 @@ impl Scanner {
         let c = self.advance();
 
         match c {
-            // Single character tokens
+            
             '(' => self.add_token(TokenKind::LeftParen),
             ')' => self.add_token(TokenKind::RightParen),
             '{' => self.add_token(TokenKind::LeftBrace),
@@ -63,11 +63,11 @@ impl Scanner {
             '.' => {
                 if self.match_char('.') {
                     if self.match_char('<') {
-                        self.add_token(TokenKind::DotDotLess); // ..<
+                        self.add_token(TokenKind::DotDotLess); 
                     } else if self.match_char('.') {
-                        self.add_token(TokenKind::DotDotDot); // ...
+                        self.add_token(TokenKind::DotDotDot); 
                     } else {
-                        self.add_token(TokenKind::DotDot); // ..
+                        self.add_token(TokenKind::DotDot); 
                     }
                 } else {
                     self.add_token(TokenKind::Dot);
@@ -92,7 +92,7 @@ impl Scanner {
                 }
             }
 
-            // Operators (potentially multi-character)
+            
             '+' => {
                 let kind = if self.match_char('=') {
                     TokenKind::PlusEqual
@@ -121,12 +121,12 @@ impl Scanner {
             }
             '/' => {
                 if self.match_char('/') {
-                    // Single-line comment
+                    
                     while self.peek() != '\n' && !self.is_at_end() {
                         self.advance();
                     }
                 } else if self.match_char('*') {
-                    // Multi-line comment
+                    
                     self.block_comment()?;
                 } else if self.match_char('=') {
                     self.add_token(TokenKind::SlashEqual);
@@ -143,7 +143,7 @@ impl Scanner {
                 self.add_token(kind);
             }
 
-            // Comparison operators
+            
             '!' => {
                 let kind = if self.match_char('=') {
                     TokenKind::BangEqual
@@ -180,7 +180,7 @@ impl Scanner {
                 }
             }
 
-            // Logical and Bitwise operators
+            
             '&' => {
                 if self.match_char('&') {
                     self.add_token(TokenKind::And);
@@ -192,19 +192,19 @@ impl Scanner {
             '@' => self.add_token(TokenKind::At),
             '~' => self.add_token(TokenKind::Tilde),
 
-            // Whitespace
+            
             ' ' | '\r' | '\t' => {}
             '\n' => {
                 self.line += 1;
                 self.column = 1;
             }
 
-            // String literals (double or single quotes) - check for triple quotes first
+            
             '"' => {
                 if self.peek() == '"' && self.peek_next() == '"' {
-                    // Triple double-quote multiline string """..."""
-                    self.advance(); // consume second "
-                    self.advance(); // consume third "
+                    
+                    self.advance(); 
+                    self.advance(); 
                     self.multiline_string('"')?;
                 } else {
                     self.string('"')?;
@@ -212,32 +212,32 @@ impl Scanner {
             }
             '\'' => {
                 if self.peek() == '\'' && self.peek_next() == '\'' {
-                    // Triple single-quote multiline string '''...'''
-                    self.advance(); // consume second '
-                    self.advance(); // consume third '
+                    
+                    self.advance(); 
+                    self.advance(); 
                     self.multiline_string('\'')?;
                 } else {
                     self.string('\'')?;
                 }
             }
 
-            // Format string $"..." or $'...' or format multiline $"""...""" or $'''...'''
+            
             '$' => {
                 if self.peek() == '"' && self.peek_next() == '"' {
-                    self.advance(); // consume first "
+                    self.advance(); 
                     if self.peek() == '"' {
-                        self.advance(); // consume second "
-                        self.advance(); // consume third "
+                        self.advance(); 
+                        self.advance(); 
                         self.format_multiline_string('"')?;
                     } else {
-                        // Just $" - regular format string, but we already consumed one "
+                        
                         self.format_string('"')?;
                     }
                 } else if self.peek() == '\'' && self.peek_next() == '\'' {
-                    self.advance(); // consume first '
+                    self.advance(); 
                     if self.peek() == '\'' {
-                        self.advance(); // consume second '
-                        self.advance(); // consume third '
+                        self.advance(); 
+                        self.advance(); 
                         self.format_multiline_string('\'')?;
                     } else {
                         self.format_string('\'')?;
@@ -253,19 +253,19 @@ impl Scanner {
                 }
             }
 
-            // Number literals or identifiers
+            
             c if c.is_ascii_digit() => self.number()?,
             c if c.is_alphabetic() || c == '_' => {
-                // Check for raw string prefix: r"..." or r'...'
+                
                 if c == 'r' && (self.peek() == '"' || self.peek() == '\'') {
-                    let quote_char = self.advance(); // consume the quote
+                    let quote_char = self.advance(); 
                     if self.peek() == quote_char && self.peek_next() == quote_char {
-                        // r"""...""" or r'''...''' - raw multiline
-                        self.advance(); // consume second quote
-                        self.advance(); // consume third quote
+                        
+                        self.advance(); 
+                        self.advance(); 
                         self.raw_string(quote_char)?;
                     } else {
-                        // r"..." or r'...' - raw single-line
+                        
                         self.raw_string_single(quote_char)?;
                     }
                 } else {
@@ -273,7 +273,7 @@ impl Scanner {
                 }
             }
 
-            // Unknown character
+            
             _ => {
                 return Err(self
                     .error(&format!("Unexpected character '{}'", c))
@@ -290,7 +290,7 @@ impl Scanner {
 
         while self.peek() != quote_char && !self.is_at_end() {
             if self.peek() == '\\' {
-                // Skip escape sequence - consume backslash and next char
+                
                 self.advance();
                 if !self.is_at_end() {
                     if self.peek() == '\n' {
@@ -325,22 +325,22 @@ impl Scanner {
             )));
         }
 
-        // Consume the closing quote
+        
         self.advance();
 
-        // Get the string value (without quotes)
+        
         let value: String = self.source[self.start + 1..self.current - 1]
             .iter()
             .collect();
 
-        // Handle escape sequences
+        
         let processed = self.process_escapes(&value, quote_char)?;
         self.add_token(TokenKind::String(processed));
         Ok(())
     }
 
-    /// Parse format string $"Hello, {name}!" or $'Hello, {name}!'
-    /// Emits: FormatStringStart("Hello, "), tokens for expr, FormatStringEnd("!")
+    
+    
     fn format_string(&mut self, quote_char: char) -> SaldResult<()> {
         let start_line = self.line;
         let start_col = self.start_column;
@@ -352,30 +352,30 @@ impl Scanner {
             let c = self.peek();
 
             if c == quote_char {
-                // End of format string
+                
                 self.advance();
 
-                // Emit final part
+                
                 let processed = self.process_escapes(&current_text, quote_char)?;
                 if is_first {
-                    // Simple string, no interpolation - just emit as regular string
+                    
                     self.add_token(TokenKind::String(processed));
                 } else {
                     self.add_token(TokenKind::FormatStringEnd(processed));
                 }
                 return Ok(());
             } else if c == '{' {
-                // Start of expression interpolation
+                
                 self.advance();
 
-                // Check for {{ escape
+                
                 if self.peek() == '{' {
                     self.advance();
                     current_text.push('{');
                     continue;
                 }
 
-                // Emit current text part
+                
                 let processed = self.process_escapes(&current_text, quote_char)?;
                 if is_first {
                     self.add_token(TokenKind::FormatStringStart(processed));
@@ -385,7 +385,7 @@ impl Scanner {
                 }
                 current_text.clear();
 
-                // Scan tokens until matching }
+                
                 let mut brace_depth = 1;
                 while brace_depth > 0 && !self.is_at_end() {
                     self.start = self.current;
@@ -414,7 +414,7 @@ impl Scanner {
                     .with_help("Add a closing '}' to end the expression"));
                 }
             } else if c == '}' {
-                // Check for }} escape
+                
                 self.advance();
                 if self.peek() == '}' {
                     self.advance();
@@ -425,10 +425,10 @@ impl Scanner {
                         .with_help("Use '}}' to include a literal '}'"));
                 }
             } else if c == '\\' {
-                // Handle escape sequences - consume backslash and next char together
-                current_text.push(self.advance()); // push '\'
+                
+                current_text.push(self.advance()); 
                 if !self.is_at_end() {
-                    current_text.push(self.advance()); // push escaped char
+                    current_text.push(self.advance()); 
                 }
             } else if c == '\n' {
                 self.line += 1;
@@ -455,7 +455,7 @@ impl Scanner {
         )))
     }
 
-    /// Parse raw string r"""...""" or r'''...''' - no escape processing (multiline)
+    
     fn raw_string(&mut self, quote_char: char) -> SaldResult<()> {
         let start_line = self.line;
         let start_col = self.start_column;
@@ -465,16 +465,16 @@ impl Scanner {
         while !self.is_at_end() {
             let c = self.peek();
 
-            // Check for closing triple quotes
+            
             if c == quote_char && self.peek_next() == quote_char {
-                // Check third char
+                
                 if self.current + 2 < self.source.len()
                     && self.source[self.current + 2] == quote_char
                 {
-                    // Found closing triple quotes
-                    self.advance(); // consume first quote
-                    self.advance(); // consume second quote
-                    self.advance(); // consume third quote
+                    
+                    self.advance(); 
+                    self.advance(); 
+                    self.advance(); 
                     self.add_token(TokenKind::RawString(value));
                     return Ok(());
                 }
@@ -496,7 +496,7 @@ impl Scanner {
         .with_help(&format!("Add {} to close the raw string", quote)))
     }
 
-    /// Parse raw string r"..." or r'...' - no escape processing (single line)
+    
     fn raw_string_single(&mut self, quote_char: char) -> SaldResult<()> {
         let start_line = self.line;
         let start_col = self.start_column;
@@ -506,7 +506,7 @@ impl Scanner {
         while !self.is_at_end() && self.peek() != quote_char {
             let c = self.peek();
             if c == '\n' {
-                // Single-line raw string cannot contain newlines
+                
                 return Err(SaldError::syntax_error(
                     "Unterminated raw string",
                     Span::from_positions(start_line, start_col, self.line, self.column),
@@ -534,13 +534,13 @@ impl Scanner {
             )));
         }
 
-        // Consume closing quote
+        
         self.advance();
         self.add_token(TokenKind::RawString(value));
         Ok(())
     }
 
-    /// Parse multiline string """...""" or '''...''' WITH escape processing
+    
     fn multiline_string(&mut self, quote_char: char) -> SaldResult<()> {
         let start_line = self.line;
         let start_col = self.start_column;
@@ -550,18 +550,18 @@ impl Scanner {
         while !self.is_at_end() {
             let c = self.peek();
 
-            // Check for closing triple quotes
+            
             if c == quote_char && self.peek_next() == quote_char {
-                // Check third char
+                
                 if self.current + 2 < self.source.len()
                     && self.source[self.current + 2] == quote_char
                 {
-                    // Found closing triple quotes
-                    self.advance(); // consume first quote
-                    self.advance(); // consume second quote
-                    self.advance(); // consume third quote
+                    
+                    self.advance(); 
+                    self.advance(); 
+                    self.advance(); 
 
-                    // Process escape sequences
+                    
                     let processed = self.process_escapes(&value, quote_char)?;
                     self.add_token(TokenKind::String(processed));
                     return Ok(());
@@ -569,14 +569,14 @@ impl Scanner {
             }
 
             if c == '\\' {
-                // Handle escape sequences - consume backslash and next char together
-                value.push(self.advance()); // push '\'
+                
+                value.push(self.advance()); 
                 if !self.is_at_end() {
                     if self.peek() == '\n' {
                         self.line += 1;
                         self.column = 1;
                     }
-                    value.push(self.advance()); // push escaped char
+                    value.push(self.advance()); 
                 }
             } else if c == '\n' {
                 self.line += 1;
@@ -596,7 +596,7 @@ impl Scanner {
         .with_help(&format!("Add {} to close the multiline string", quote)))
     }
 
-    /// Parse format multiline string $"""...""" or $'''...''' with interpolation AND escape processing
+    
     fn format_multiline_string(&mut self, quote_char: char) -> SaldResult<()> {
         let start_line = self.line;
         let start_col = self.start_column;
@@ -607,20 +607,20 @@ impl Scanner {
         while !self.is_at_end() {
             let c = self.peek();
 
-            // Check for closing triple quotes
+            
             if c == quote_char && self.peek_next() == quote_char {
                 if self.current + 2 < self.source.len()
                     && self.source[self.current + 2] == quote_char
                 {
-                    // Found closing triple quotes
+                    
                     self.advance();
                     self.advance();
                     self.advance();
 
-                    // Emit final part WITH escape processing
+                    
                     let processed = self.process_escapes(&current_text, quote_char)?;
                     if is_first {
-                        // Entire string has no interpolation - emit as regular string
+                        
                         self.add_token(TokenKind::String(processed));
                     } else {
                         self.add_token(TokenKind::FormatStringEnd(processed));
@@ -630,13 +630,13 @@ impl Scanner {
             }
 
             if c == '{' {
-                // Check for {{ escape
+                
                 self.advance();
                 if self.peek() == '{' {
                     self.advance();
                     current_text.push('{');
                 } else {
-                    // Start of expression - emit current text WITH escape processing
+                    
                     let processed = self.process_escapes(&current_text, quote_char)?;
                     if is_first {
                         self.add_token(TokenKind::FormatStringStart(processed));
@@ -646,7 +646,7 @@ impl Scanner {
                     }
                     current_text.clear();
 
-                    // Scan expression tokens until matching }
+                    
                     let mut brace_depth = 1;
                     while brace_depth > 0 && !self.is_at_end() {
                         if self.peek() == '{' {
@@ -673,7 +673,7 @@ impl Scanner {
                     }
                 }
             } else if c == '}' {
-                // Check for }} escape
+                
                 self.advance();
                 if self.peek() == '}' {
                     self.advance();
@@ -684,14 +684,14 @@ impl Scanner {
                         .with_help("Use '}}' to include a literal '}'"));
                 }
             } else if c == '\\' {
-                // Handle escape sequences - consume backslash and next char together
-                current_text.push(self.advance()); // push '\'
+                
+                current_text.push(self.advance()); 
                 if !self.is_at_end() {
                     if self.peek() == '\n' {
                         self.line += 1;
                         self.column = 1;
                     }
-                    current_text.push(self.advance()); // push escaped char
+                    current_text.push(self.advance()); 
                 }
             } else if c == '\n' {
                 self.line += 1;
@@ -725,11 +725,11 @@ impl Scanner {
                     Some('"') => result.push('"'),
                     Some('\'') => result.push('\''),
                     Some('0') => result.push('\0'),
-                    Some('b') => result.push('\x08'), // backspace
-                    Some('f') => result.push('\x0C'), // form feed
-                    Some('v') => result.push('\x0B'), // vertical tab
+                    Some('b') => result.push('\x08'), 
+                    Some('f') => result.push('\x0C'), 
+                    Some('v') => result.push('\x0B'), 
                     Some('x') => {
-                        // Hex escape: \xHH (exactly 2 hex digits)
+                        
                         let mut hex = String::new();
                         for _ in 0..2 {
                             match chars.next() {
@@ -754,10 +754,10 @@ impl Scanner {
                         result.push(code as char);
                     }
                     Some('u') => {
-                        // Unicode escape: \u{HHHH} or \uHHHH
+                        
                         if chars.peek() == Some(&'{') {
-                            // \u{HHHH...} format (1-6 hex digits)
-                            chars.next(); // consume '{'
+                            
+                            chars.next(); 
                             let mut hex = String::new();
                             loop {
                                 match chars.next() {
@@ -797,7 +797,7 @@ impl Scanner {
                             })?;
                             result.push(ch);
                         } else {
-                            // \uHHHH format (exactly 4 hex digits)
+                            
                             let mut hex = String::new();
                             for _ in 0..4 {
                                 match chars.next() {
@@ -838,12 +838,12 @@ impl Scanner {
             }
         }
 
-        let _ = quote_char; // Silence unused warning
+        let _ = quote_char; 
         Ok(result)
     }
 
     fn number(&mut self) -> SaldResult<()> {
-        // Check for special number prefixes: 0x (hex), 0b (binary), 0o (octal)
+        
         let first_char = self.source[self.start];
 
         if first_char == '0' && self.current - self.start == 1 {
@@ -855,14 +855,14 @@ impl Scanner {
             }
         }
 
-        // Regular decimal number
+        
         while self.peek().is_ascii_digit() || self.peek() == '_' {
             self.advance();
         }
 
-        // Look for decimal part
+        
         if self.peek() == '.' && self.peek_next().is_ascii_digit() {
-            // Consume the '.'
+            
             self.advance();
 
             while self.peek().is_ascii_digit() || self.peek() == '_' {
@@ -872,7 +872,7 @@ impl Scanner {
 
         let lexeme: String = self.source[self.start..self.current]
             .iter()
-            .filter(|c| **c != '_') // Remove underscore separators
+            .filter(|c| **c != '_') 
             .collect();
         let value: f64 = lexeme
             .parse()
@@ -883,7 +883,7 @@ impl Scanner {
     }
 
     fn hex_number(&mut self) -> SaldResult<()> {
-        self.advance(); // consume 'x' or 'X'
+        self.advance(); 
 
         let hex_start = self.current;
         while self.peek().is_ascii_hexdigit() || self.peek() == '_' {
@@ -909,7 +909,7 @@ impl Scanner {
     }
 
     fn binary_number(&mut self) -> SaldResult<()> {
-        self.advance(); // consume 'b' or 'B'
+        self.advance(); 
 
         let bin_start = self.current;
         while matches!(self.peek(), '0' | '1' | '_') {
@@ -935,7 +935,7 @@ impl Scanner {
     }
 
     fn octal_number(&mut self) -> SaldResult<()> {
-        self.advance(); // consume 'o' or 'O'
+        self.advance(); 
 
         let oct_start = self.current;
         while matches!(self.peek(), '0'..='7' | '_') {
@@ -1043,7 +1043,7 @@ impl Scanner {
         Ok(())
     }
 
-    // Helper methods
+    
     fn is_at_end(&self) -> bool {
         self.current >= self.source.len()
     }

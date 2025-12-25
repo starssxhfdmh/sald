@@ -1,6 +1,6 @@
-// Test built-in class
-// Provides assertion functions for testing: Test.assert, Test.assert_eq, etc.
-// Also serves as a decorator: @Test marks a function as a test
+
+
+
 
 use super::check_arity;
 use super::check_arity_min;
@@ -17,22 +17,22 @@ pub fn create_test_class() -> Class {
 
     let mut class = Class::new_with_static("Test", static_methods);
 
-    // Add constructor that acts as identity decorator
-    // When used as @Test, it receives the function and returns it unchanged
+    
+    
     class.constructor = Some(test_decorator);
 
     class
 }
 
-/// Test decorator - identity function for marking test functions
-/// When used as @Test, this receives the decorated function and returns it unchanged
+
+
 fn test_decorator(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     Ok(args[0].clone())
 }
 
-/// Test.assert(condition, ?message)
-/// Fails if condition is falsy
+
+
 fn test_assert(args: &[Value]) -> Result<Value, String> {
     check_arity_min(1, args.len())?;
 
@@ -53,8 +53,8 @@ fn test_assert(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// Test.assert_eq(actual, expected, ?message)
-/// Fails if actual != expected
+
+
 fn test_assert_eq(args: &[Value]) -> Result<Value, String> {
     check_arity_min(2, args.len())?;
 
@@ -76,8 +76,8 @@ fn test_assert_eq(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// Test.assert_ne(actual, expected, ?message)
-/// Fails if actual == expected
+
+
 fn test_assert_ne(args: &[Value]) -> Result<Value, String> {
     check_arity_min(2, args.len())?;
 
@@ -99,8 +99,8 @@ fn test_assert_ne(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// Test.fail(?message)
-/// Unconditionally fails the test
+
+
 fn test_fail(args: &[Value]) -> Result<Value, String> {
     let message = if !args.is_empty() {
         match &args[0] {

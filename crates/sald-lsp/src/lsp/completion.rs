@@ -1,9 +1,9 @@
-// Completion Provider for Sald LSP
-// Provides autocomplete suggestions for keywords, built-ins, and symbols
+
+
 
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
 
-/// Get keyword completions
+
 pub fn get_keyword_completions() -> Vec<CompletionItem> {
     let keywords = [
         ("let", "Variable declaration"),
@@ -49,23 +49,23 @@ pub fn get_keyword_completions() -> Vec<CompletionItem> {
         .collect()
 }
 
-/// Built-in class with its methods
+
 pub struct BuiltinClass {
     pub name: &'static str,
     pub doc: &'static str,
-    pub methods: &'static [(&'static str, &'static str, &'static str)], // (name, signature, doc)
-    pub properties: &'static [(&'static str, &'static str)],            // (name, doc)
+    pub methods: &'static [(&'static str, &'static str, &'static str)], 
+    pub properties: &'static [(&'static str, &'static str)],            
 }
 
 use super::symbols::{Symbol, SymbolKind};
 use tower_lsp::lsp_types::Range;
 
-/// Convert all builtin classes to Symbol format for unified handling  
+
 pub fn get_builtin_symbols() -> Vec<Symbol> {
     BUILTIN_CLASSES
         .iter()
         .map(|cls| {
-            // Create method children with documentation
+            
             let mut children: Vec<Symbol> = cls
                 .methods
                 .iter()
@@ -82,7 +82,7 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
                 })
                 .collect();
 
-            // Add properties as constants with documentation
+            
             children.extend(cls.properties.iter().map(|(name, doc)| Symbol {
                 name: name.to_string(),
                 kind: SymbolKind::Constant,
@@ -110,7 +110,7 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
         .collect()
 }
 
-/// All built-in classes with their methods
+
 pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
     BuiltinClass {
         name: "Console",
@@ -444,13 +444,13 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
         name: "Ffi",
         doc: "Foreign Function Interface for calling native C libraries",
         methods: &[
-            // Library management
+            
             (
                 "open",
                 "open(path)",
                 "Load a dynamic library (.dll/.so/.dylib)",
             ),
-            // Memory operations
+            
             ("alloc", "alloc(size)", "Allocate memory"),
             ("free", "free(ptr)", "Free allocated memory"),
             ("memcpy", "memcpy(dest, src, size)", "Copy memory"),
@@ -459,7 +459,7 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
                 "memset(ptr, value, size)",
                 "Fill memory with value",
             ),
-            // Read operations
+            
             ("readI8", "readI8(ptr)", "Read signed 8-bit integer"),
             ("readU8", "readU8(ptr)", "Read unsigned 8-bit integer"),
             ("readI16", "readI16(ptr)", "Read signed 16-bit integer"),
@@ -476,7 +476,7 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
                 "readString(ptr)",
                 "Read null-terminated C string",
             ),
-            // Write operations
+            
             (
                 "writeI8",
                 "writeI8(ptr, value)",
@@ -525,10 +525,10 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
                 "writeString(ptr, value)",
                 "Write null-terminated C string",
             ),
-            // Pointer operations
+            
             ("offset", "offset(ptr, bytes)", "Add byte offset to pointer"),
             ("sizeof", "sizeof(type)", "Get size of type in bytes"),
-            // Callback class
+            
             (
                 "Callback",
                 "Callback({ args, returns, fn })",

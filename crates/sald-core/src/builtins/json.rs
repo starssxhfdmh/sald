@@ -1,13 +1,13 @@
-// Json built-in class
-// Static methods for JSON parsing and serialization
-// Uses Arc/Mutex for thread-safety
+
+
+
 
 use super::{check_arity, check_arity_range, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
-use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub fn create_json_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
@@ -18,7 +18,7 @@ pub fn create_json_class() -> Class {
     Class::new_with_static("Json", static_methods)
 }
 
-/// Json.parse(string) - Parse JSON string to Dict/Array/primitive
+
 fn json_parse(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let json_str = get_string_arg(&args[0], "json")?;
@@ -28,12 +28,12 @@ fn json_parse(args: &[Value]) -> Result<Value, String> {
         .and_then(|json_value| json_to_sald_value(&json_value))
 }
 
-/// Json.stringify(value) or Json.stringify(value, indent) - Convert to JSON string
+
 fn json_stringify(args: &[Value]) -> Result<Value, String> {
     check_arity_range(1, 2, args.len())?;
 
     let json_string = if args.len() == 2 {
-        // Pretty printing - use serde path
+        
         let json_value = sald_value_to_json(&args[0])?;
         let indent = get_number_arg(&args[1], "indent")? as usize;
         let indent_str = " ".repeat(indent);
@@ -44,16 +44,16 @@ fn json_stringify(args: &[Value]) -> Result<Value, String> {
         json_value.serialize(&mut ser).map_err(|e| e.to_string())?;
         String::from_utf8(buf).map_err(|e| e.to_string())?
     } else {
-        // Fast path - write directly to string buffer
+        
         let mut buf = String::with_capacity(256);
         write_json_value(&args[0], &mut buf)?;
         buf
     };
 
-    Ok(Value::String(Arc::from(json_string)))
+    Ok(Value::String(Rc::from(json_string)))
 }
 
-/// Convert serde_json::Value to Sald Value
+
 fn json_to_sald_value(json: &serde_json::Value) -> Result<Value, String> {
     match json {
         serde_json::Value::Null => Ok(Value::Null),
@@ -62,23 +62,23 @@ fn json_to_sald_value(json: &serde_json::Value) -> Result<Value, String> {
             .as_f64()
             .map(Value::Number)
             .ok_or_else(|| "Cannot convert JSON number".to_string()),
-        serde_json::Value::String(s) => Ok(Value::String(Arc::from(s.clone()))),
+        serde_json::Value::String(s) => Ok(Value::String(Rc::from(s.clone()))),
         serde_json::Value::Array(arr) => {
             let sald_arr: Result<Vec<Value>, String> = arr.iter().map(json_to_sald_value).collect();
-            Ok(Value::Array(Arc::new(Mutex::new(sald_arr?))))
+            Ok(Value::Array(Rc::new(RefCell::new(sald_arr?))))
         }
         serde_json::Value::Object(obj) => {
             let mut map = FxHashMap::default();
             for (key, value) in obj {
                 map.insert(key.clone(), json_to_sald_value(value)?);
             }
-            Ok(Value::Dictionary(Arc::new(Mutex::new(map))))
+            Ok(Value::Dictionary(Rc::new(RefCell::new(map))))
         }
     }
 }
 
-/// Convert Sald Value to serde_json::Value
-/// Note: Uses fast path for simple stringify, serde path for pretty printing
+
+
 fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
     match value {
         Value::Null => Ok(serde_json::Value::Null),
@@ -88,14 +88,14 @@ fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
             .ok_or_else(|| "Cannot convert number to JSON".to_string()),
         Value::String(s) => Ok(serde_json::Value::String(s.to_string())),
         Value::Array(arr) => {
-            let guard = arr.lock();
+            let guard = arr.borrow();
             let json_arr: Result<Vec<serde_json::Value>, String> =
                 guard.iter().map(sald_value_to_json).collect();
             Ok(serde_json::Value::Array(json_arr?))
         }
         Value::Dictionary(dict) => {
             let mut map = serde_json::Map::new();
-            let guard = dict.lock();
+            let guard = dict.borrow();
             for (key, val) in guard.iter() {
                 map.insert(key.clone(), sald_value_to_json(val)?);
             }
@@ -105,7 +105,7 @@ fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
     }
 }
 
-/// Fast path: directly write JSON to string buffer without intermediate serde_json::Value
+
 fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
     use std::fmt::Write;
     match value {
@@ -148,7 +148,7 @@ fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
         }
         Value::Array(arr) => {
             buf.push('[');
-            let guard = arr.lock();
+            let guard = arr.borrow();
             let mut first = true;
             for item in guard.iter() {
                 if !first {
@@ -162,14 +162,14 @@ fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
         }
         Value::Dictionary(dict) => {
             buf.push('{');
-            let guard = dict.lock();
+            let guard = dict.borrow();
             let mut first = true;
             for (key, val) in guard.iter() {
                 if !first {
                     buf.push(',');
                 }
                 first = false;
-                // Write key
+                
                 buf.push('"');
                 for ch in key.chars() {
                     match ch {

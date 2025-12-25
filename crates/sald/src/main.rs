@@ -52,8 +52,7 @@ struct Cli {
     output: Option<PathBuf>,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli = Cli::parse();
 
     // Parse debug flags
@@ -61,7 +60,7 @@ async fn main() {
 
     let result = if let Some(code) = cli.exec {
         // Execute inline code
-        handle_exec(&code, debug).await
+        handle_exec(&code, debug)
     } else if let Some(path) = cli.file {
         if cli.check {
             // Check mode - only validate, don't run
@@ -71,14 +70,14 @@ async fn main() {
             handle_compile(&path, debug, cli.output)
         } else if cli.test {
             // Test mode - run @Test functions
-            handle_test(&path, debug, cli.filter.as_deref()).await
+            handle_test(&path, debug, cli.filter.as_deref())
         } else {
             // Run mode
-            handle_run(&path, debug).await
+            handle_run(&path, debug)
         }
     } else {
         // REPL mode
-        repl().await
+        repl()
     };
 
     if let Err(e) = result {
@@ -211,7 +210,7 @@ fn find_project_root() -> Option<PathBuf> {
     }
 }
 
-async fn handle_run(path: &PathBuf, debug: DebugFlags) -> Result<(), String> {
+fn handle_run(path: &PathBuf, debug: DebugFlags) -> Result<(), String> {
     // Auto-detect project root if salad.json exists (enables module imports)
     if let Some(project_root) = find_project_root() {
         sald_core::set_project_root(&project_root);
@@ -275,18 +274,17 @@ async fn handle_run(path: &PathBuf, debug: DebugFlags) -> Result<(), String> {
         chunk.disassemble(&file_name);
     }
 
-    // Run with async VM
+    // Run with sync VM
     let mut vm = VM::new();
     vm.set_gc_stats_enabled(debug.gc);
     vm.run(chunk, &file_name, &source)
-        .await
         .map_err(|e| e.format_with_options(true))?;
 
     Ok(())
 }
 
 /// Run tests - collect and execute @Test functions
-async fn handle_test(
+fn handle_test(
     path: &PathBuf,
     debug: DebugFlags,
     filter: Option<&str>,
@@ -345,7 +343,6 @@ async fn handle_test(
     // Run program first to define all functions
     let mut vm = VM::new();
     vm.run(chunk, &file_name, &source)
-        .await
         .map_err(|e| e.format_with_options(true))?;
 
     // Print test header
@@ -366,7 +363,7 @@ async fn handle_test(
         let test_start = Instant::now();
 
         // Call the test function using vm.call_global
-        let result = vm.call_global(name, vec![]).await;
+        let result = vm.call_global(name, vec![]);
 
         let duration = test_start.elapsed();
         let duration_str = if duration.as_millis() > 0 {
@@ -433,7 +430,7 @@ async fn handle_test(
 }
 
 /// Execute inline code
-async fn handle_exec(code: &str, debug: DebugFlags) -> Result<(), String> {
+fn handle_exec(code: &str, debug: DebugFlags) -> Result<(), String> {
     let mut scanner = Scanner::new(code, "<exec>");
     let tokens = scanner.scan_tokens().map_err(|e| e.to_string())?;
 
@@ -471,13 +468,12 @@ async fn handle_exec(code: &str, debug: DebugFlags) -> Result<(), String> {
     let mut vm = VM::new();
     vm.set_gc_stats_enabled(debug.gc);
     vm.run(chunk, "<exec>", code)
-        .await
         .map_err(|e| e.format_with_options(false))?;
 
     Ok(())
 }
 
-async fn repl() -> Result<(), String> {
+fn repl() -> Result<(), String> {
     use reedline::{
         FileBackedHistory, Prompt, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
     };
@@ -632,7 +628,7 @@ async fn repl() -> Result<(), String> {
                     accumulated_input.clear();
 
                     line_count += 1;
-                    match run_repl_line(&mut vm, &input).await {
+                    match run_repl_line(&mut vm, &input) {
                         Ok(value) => {
                             print_repl_result(&value, line_count);
                         }
@@ -693,7 +689,7 @@ async fn repl() -> Result<(), String> {
 
                 line_count += 1;
 
-                match run_repl_line(&mut vm, &full_input).await {
+                match run_repl_line(&mut vm, &full_input) {
                     Ok(value) => {
                         print_repl_result(&value, line_count);
                     }
@@ -783,7 +779,7 @@ fn format_value(value: &sald_core::vm::Value, depth: usize) -> String {
         }
         Value::String(s) => format!("'{}'", s).green().to_string(),
         Value::Array(arr) => {
-            let arr = arr.lock();
+            let arr = arr.borrow();
             if arr.is_empty() {
                 "[]".to_string()
             } else if arr.len() <= 5 && depth < 2 {
@@ -794,7 +790,7 @@ fn format_value(value: &sald_core::vm::Value, depth: usize) -> String {
             }
         }
         Value::Dictionary(dict) => {
-            let dict = dict.lock();
+            let dict = dict.borrow();
             if dict.is_empty() {
                 "{}".to_string()
             } else if dict.len() <= 3 && depth < 2 {
@@ -821,7 +817,7 @@ fn format_value(value: &sald_core::vm::Value, depth: usize) -> String {
         }
         Value::Class(c) => format!("[Class: {}]", c.name).magenta().to_string(),
         Value::Instance(inst) => {
-            let inst = inst.lock();
+            let inst = inst.borrow();
             if inst.fields.is_empty() {
                 format!("{} {{}}", inst.class_name.magenta())
             } else if inst.fields.len() <= 3 && depth < 1 {
@@ -842,7 +838,7 @@ fn format_value(value: &sald_core::vm::Value, depth: usize) -> String {
     }
 }
 
-async fn run_repl_line(vm: &mut VM, source: &str) -> SaldResult<sald_core::vm::Value> {
+fn run_repl_line(vm: &mut VM, source: &str) -> SaldResult<sald_core::vm::Value> {
     let mut scanner = Scanner::new(source, "<repl>");
     let tokens = scanner.scan_tokens()?;
 
@@ -853,7 +849,7 @@ async fn run_repl_line(vm: &mut VM, source: &str) -> SaldResult<sald_core::vm::V
     // Use compile_repl to keep expression results on stack
     let chunk = compiler.compile_repl(&program)?;
 
-    let result = vm.run(chunk, "<repl>", source).await?;
+    let result = vm.run(chunk, "<repl>", source)?;
 
     Ok(result)
 }

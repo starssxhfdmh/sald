@@ -1,11 +1,11 @@
-// Type built-in class
-// Provides: of, isString, isNumber, etc.
-// Uses Arc for thread-safety
+
+
+
 
 use super::check_arity;
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 
 pub fn create_type_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
@@ -25,7 +25,7 @@ pub fn create_type_class() -> Class {
 
 fn type_of(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
-    Ok(Value::String(Arc::from(args[0].type_name().to_string())))
+    Ok(Value::String(Rc::from(args[0].type_name().to_string())))
 }
 
 fn type_is_string(args: &[Value]) -> Result<Value, String> {

@@ -1,11 +1,11 @@
-// Path built-in class
-// Provides: join, dirname, basename, extname, isAbsolute
-// Uses Arc for thread-safety
+
+
+
 
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::rc::Rc;
 
 pub fn create_path_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
@@ -35,10 +35,10 @@ fn get_string(args: &[Value], idx: usize, name: &str) -> Result<String, String> 
     }
 }
 
-/// Join path components
+
 fn path_join(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
-        return Ok(Value::String(Arc::from(String::new())));
+        return Ok(Value::String(Rc::from(String::new())));
     }
 
     let mut path = std::path::PathBuf::new();
@@ -55,73 +55,73 @@ fn path_join(args: &[Value]) -> Result<Value, String> {
         }
     }
 
-    Ok(Value::String(Arc::from(path.to_string_lossy().to_string())))
+    Ok(Value::String(Rc::from(path.to_string_lossy().to_string())))
 }
 
-/// Get directory name from path
+
 fn path_dirname(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
 
     match path.parent() {
-        Some(parent) => Ok(Value::String(Arc::from(
+        Some(parent) => Ok(Value::String(Rc::from(
             parent.to_string_lossy().to_string(),
         ))),
-        None => Ok(Value::String(Arc::from(String::new()))),
+        None => Ok(Value::String(Rc::from(String::new()))),
     }
 }
 
-/// Get base name (filename) from path
+
 fn path_basename(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
 
     match path.file_name() {
-        Some(name) => Ok(Value::String(Arc::from(name.to_string_lossy().to_string()))),
-        None => Ok(Value::String(Arc::from(String::new()))),
+        Some(name) => Ok(Value::String(Rc::from(name.to_string_lossy().to_string()))),
+        None => Ok(Value::String(Rc::from(String::new()))),
     }
 }
 
-/// Get file extension
+
 fn path_extname(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
 
     match path.extension() {
-        Some(ext) => Ok(Value::String(Arc::from(format!(
+        Some(ext) => Ok(Value::String(Rc::from(format!(
             ".{}",
             ext.to_string_lossy()
         )))),
-        None => Ok(Value::String(Arc::from(String::new()))),
+        None => Ok(Value::String(Rc::from(String::new()))),
     }
 }
 
-/// Check if path is absolute
+
 fn path_is_absolute(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
     Ok(Value::Boolean(path.is_absolute()))
 }
 
-/// Check if path exists
+
 fn path_exists(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
     Ok(Value::Boolean(path.exists()))
 }
 
-/// Normalize path (resolve . and ..)
+
 fn path_normalize(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = std::path::PathBuf::from(&path_str);
 
-    // Use canonicalize if path exists, otherwise just clean it
+    
     match path.canonicalize() {
-        Ok(canonical) => Ok(Value::String(Arc::from(
+        Ok(canonical) => Ok(Value::String(Rc::from(
             canonical.to_string_lossy().to_string(),
         ))),
         Err(_) => {
-            // Return cleaned path (basic normalization)
+            
             let mut components = Vec::new();
             for component in path.components() {
                 use std::path::Component;
@@ -134,7 +134,7 @@ fn path_normalize(args: &[Value]) -> Result<Value, String> {
                 }
             }
             let result: std::path::PathBuf = components.iter().collect();
-            Ok(Value::String(Arc::from(
+            Ok(Value::String(Rc::from(
                 result.to_string_lossy().to_string(),
             )))
         }

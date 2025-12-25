@@ -1803,7 +1803,6 @@ dependencies = [
  "ptree",
  "reedline",
  "sald-core",
- "tokio",
 ]
 
 [[package]]
@@ -1834,7 +1833,6 @@ dependencies = [
  "smallvec",
  "sysinfo",
  "thiserror 1.0.69",
- "tokio",
  "uuid",
  "wasm-bindgen",
 ]

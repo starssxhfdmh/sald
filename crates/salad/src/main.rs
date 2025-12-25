@@ -1154,7 +1154,7 @@ async fn run_script(path: &Path, args: &[String]) {
     let mut vm = VM::new();
     // Set args for the script
     vm.set_args(args.to_vec());
-    if let Err(e) = vm.run(chunk, &path_str, &source).await {
+    if let Err(e) = vm.run(chunk, &path_str, &source) {
         eprintln!("{}", e);
         std::process::exit(1);
     }

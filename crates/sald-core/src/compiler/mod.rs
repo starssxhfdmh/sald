@@ -1,5 +1,5 @@
-// Sald Compiler Module
-// Compiles AST to bytecode
+
+
 
 pub mod chunk;
 mod compiler;

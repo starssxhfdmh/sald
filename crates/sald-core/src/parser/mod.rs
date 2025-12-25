@@ -1,11 +1,11 @@
-// Sald Parser
-// Recursive descent parser that converts tokens into an AST
+
+
 
 use crate::ast::*;
 use crate::error::{SaldError, SaldResult, Span};
 use crate::lexer::{Token, TokenKind};
 
-/// Recursive descent parser for Sald
+
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
@@ -23,7 +23,7 @@ impl Parser {
         }
     }
 
-    /// Parse the entire program
+    
     pub fn parse(&mut self) -> SaldResult<Program> {
         let mut statements = Vec::new();
 
@@ -34,15 +34,15 @@ impl Parser {
         Ok(Program::new(statements))
     }
 
-    /// Parse a single expression (for config files like Salad.sald)
+    
     pub fn parse_expression_only(&mut self) -> SaldResult<Expr> {
         self.expression()
     }
 
-    // ==================== Declarations ====================
+    
 
     fn declaration(&mut self) -> SaldResult<Stmt> {
-        // Check for decorators first
+        
         let decorators = self.parse_decorators()?;
 
         if self.check(&TokenKind::Let) {
@@ -56,8 +56,8 @@ impl Parser {
             }
             self.const_declaration()
         } else if self.check(&TokenKind::Async) {
-            // async fun name() { }
-            self.advance(); // consume 'async'
+            
+            self.advance(); 
             if self.check(&TokenKind::Fun) {
                 self.function_declaration(false, true, decorators)
             } else {
@@ -97,16 +97,16 @@ impl Parser {
         }
     }
 
-    /// Parse decorators: @name or @name(args)
+    
     fn parse_decorators(&mut self) -> SaldResult<Vec<Decorator>> {
         let mut decorators = Vec::new();
 
         while self.check(&TokenKind::At) {
-            let start = self.advance().span; // consume @
+            let start = self.advance().span; 
             let name_token = self.consume_identifier("Expected decorator name after '@'")?;
             let name = name_token.lexeme.clone();
 
-            // Optional arguments
+            
             let args = if self.match_token(&TokenKind::LeftParen) {
                 let mut args = Vec::new();
                 if !self.check(&TokenKind::RightParen) {
@@ -137,21 +137,21 @@ impl Parser {
     }
 
     fn let_declaration(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'let'
+        let start_span = self.advance().span; 
 
-        // Check for array destructuring: let [a, b, c] = arr
+        
         if self.check(&TokenKind::LeftBracket) {
             return self.parse_array_destructure(start_span);
         }
 
-        // Check for 'self.property' pattern
+        
         if self.check(&TokenKind::SelfKeyword) {
-            self.advance(); // consume 'self'
+            self.advance(); 
             self.consume(&TokenKind::Dot, "Expected '.' after 'self'")?;
 
             let property_token = self.consume_identifier("Expected property name after 'self.'")?;
             let property_name = format!("self.{}", property_token.lexeme);
-            let property_span = property_token.span; // Copy span before mutable borrow
+            let property_span = property_token.span; 
 
             self.consume(&TokenKind::Equal, "Expected '=' after property name")?;
             let initializer = self.expression()?;
@@ -173,7 +173,7 @@ impl Parser {
 
         let name_token = self.consume_identifier("Expected variable name")?;
         let name = name_token.lexeme.clone();
-        let name_span = name_token.span; // Copy span before mutable borrow
+        let name_span = name_token.span; 
 
         let initializer = if self.match_token(&TokenKind::Equal) {
             Some(self.expression()?)
@@ -196,16 +196,16 @@ impl Parser {
         })
     }
 
-    /// Parse array destructuring: let [a, b, ...rest] = arr
+    
     fn parse_array_destructure(&mut self, start_span: Span) -> SaldResult<Stmt> {
         use crate::ast::{ArrayPattern, ArrayPatternElement};
 
-        self.advance(); // consume '['
+        self.advance(); 
 
         let mut elements = Vec::new();
 
         while !self.check(&TokenKind::RightBracket) && !self.is_at_end() {
-            // Check for rest pattern: ...name
+            
             if self.match_token(&TokenKind::DotDotDot) {
                 let name_token = self.consume_identifier("Expected variable name after '...'")?;
                 elements.push(ArrayPatternElement::Rest {
@@ -213,11 +213,11 @@ impl Parser {
                     span: name_token.span,
                 });
             }
-            // Check for hole (empty slot): let [a, , b] = arr
+            
             else if self.check(&TokenKind::Comma) {
                 elements.push(ArrayPatternElement::Hole);
             }
-            // Regular variable
+            
             else {
                 let name_token =
                     self.consume_identifier("Expected variable name in destructuring pattern")?;
@@ -227,7 +227,7 @@ impl Parser {
                 });
             }
 
-            // Consume comma if not at end
+            
             if !self.check(&TokenKind::RightBracket) {
                 self.consume(&TokenKind::Comma, "Expected ',' between pattern elements")?;
             }
@@ -273,7 +273,7 @@ impl Parser {
         is_async: bool,
         decorators: Vec<Decorator>,
     ) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'fun'
+        let start_span = self.advance().span; 
 
         let name_token = self.consume_identifier("Expected function name")?;
         let name = name_token.lexeme.clone();
@@ -309,11 +309,11 @@ impl Parser {
     fn parse_parameters(&mut self) -> SaldResult<Vec<FunctionParam>> {
         let mut params = Vec::new();
         let mut found_variadic = false;
-        let mut found_default = false; // Track if we've seen a default param
+        let mut found_default = false; 
 
         if !self.check(&TokenKind::RightParen) {
             loop {
-                // Check for variadic parameter: ...args
+                
                 let is_variadic = self.match_token(&TokenKind::DotDotDot);
 
                 if found_variadic {
@@ -326,7 +326,7 @@ impl Parser {
                     found_variadic = true;
                 }
 
-                // Allow 'self' as a parameter name for methods
+                
                 let (param_name, param_span) = if self.check(&TokenKind::SelfKeyword) {
                     let tok = self.advance();
                     (tok.lexeme.clone(), tok.span)
@@ -335,12 +335,12 @@ impl Parser {
                     (tok.lexeme.clone(), tok.span)
                 };
 
-                // Check for default value: param = expr
+                
                 let default_value = if self.match_token(&TokenKind::Equal) {
                     found_default = true;
                     Some(self.expression()?)
                 } else {
-                    // Required param after optional is an error
+                    
                     if found_default && !is_variadic {
                         return Err(self
                             .error("Required parameter cannot follow optional parameter")
@@ -366,12 +366,12 @@ impl Parser {
     }
 
     fn class_declaration(&mut self, decorators: Vec<Decorator>) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'class'
+        let start_span = self.advance().span; 
 
         let name_token = self.consume_identifier("Expected class name")?;
         let name = name_token.lexeme.clone();
 
-        // Check for extends
+        
         let superclass = if self.match_token(&TokenKind::Extends) {
             let superclass_token =
                 self.consume_identifier("Expected superclass name after 'extends'")?;
@@ -380,7 +380,7 @@ impl Parser {
             None
         };
 
-        // Check for implements
+        
         let implements = if self.match_token(&TokenKind::Implements) {
             let mut interfaces = Vec::new();
             loop {
@@ -400,10 +400,10 @@ impl Parser {
         let mut methods = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Parse method decorators
+            
             let method_decorators = self.parse_decorators()?;
 
-            // Check for async fun in class methods
+            
             let is_async = self.match_token(&TokenKind::Async);
 
             if !self.check(&TokenKind::Fun) {
@@ -415,7 +415,7 @@ impl Parser {
             if let Stmt::Function { def } =
                 self.function_declaration(false, is_async, method_decorators)?
             {
-                // Auto-detect static: method is static if first param is NOT 'self'
+                
                 let is_static = def.params.first().map(|p| p.name != "self").unwrap_or(true);
                 methods.push(FunctionDef { is_static, ..def });
             }
@@ -442,9 +442,9 @@ impl Parser {
     }
 
     fn import_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'import'
+        let start_span = self.advance().span; 
 
-        // Expect string literal for path
+        
         let path_token = self.peek().clone();
         let path = match &path_token.kind {
             TokenKind::String(s) => s.clone(),
@@ -452,7 +452,7 @@ impl Parser {
         };
         self.advance();
 
-        // Check for optional 'as' alias
+        
         let alias = if self.match_token(&TokenKind::As) {
             let alias_token = self.consume_identifier("Expected identifier after 'as'")?;
             Some(alias_token.lexeme.clone())
@@ -474,9 +474,9 @@ impl Parser {
         })
     }
 
-    /// Parse const declaration: const NAME = value
+    
     fn const_declaration(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'const'
+        let start_span = self.advance().span; 
 
         let name_token = self.consume_identifier("Expected constant name")?;
         let name = name_token.lexeme.clone();
@@ -497,16 +497,16 @@ impl Parser {
         })
     }
 
-    /// Parse namespace declaration: namespace Name { ... }
+    
     fn namespace_declaration(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'namespace'
+        let start_span = self.advance().span; 
 
         let name_token = self.consume_identifier("Expected namespace name")?;
         let name = name_token.lexeme.clone();
 
         self.consume(&TokenKind::LeftBrace, "Expected '{' after namespace name")?;
 
-        // Parse body - can contain let, const, fun, class, namespace
+        
         let mut body = Vec::new();
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
             body.push(self.declaration()?);
@@ -527,9 +527,9 @@ impl Parser {
         })
     }
 
-    /// Parse enum declaration: enum Name { Variant1, Variant2, ... }
+    
     fn enum_declaration(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'enum'
+        let start_span = self.advance().span; 
 
         let name_token = self.consume_identifier("Expected enum name")?;
         let name = name_token.lexeme.clone();
@@ -541,7 +541,7 @@ impl Parser {
             let variant_token = self.consume_identifier("Expected enum variant name")?;
             variants.push(variant_token.lexeme.clone());
 
-            // Optional comma between variants
+            
             if !self.check(&TokenKind::RightBrace) {
                 self.match_token(&TokenKind::Comma);
             }
@@ -562,9 +562,9 @@ impl Parser {
         })
     }
 
-    /// Parse interface declaration: interface Name { fun method(self, ...) }
+    
     fn interface_declaration(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'interface'
+        let start_span = self.advance().span; 
 
         let name_token = self.consume_identifier("Expected interface name")?;
         let name = name_token.lexeme.clone();
@@ -574,14 +574,14 @@ impl Parser {
         let mut methods = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Parse method signature: fun name(params)
+            
             if !self.check(&TokenKind::Fun) {
                 return Err(self
                     .error("Expected 'fun' for method signature in interface")
                     .with_help("Interface can only contain method signatures"));
             }
 
-            let method_start = self.advance().span; // consume 'fun'
+            let method_start = self.advance().span; 
             let method_name_token = self.consume_identifier("Expected method name")?;
             let method_name = method_name_token.lexeme.clone();
 
@@ -620,7 +620,7 @@ impl Parser {
         })
     }
 
-    // ==================== Statements ====================
+    
 
     fn statement(&mut self) -> SaldResult<Stmt> {
         if self.check(&TokenKind::If) {
@@ -642,23 +642,23 @@ impl Parser {
         } else if self.check(&TokenKind::Throw) {
             self.throw_statement()
         } else {
-            // LeftBrace goes here - parse_dictionary_or_block() handles disambiguation
+            
             self.expression_statement()
         }
     }
 
     fn break_statement(&mut self) -> SaldResult<Stmt> {
-        let token = self.advance(); // consume 'break'
+        let token = self.advance(); 
         Ok(Stmt::Break { span: token.span })
     }
 
     fn continue_statement(&mut self) -> SaldResult<Stmt> {
-        let token = self.advance(); // consume 'continue'
+        let token = self.advance(); 
         Ok(Stmt::Continue { span: token.span })
     }
 
     fn if_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'if'
+        let start_span = self.advance().span; 
 
         let condition = self.expression()?;
 
@@ -671,10 +671,10 @@ impl Parser {
 
         let else_branch = if self.match_token(&TokenKind::Else) {
             if self.check(&TokenKind::If) {
-                // else if
+                
                 Some(Box::new(self.if_statement()?))
             } else {
-                // else
+                
                 self.consume(&TokenKind::LeftBrace, "Expected '{' after 'else'")?;
                 let else_statements = self.block_statements()?;
                 Some(Box::new(Stmt::Block {
@@ -702,7 +702,7 @@ impl Parser {
     }
 
     fn while_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'while'
+        let start_span = self.advance().span; 
 
         let condition = self.expression()?;
 
@@ -726,7 +726,7 @@ impl Parser {
     }
 
     fn do_while_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'do'
+        let start_span = self.advance().span; 
 
         self.consume(&TokenKind::LeftBrace, "Expected '{' after 'do'")?;
         let body_statements = self.block_statements()?;
@@ -752,9 +752,9 @@ impl Parser {
     }
 
     fn for_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'for'
+        let start_span = self.advance().span; 
 
-        // Parse: for <variable> in <iterable> { <body> }
+        
         let var_token = self.consume_identifier("Expected variable name after 'for'")?;
         let variable = var_token.lexeme.clone();
 
@@ -785,10 +785,10 @@ impl Parser {
     }
 
     fn return_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'return'
+        let start_span = self.advance().span; 
 
         let value = if !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Check if there's an expression following
+            
             if !self.check(&TokenKind::Eof) && !self.is_statement_start() {
                 Some(self.expression()?)
             } else {
@@ -817,11 +817,11 @@ impl Parser {
         Ok(Stmt::Expression { expr, span })
     }
 
-    /// Parse try-catch statement: try { ... } catch (e) { ... }
+    
     fn try_catch_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'try'
+        let start_span = self.advance().span; 
 
-        // Parse try block
+        
         self.consume(&TokenKind::LeftBrace, "Expected '{' after 'try'")?;
         let try_statements = self.block_statements()?;
         let try_body = Box::new(Stmt::Block {
@@ -829,10 +829,10 @@ impl Parser {
             span: self.previous().span,
         });
 
-        // Expect 'catch'
+        
         self.consume(&TokenKind::Catch, "Expected 'catch' after try block")?;
 
-        // Parse catch variable: catch (e) or catch e
+        
         let catch_var = if self.match_token(&TokenKind::LeftParen) {
             let var_name = self
                 .consume_identifier("Expected variable name in catch")?
@@ -846,7 +846,7 @@ impl Parser {
                 .clone()
         };
 
-        // Parse catch block
+        
         self.consume(&TokenKind::LeftBrace, "Expected '{' before catch block")?;
         let catch_statements = self.block_statements()?;
         let end_span = self.previous().span;
@@ -868,9 +868,9 @@ impl Parser {
         })
     }
 
-    /// Parse throw statement: throw value
+    
     fn throw_statement(&mut self) -> SaldResult<Stmt> {
-        let start_span = self.advance().span; // consume 'throw'
+        let start_span = self.advance().span; 
 
         let value = self.expression()?;
         let end_span = value.span();
@@ -907,11 +907,11 @@ impl Parser {
                 | TokenKind::For
                 | TokenKind::Fun
                 | TokenKind::Return
-                | TokenKind::Class // Note: LeftBrace is NOT here - it can be a dict literal in expression context
+                | TokenKind::Class 
         )
     }
 
-    // ==================== Expressions ====================
+    
 
     fn expression(&mut self) -> SaldResult<Expr> {
         self.assignment()
@@ -920,7 +920,7 @@ impl Parser {
     fn assignment(&mut self) -> SaldResult<Expr> {
         let expr = self.ternary()?;
 
-        // Check for assignment operators
+        
         if let Some(op) = self.match_assign_op() {
             let value = self.assignment()?;
             let span = Span::from_positions(
@@ -950,7 +950,7 @@ impl Parser {
     fn ternary(&mut self) -> SaldResult<Expr> {
         let expr = self.null_coalesce()?;
 
-        // Check for ternary operator: condition ? then_expr : else_expr
+        
         if self.match_token(&TokenKind::Question) {
             let then_expr = self.ternary()?;
             self.consume(&TokenKind::Colon, "Expected ':' in ternary expression")?;
@@ -1047,7 +1047,7 @@ impl Parser {
         Ok(expr)
     }
 
-    // Bitwise OR has lower precedence than XOR
+    
     fn bit_or(&mut self) -> SaldResult<Expr> {
         let mut expr = self.bit_xor()?;
 
@@ -1070,7 +1070,7 @@ impl Parser {
         Ok(expr)
     }
 
-    // Bitwise XOR has lower precedence than AND
+    
     fn bit_xor(&mut self) -> SaldResult<Expr> {
         let mut expr = self.bit_and()?;
 
@@ -1093,7 +1093,7 @@ impl Parser {
         Ok(expr)
     }
 
-    // Bitwise AND has lower precedence than equality
+    
     fn bit_and(&mut self) -> SaldResult<Expr> {
         let mut expr = self.equality()?;
 
@@ -1178,15 +1178,15 @@ impl Parser {
         Ok(expr)
     }
 
-    /// Parse range expressions: start..end (inclusive) or start..<end (exclusive)
+    
     fn range(&mut self) -> SaldResult<Expr> {
         let mut expr = self.shift()?;
 
-        // Check for range operators
+        
         if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotLess) {
             let inclusive = self.match_token(&TokenKind::DotDot);
             if !inclusive {
-                self.advance(); // consume DotDotLess
+                self.advance(); 
             }
 
             let end = self.shift()?;
@@ -1207,7 +1207,7 @@ impl Parser {
         Ok(expr)
     }
 
-    // Shift operators have lower precedence than term
+    
     fn shift(&mut self) -> SaldResult<Expr> {
         let mut expr = self.term()?;
 
@@ -1301,7 +1301,7 @@ impl Parser {
     }
 
     fn unary(&mut self) -> SaldResult<Expr> {
-        // Check for await keyword
+        
         if self.check(&TokenKind::Await) {
             let await_token = self.advance().clone();
             let expr = self.unary()?;
@@ -1362,7 +1362,7 @@ impl Parser {
                     span,
                 };
             } else if self.match_token(&TokenKind::QuestionDot) {
-                // Optional chaining: obj?.property
+                
                 let name_token = self.consume_identifier("Expected property name after '?.'")?;
                 let span = Span::from_positions(
                     expr.span().start.line,
@@ -1377,7 +1377,7 @@ impl Parser {
                     span,
                 };
             } else if self.match_token(&TokenKind::LeftBracket) {
-                // Index access: arr[i]
+                
                 let index = self.expression()?;
                 let bracket = self.consume(&TokenKind::RightBracket, "Expected ']' after index")?;
                 let span = Span::from_positions(
@@ -1402,13 +1402,13 @@ impl Parser {
 
     fn finish_call(&mut self, callee: Expr, is_optional: bool) -> SaldResult<Expr> {
         let mut args: Vec<CallArg> = Vec::new();
-        let mut seen_named = false; // Track if we've seen a named arg
+        let mut seen_named = false; 
 
         if !self.check(&TokenKind::RightParen) {
             loop {
                 let arg_start_span = self.peek().span;
 
-                // Check for spread operator: ...expr
+                
                 if self.match_token(&TokenKind::DotDotDot) {
                     let start_span = self.previous().span;
                     let expr = self.expression()?;
@@ -1428,11 +1428,11 @@ impl Parser {
                         span,
                     });
                 } else if self.check_identifier() && self.check_ahead(1, &TokenKind::Colon) {
-                    // Named argument: name: value
+                    
                     seen_named = true;
-                    let name_token = self.advance(); // consume identifier
+                    let name_token = self.advance(); 
                     let arg_name = name_token.lexeme.clone();
-                    self.advance(); // consume ':'
+                    self.advance(); 
                     let value = self.expression()?;
                     let end_span = value.span();
                     let span = Span::from_positions(
@@ -1447,7 +1447,7 @@ impl Parser {
                         span,
                     });
                 } else {
-                    // Positional argument
+                    
                     if seen_named {
                         return Err(self
                             .error("Positional argument cannot follow named argument")
@@ -1507,7 +1507,7 @@ impl Parser {
                 })
             }
             TokenKind::FormatStringStart(s) => self.parse_format_string(s.clone(), token.span),
-            // Raw string literal - same as String but no escape processing (already done in lexer)
+            
             TokenKind::RawString(s) => {
                 let s = s.clone();
                 self.advance();
@@ -1564,7 +1564,7 @@ impl Parser {
                 })
             }
             TokenKind::LeftBracket => {
-                // Array literal: [1, 2, 3]
+                
                 self.advance();
                 let mut elements = Vec::new();
 
@@ -1592,15 +1592,15 @@ impl Parser {
                 })
             }
             TokenKind::Pipe => {
-                // Lambda: |params| body or |params| { block }
-                self.advance(); // consume '|'
+                
+                self.advance(); 
                 let start_span = token.span;
 
                 let mut params = Vec::new();
                 let mut found_variadic = false;
                 if !self.check(&TokenKind::Pipe) {
                     loop {
-                        // Check for variadic parameter: ...args
+                        
                         let is_variadic = self.match_token(&TokenKind::DotDotDot);
 
                         if found_variadic {
@@ -1625,14 +1625,14 @@ impl Parser {
                 }
                 self.consume(&TokenKind::Pipe, "Expected '|' after lambda parameters")?;
 
-                // Check if body is a block or expression
+                
                 let body = if self.check(&TokenKind::LeftBrace) {
-                    // Block body: |x| { statements }
+                    
                     self.advance();
                     let statements = self.block_statements()?;
                     LambdaBody::Block(statements)
                 } else {
-                    // Expression body: |x| expr
+                    
                     let expr = self.expression()?;
                     LambdaBody::Expr(Box::new(expr))
                 };
@@ -1651,12 +1651,12 @@ impl Parser {
                 })
             }
             TokenKind::Or => {
-                // Lambda with empty params: || body or || { block }
-                // || is scanned as Or token
-                self.advance(); // consume ||
+                
+                
+                self.advance(); 
                 let start_span = token.span;
 
-                // Check if body is a block or expression
+                
                 let body = if self.check(&TokenKind::LeftBrace) {
                     self.advance();
                     let statements = self.block_statements()?;
@@ -1680,17 +1680,17 @@ impl Parser {
                 })
             }
             TokenKind::Async => {
-                // Async lambda: async || body or async |params| { block }
+                
                 let async_token = self.advance().clone();
 
-                // Check for || (Or token - empty params) or | (Pipe token - has params)
+                
                 let params = if self.check(&TokenKind::Or) {
-                    // async || { } - empty params (|| is scanned as Or token)
-                    self.advance(); // consume ||
+                    
+                    self.advance(); 
                     Vec::new()
                 } else if self.check(&TokenKind::Pipe) {
-                    // async |params| { } - has params
-                    self.advance(); // consume first |
+                    
+                    self.advance(); 
 
                     let mut params = Vec::new();
                     let mut found_variadic = false;
@@ -1750,8 +1750,8 @@ impl Parser {
                 })
             }
             TokenKind::Super => {
-                // super.method()
-                self.advance(); // consume 'super'
+                
+                self.advance(); 
                 let start_span = token.span;
                 self.consume(&TokenKind::Dot, "Expected '.' after 'super'")?;
                 let method_token =
@@ -1770,11 +1770,11 @@ impl Parser {
             }
             TokenKind::Switch => self.parse_switch_expression(),
             TokenKind::LeftBrace => {
-                // Could be dictionary literal: {"key": value} or block expression: { stmts; expr }
-                // Disambiguate by looking ahead:
-                // - If empty `{}` -> empty dictionary
-                // - If starts with expression followed by `:` -> dictionary
-                // - Otherwise -> block expression
+                
+                
+                
+                
+                
                 self.parse_dictionary_or_block()
             }
             _ => Err(self
@@ -1783,14 +1783,14 @@ impl Parser {
         }
     }
 
-    /// Parse either a dictionary literal or block expression
-    /// Dictionary: {"key": value, ...}
-    /// Block: { statements; expr }
+    
+    
+    
     fn parse_dictionary_or_block(&mut self) -> SaldResult<Expr> {
-        let start_token = self.advance(); // consume '{'
+        let start_token = self.advance(); 
         let start_span = start_token.span;
 
-        // Empty braces = empty dictionary
+        
         if self.check(&TokenKind::RightBrace) {
             let end_token = self.advance();
             return Ok(Expr::Dictionary {
@@ -1804,37 +1804,37 @@ impl Parser {
             });
         }
 
-        // Look ahead to determine if this is a dictionary
-        // If we see a string/expression followed by ':', it's a dictionary
-        // Save position for potential backtrack
+        
+        
+        
         let saved_position = self.current;
 
-        // Try to parse as dictionary key
+        
         let is_dictionary = if self.is_dictionary_start() {
             true
         } else {
-            // Restore position
+            
             self.current = saved_position;
             false
         };
 
         if is_dictionary {
-            // Restore to parse properly
+            
             self.current = saved_position;
             self.parse_dictionary_entries(start_span)
         } else {
-            // Parse as block expression (reuse existing logic)
+            
             self.current = saved_position;
             self.parse_block_expression_contents(start_span)
         }
     }
 
-    /// Check if this looks like a dictionary start
+    
     fn is_dictionary_start(&mut self) -> bool {
-        // Check for spread pattern: **expr
+        
         if self.check(&TokenKind::Star) {
             let saved = self.current;
-            self.advance(); // consume first *
+            self.advance(); 
             if self.check(&TokenKind::Star) {
                 self.current = saved;
                 return true;
@@ -1842,29 +1842,29 @@ impl Parser {
             self.current = saved;
         }
 
-        // Try to parse an expression
+        
         if let Ok(_expr) = self.expression() {
-            // Check if followed by colon
+            
             self.check(&TokenKind::Colon)
         } else {
             false
         }
     }
 
-    /// Parse dictionary entries after determining it's a dictionary
+    
     fn parse_dictionary_entries(&mut self, start_span: Span) -> SaldResult<Expr> {
         let mut entries = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Check for dict spread: **dict
+            
             if self.check(&TokenKind::Star) {
                 let star_pos = self.current;
-                self.advance(); // consume first *
+                self.advance(); 
                 if self.check(&TokenKind::Star) {
-                    self.advance(); // consume second *
+                    self.advance(); 
                     let spread_expr = self.expression()?;
                     let spread_span = spread_expr.span();
-                    // Use null literal as key to indicate spread
+                    
                     let key = Expr::Literal {
                         value: Literal::Null,
                         span: spread_span,
@@ -1875,7 +1875,7 @@ impl Parser {
                     };
                     entries.push((key, value));
                 } else {
-                    // Not a spread, restore and parse as normal key
+                    
                     self.current = star_pos;
                     let key = self.expression()?;
                     self.consume(&TokenKind::Colon, "Expected ':' after dictionary key")?;
@@ -1883,19 +1883,19 @@ impl Parser {
                     entries.push((key, value));
                 }
             } else {
-                // Parse key expression
+                
                 let key = self.expression()?;
 
-                // Expect colon
+                
                 self.consume(&TokenKind::Colon, "Expected ':' after dictionary key")?;
 
-                // Parse value expression
+                
                 let value = self.expression()?;
 
                 entries.push((key, value));
             }
 
-            // Optional comma
+            
             if !self.match_token(&TokenKind::Comma) {
                 break;
             }
@@ -1917,7 +1917,7 @@ impl Parser {
         })
     }
 
-    /// Parse block expression contents (after we've determined it's a block)
+    
     fn parse_block_expression_contents(&mut self, start_span: Span) -> SaldResult<Expr> {
         let mut statements = Vec::new();
         let mut final_expr: Option<Box<Expr>> = None;
@@ -1965,14 +1965,14 @@ impl Parser {
         })
     }
 
-    /// Parse switch expression: switch value { patterns -> expr, ... }
+    
     fn parse_switch_expression(&mut self) -> SaldResult<Expr> {
-        let start_span = self.advance().span; // consume 'switch'
+        let start_span = self.advance().span; 
 
-        // Parse the value to match against
+        
         let value = Box::new(self.expression()?);
 
-        // Consume opening brace
+        
         self.consume(&TokenKind::LeftBrace, "Expected '{' after switch value")?;
 
         let mut arms = Vec::new();
@@ -1981,33 +1981,33 @@ impl Parser {
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
             let arm_start = self.peek().span;
 
-            // Check for 'default' keyword
+            
             if self.check(&TokenKind::Default) {
-                self.advance(); // consume 'default'
+                self.advance(); 
                 self.consume(&TokenKind::ThinArrow, "Expected '->' after 'default'")?;
 
                 let body = self.switch_arm_body()?;
                 default_arm = Some(Box::new(body));
 
-                // Optional comma
+                
                 self.match_token(&TokenKind::Comma);
             } else {
-                // Parse patterns (can be multiple: 1, 2, 3 -> expr)
+                
                 let mut patterns = Vec::new();
 
                 loop {
                     let pattern = self.parse_switch_pattern()?;
                     patterns.push(pattern);
 
-                    // Check for comma (multiple patterns) or arrow (end of patterns)
+                    
                     if self.check(&TokenKind::ThinArrow) {
                         break;
                     } else if self.match_token(&TokenKind::Comma) {
-                        // If next token is arrow, we're done with patterns
+                        
                         if self.check(&TokenKind::ThinArrow) {
                             break;
                         }
-                        // Otherwise continue collecting patterns
+                        
                     } else {
                         return Err(self.error("Expected '->' or ',' in switch arm").with_help(
                             "Use 'pattern -> expression' or 'pattern1, pattern2 -> expression'",
@@ -2031,7 +2031,7 @@ impl Parser {
                     ),
                 });
 
-                // Optional comma between arms
+                
                 self.match_token(&TokenKind::Comma);
             }
         }
@@ -2051,35 +2051,35 @@ impl Parser {
         })
     }
 
-    /// Parse a switch pattern
+    
     fn parse_switch_pattern(&mut self) -> SaldResult<Pattern> {
         let start_span = self.peek().span;
 
-        // Check for array pattern [...]
+        
         if self.check(&TokenKind::LeftBracket) {
             return self.parse_switch_array_pattern();
         }
 
-        // Check for dict pattern {...}
+        
         if self.check(&TokenKind::LeftBrace) {
             return self.parse_switch_dict_pattern();
         }
 
-        // Parse as literal or binding
-        // Literals: numbers, strings, true, false, null
+        
+        
         match &self.peek().kind {
             TokenKind::Number(n) => {
                 let value = *n;
                 self.advance();
 
-                // Check for range pattern: num..num or num..<num
+                
                 if self.check(&TokenKind::DotDot) || self.check(&TokenKind::DotDotLess) {
                     let inclusive = self.match_token(&TokenKind::DotDot);
                     if !inclusive {
-                        self.advance(); // consume DotDotLess
+                        self.advance(); 
                     }
 
-                    // Parse end value (must be a number for patterns)
+                    
                     let end_value = if let TokenKind::Number(n) = &self.peek().kind {
                         *n
                     } else {
@@ -2142,8 +2142,8 @@ impl Parser {
                 })
             }
             TokenKind::Identifier(_) => {
-                // Check if this is an expression pattern (e.g., Enum.Member)
-                // Look ahead to see if identifier is followed by a dot
+                
+                
                 let name = if let TokenKind::Identifier(n) = &self.peek().kind {
                     n.clone()
                 } else {
@@ -2151,15 +2151,15 @@ impl Parser {
                 };
                 self.advance();
 
-                // If followed by a dot, this is an expression pattern (Enum.Member, etc.)
+                
                 if self.check(&TokenKind::Dot) {
-                    // Build expression starting with the identifier
+                    
                     let mut expr = Expr::Identifier {
                         name: name.clone(),
                         span: start_span,
                     };
 
-                    // Keep parsing property accesses
+                    
                     while self.match_token(&TokenKind::Dot) {
                         let property = if let TokenKind::Identifier(prop) = &self.peek().kind {
                             prop.clone()
@@ -2194,10 +2194,10 @@ impl Parser {
                     });
                 }
 
-                // Variable binding: x, or x if condition
-                // Check for guard: x if condition
+                
+                
                 let guard = if self.check(&TokenKind::If) {
-                    self.advance(); // consume 'if'
+                    self.advance(); 
                     Some(Box::new(self.expression()?))
                 } else {
                     None
@@ -2219,16 +2219,16 @@ impl Parser {
         }
     }
 
-    /// Parse array pattern: [], [a], [a, b], [head, ...tail]
+    
     fn parse_switch_array_pattern(&mut self) -> SaldResult<Pattern> {
-        let start_span = self.advance().span; // consume '['
+        let start_span = self.advance().span; 
 
         let mut elements = Vec::new();
 
         while !self.check(&TokenKind::RightBracket) && !self.is_at_end() {
-            // Check for rest element ...name
+            
             if self.check(&TokenKind::DotDotDot) {
-                let rest_start = self.advance().span; // consume '...'
+                let rest_start = self.advance().span; 
                 let name = if let TokenKind::Identifier(n) = &self.peek().kind {
                     n.clone()
                 } else {
@@ -2246,12 +2246,12 @@ impl Parser {
                     ),
                 });
             } else {
-                // Parse a pattern element
+                
                 let pattern = self.parse_switch_pattern()?;
                 elements.push(SwitchArrayElement::Single(pattern));
             }
 
-            // Check for comma or end
+            
             if !self.check(&TokenKind::RightBracket) {
                 self.consume(&TokenKind::Comma, "Expected ',' or ']' in array pattern")?;
             }
@@ -2271,14 +2271,14 @@ impl Parser {
         })
     }
 
-    /// Parse dict pattern: {"key": binding}
+    
     fn parse_switch_dict_pattern(&mut self) -> SaldResult<Pattern> {
-        let start_span = self.advance().span; // consume '{'
+        let start_span = self.advance().span; 
 
         let mut entries = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Parse key (must be string literal)
+            
             let key = if let TokenKind::String(s) = &self.peek().kind {
                 s.clone()
             } else {
@@ -2288,12 +2288,12 @@ impl Parser {
 
             self.consume(&TokenKind::Colon, "Expected ':' after dict key")?;
 
-            // Parse binding pattern
+            
             let pattern = self.parse_switch_pattern()?;
 
             entries.push((key, pattern));
 
-            // Check for comma or end
+            
             if !self.check(&TokenKind::RightBrace) {
                 self.consume(&TokenKind::Comma, "Expected ',' or '}' in dict pattern")?;
             }
@@ -2312,13 +2312,13 @@ impl Parser {
         })
     }
 
-    /// Parse a switch arm body - can be a block expression, return/throw/break/continue, or regular expression
+    
     fn switch_arm_body(&mut self) -> SaldResult<Expr> {
         if self.check(&TokenKind::LeftBrace) {
             self.parse_block_expression()
         } else if self.check(&TokenKind::Return) {
-            // Parse return as expression
-            let start_span = self.advance().span; // consume 'return'
+            
+            let start_span = self.advance().span; 
             let value = if !self.check_switch_arm_end() {
                 Some(Box::new(self.expression()?))
             } else {
@@ -2335,8 +2335,8 @@ impl Parser {
                 ),
             })
         } else if self.check(&TokenKind::Throw) {
-            // Parse throw as expression
-            let start_span = self.advance().span; // consume 'throw'
+            
+            let start_span = self.advance().span; 
             let value = Box::new(self.expression()?);
             let end_span = self.previous().span;
             Ok(Expr::Throw {
@@ -2359,7 +2359,7 @@ impl Parser {
         }
     }
 
-    /// Check if we're at the end of a switch arm (comma, closing brace, or default keyword)
+    
     fn check_switch_arm_end(&self) -> bool {
         self.check(&TokenKind::Comma)
             || self.check(&TokenKind::RightBrace)
@@ -2367,17 +2367,17 @@ impl Parser {
             || self.is_at_end()
     }
 
-    /// Parse a block expression: { statements; expr }
+    
     fn parse_block_expression(&mut self) -> SaldResult<Expr> {
-        let start_token = self.advance(); // consume '{'
+        let start_token = self.advance(); 
         let start_span = start_token.span;
 
         let mut statements = Vec::new();
         let mut final_expr: Option<Box<Expr>> = None;
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Try to parse a statement
-            // If it's an expression statement without semicolon at the end, it's the final expression
+            
+            
 
             if self.check(&TokenKind::Let)
                 || self.check(&TokenKind::Fun)
@@ -2391,19 +2391,19 @@ impl Parser {
                 || self.check(&TokenKind::Try)
                 || self.check(&TokenKind::Throw)
             {
-                // It's definitely a statement
+                
                 let stmt = self.declaration()?;
                 statements.push(stmt);
             } else {
-                // Parse as expression
+                
                 let expr = self.expression()?;
 
-                // Check if followed by } (final expression) or needs to become expression statement
+                
                 if self.check(&TokenKind::RightBrace) {
-                    // This is the final expression
+                    
                     final_expr = Some(Box::new(expr));
                 } else {
-                    // Convert to expression statement
+                    
                     let span = expr.span();
                     statements.push(Stmt::Expression { expr, span });
                 }
@@ -2427,25 +2427,25 @@ impl Parser {
         })
     }
 
-    // ==================== Helper Methods ====================
+    
 
-    /// Parse format string $"Hello, {name}!" into concatenation expression
-    /// FormatStringStart("Hello, ") + expr + FormatStringPart/End("!")
+    
+    
     fn parse_format_string(&mut self, first_part: String, start_span: Span) -> SaldResult<Expr> {
-        self.advance(); // consume FormatStringStart
+        self.advance(); 
 
-        // Start with the first string literal
+        
         let mut result = Expr::Literal {
             value: Literal::String(first_part),
             span: start_span,
         };
 
         loop {
-            // Parse the expression
+            
             let expr = self.expression()?;
             let expr_span = expr.span();
 
-            // Concatenate: result + expr
+            
             let concat_span = Span::from_positions(
                 result.span().start.line,
                 result.span().start.column,
@@ -2459,15 +2459,15 @@ impl Parser {
                 span: concat_span,
             };
 
-            // Check what comes next
+            
             let next_token = self.peek().clone();
             match &next_token.kind {
                 TokenKind::FormatStringPart(s) => {
-                    // More parts to come
+                    
                     let s = s.clone();
                     self.advance();
 
-                    // Add the string part
+                    
                     let str_expr = Expr::Literal {
                         value: Literal::String(s),
                         span: next_token.span,
@@ -2484,15 +2484,15 @@ impl Parser {
                         right: Box::new(str_expr),
                         span: concat_span,
                     };
-                    // Continue loop for next expression
+                    
                 }
                 TokenKind::FormatStringEnd(s) => {
-                    // Last part
+                    
                     let s = s.clone();
                     self.advance();
 
                     if !s.is_empty() {
-                        // Add the final string part
+                        
                         let str_expr = Expr::Literal {
                             value: Literal::String(s),
                             span: next_token.span,
@@ -2549,7 +2549,7 @@ impl Parser {
         std::mem::discriminant(&self.peek().kind) == std::mem::discriminant(kind)
     }
 
-    /// Check if current token is an identifier
+    
     fn check_identifier(&self) -> bool {
         if self.is_at_end() {
             return false;
@@ -2557,7 +2557,7 @@ impl Parser {
         matches!(self.peek().kind, TokenKind::Identifier(_))
     }
 
-    /// Check token at offset n ahead (0 = current, 1 = next, etc)
+    
     fn check_ahead(&self, n: usize, kind: &TokenKind) -> bool {
         let idx = self.current + n;
         if idx >= self.tokens.len() {
