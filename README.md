@@ -5,10 +5,6 @@
 <h1 align="center">Sald</h1>
 
 <p align="center">
-  <strong>⚠️ NOTE: This project is no longer maintained.</strong>
-</p>
-
-<p align="center">
   A modern dynamic programming language built with Rust.
 </p>
 
@@ -17,13 +13,6 @@
   <a href="https://saladpm.vercel.app">Package Manager</a> •
   <a href="https://starssxhfdmh.github.io/sald-playground">Playground</a>
 </p>
-
----
-
-## 🛑 Project Status: Unmaintained
-
-> [!CAUTION]
-> **This project is no longer being developed or maintained.** This code remains available for reference or archive purposes, but there will be no future feature updates, bug fixes, or pull request reviews.
 
 ---
 
@@ -42,23 +31,19 @@
 
 **Linux:**
 ```bash
-curl -fsSL [https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.sh](https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.sh) | bash
-
+curl -fsSL https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.sh | bash
 ```
 
 **Windows:**
-
 ```powershell
-irm [https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.ps1](https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.ps1) | iex
-
+irm https://raw.githubusercontent.com/starssxhfdmh/sald/master/install.ps1 | iex
 ```
 
 ### Build from Source
 
 ```bash
-git clone [https://github.com/starssxhfdmh/sald.git](https://github.com/starssxhfdmh/sald.git)
+git clone https://github.com/starssxhfdmh/sald.git
 cd sald && cargo build --release
-
 ```
 
 ## Quick Start
@@ -72,7 +57,6 @@ sald
 
 # Create new project
 salad new my-project
-
 ```
 
 ## Example
@@ -90,24 +74,23 @@ class Greeter {
 
 let g = Greeter("World")
 g.greet()
-
 ```
 
 ## Benchmarks
 
 <p align="center">
-<img src="bench/benchmark_results.png" alt="Sald vs Python Benchmark" width="700">
+  <img src="bench/benchmark_results.png" alt="Sald vs Python Benchmark" width="700">
 </p>
 
 <p align="center">
-<em>Sald vs Python performance comparison</em>
+  <em>Sald vs Python performance comparison</em>
 </p>
 
 ## Resources
 
-* [Documentation](https://starssxhfdmh.github.io/sald-docs/) — Complete language reference
-* [Package Manager](https://saladpm.vercel.app) — Browse and publish packages
-* [Playground](https://starssxhfdmh.github.io/sald-playground) — Try Sald in your browser
+- [Documentation](https://starssxhfdmh.github.io/sald-docs/) — Complete language reference
+- [Package Manager](https://saladpm.vercel.app) — Browse and publish packages
+- [Playground](https://starssxhfdmh.github.io/sald-playground) — Try Sald in your browser
 
 ## License
 
