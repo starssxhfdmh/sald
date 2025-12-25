@@ -1,8 +1,4 @@
-
-
-
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind};
-
 
 pub fn get_keyword_completions() -> Vec<CompletionItem> {
     let keywords = [
@@ -49,23 +45,20 @@ pub fn get_keyword_completions() -> Vec<CompletionItem> {
         .collect()
 }
 
-
 pub struct BuiltinClass {
     pub name: &'static str,
     pub doc: &'static str,
-    pub methods: &'static [(&'static str, &'static str, &'static str)], 
-    pub properties: &'static [(&'static str, &'static str)],            
+    pub methods: &'static [(&'static str, &'static str, &'static str)],
+    pub properties: &'static [(&'static str, &'static str)],
 }
 
 use super::symbols::{Symbol, SymbolKind};
 use tower_lsp::lsp_types::Range;
 
-
 pub fn get_builtin_symbols() -> Vec<Symbol> {
     BUILTIN_CLASSES
         .iter()
         .map(|cls| {
-            
             let mut children: Vec<Symbol> = cls
                 .methods
                 .iter()
@@ -82,7 +75,6 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
                 })
                 .collect();
 
-            
             children.extend(cls.properties.iter().map(|(name, doc)| Symbol {
                 name: name.to_string(),
                 kind: SymbolKind::Constant,
@@ -109,7 +101,6 @@ pub fn get_builtin_symbols() -> Vec<Symbol> {
         })
         .collect()
 }
-
 
 pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
     BuiltinClass {
@@ -444,13 +435,11 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
         name: "Ffi",
         doc: "Foreign Function Interface for calling native C libraries",
         methods: &[
-            
             (
                 "open",
                 "open(path)",
                 "Load a dynamic library (.dll/.so/.dylib)",
             ),
-            
             ("alloc", "alloc(size)", "Allocate memory"),
             ("free", "free(ptr)", "Free allocated memory"),
             ("memcpy", "memcpy(dest, src, size)", "Copy memory"),
@@ -459,7 +448,6 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
                 "memset(ptr, value, size)",
                 "Fill memory with value",
             ),
-            
             ("readI8", "readI8(ptr)", "Read signed 8-bit integer"),
             ("readU8", "readU8(ptr)", "Read unsigned 8-bit integer"),
             ("readI16", "readI16(ptr)", "Read signed 16-bit integer"),
@@ -476,7 +464,6 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
                 "readString(ptr)",
                 "Read null-terminated C string",
             ),
-            
             (
                 "writeI8",
                 "writeI8(ptr, value)",
@@ -525,10 +512,8 @@ pub static BUILTIN_CLASSES: &[BuiltinClass] = &[
                 "writeString(ptr, value)",
                 "Write null-terminated C string",
             ),
-            
             ("offset", "offset(ptr, bytes)", "Add byte offset to pointer"),
             ("sizeof", "sizeof(type)", "Get size of type in bytes"),
-            
             (
                 "Callback",
                 "Callback({ args, returns, fn })",

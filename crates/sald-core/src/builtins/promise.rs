@@ -1,7 +1,3 @@
-
-
-
-
 use super::check_arity;
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
@@ -19,23 +15,19 @@ pub fn create_promise_class() -> Class {
     Class::new_with_static("Promise", static_methods)
 }
 
-
-
 fn promise_all(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
 
     match &args[0] {
         Value::Array(arr) => {
             let arr_ref = arr.borrow();
-            
+
             let results: Vec<Value> = arr_ref.clone();
             Ok(Value::Array(Rc::new(RefCell::new(results))))
         }
         _ => Err("Promise.all() expects an array".to_string()),
     }
 }
-
-
 
 fn promise_race(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -53,12 +45,10 @@ fn promise_race(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn promise_resolve(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     Ok(args[0].clone())
 }
-
 
 fn promise_reject(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;

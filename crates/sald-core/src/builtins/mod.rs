@@ -1,8 +1,3 @@
-
-
-
-
-
 mod array;
 mod boolean;
 mod console;
@@ -14,7 +9,6 @@ mod number;
 mod regex;
 mod string;
 mod types;
-
 
 #[cfg(not(target_arch = "wasm32"))]
 mod channel;
@@ -43,7 +37,6 @@ use crate::vm::value::Value;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
-
 pub use array::create_array_class;
 pub use boolean::create_boolean_class;
 pub use console::create_console_class;
@@ -56,7 +49,6 @@ pub use regex::create_regex_class;
 pub use string::create_string_class;
 pub use types::create_type_class;
 
-
 #[cfg(not(target_arch = "wasm32"))]
 pub use channel::create_channel_class;
 #[cfg(not(target_arch = "wasm32"))]
@@ -68,7 +60,6 @@ pub use ffi::create_ffi_namespace;
 #[cfg(not(target_arch = "wasm32"))]
 pub use file::create_file_class;
 #[cfg(not(target_arch = "wasm32"))]
-
 #[cfg(not(target_arch = "wasm32"))]
 pub use path::create_path_class;
 #[cfg(not(target_arch = "wasm32"))]
@@ -82,17 +73,13 @@ pub use test::create_test_class;
 #[cfg(not(target_arch = "wasm32"))]
 pub use timer::create_timer_class;
 
-
 pub type NativeStaticFn = fn(&[Value]) -> Result<Value, String>;
 
-
 pub type NativeInstanceFn = fn(&Value, &[Value]) -> Result<Value, String>;
-
 
 pub fn create_builtin_classes() -> FxHashMap<String, Value> {
     let mut classes = FxHashMap::default();
 
-    
     classes.insert(
         "String".to_string(),
         Value::Class(Rc::new(create_string_class())),
@@ -138,7 +125,6 @@ pub fn create_builtin_classes() -> FxHashMap<String, Value> {
         Value::Class(Rc::new(create_regex_class())),
     );
 
-    
     #[cfg(not(target_arch = "wasm32"))]
     {
         classes.insert(
@@ -161,7 +147,7 @@ pub fn create_builtin_classes() -> FxHashMap<String, Value> {
             "Process".to_string(),
             Value::Class(Rc::new(create_process_class())),
         );
-        
+
         classes.insert("Ffi".to_string(), create_ffi_namespace());
         classes.insert(
             "System".to_string(),
@@ -188,7 +174,6 @@ pub fn create_builtin_classes() -> FxHashMap<String, Value> {
     classes
 }
 
-
 pub fn get_builtin_class_name(value: &Value) -> &'static str {
     match value {
         Value::String(_) => "String",
@@ -213,7 +198,6 @@ pub fn get_builtin_class_name(value: &Value) -> &'static str {
     }
 }
 
-
 pub fn check_arity(expected: usize, got: usize) -> Result<(), String> {
     if expected != got {
         Err(format!(
@@ -227,7 +211,6 @@ pub fn check_arity(expected: usize, got: usize) -> Result<(), String> {
     }
 }
 
-
 pub fn check_arity_range(min: usize, max: usize, got: usize) -> Result<(), String> {
     if got < min || got > max {
         Err(format!(
@@ -238,7 +221,6 @@ pub fn check_arity_range(min: usize, max: usize, got: usize) -> Result<(), Strin
         Ok(())
     }
 }
-
 
 pub fn check_arity_min(min: usize, got: usize) -> Result<(), String> {
     if got < min {
@@ -253,7 +235,6 @@ pub fn check_arity_min(min: usize, got: usize) -> Result<(), String> {
     }
 }
 
-
 pub fn get_string_arg(value: &Value, arg_name: &str) -> Result<String, String> {
     match value {
         Value::String(s) => Ok(s.to_string()),
@@ -265,7 +246,6 @@ pub fn get_string_arg(value: &Value, arg_name: &str) -> Result<String, String> {
     }
 }
 
-
 pub fn get_number_arg(value: &Value, arg_name: &str) -> Result<f64, String> {
     match value {
         Value::Number(n) => Ok(*n),
@@ -276,7 +256,6 @@ pub fn get_number_arg(value: &Value, arg_name: &str) -> Result<f64, String> {
         )),
     }
 }
-
 
 pub fn get_bool_arg(value: &Value, arg_name: &str) -> Result<bool, String> {
     match value {

@@ -1,6 +1,3 @@
-
-
-
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
 
@@ -8,7 +5,6 @@ pub fn create_math_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
     let mut static_fields: FxHashMap<String, Value> = FxHashMap::default();
 
-    
     static_methods.insert("abs".to_string(), math_abs);
     static_methods.insert("floor".to_string(), math_floor);
     static_methods.insert("ceil".to_string(), math_ceil);
@@ -28,7 +24,6 @@ pub fn create_math_class() -> Class {
     static_methods.insert("min".to_string(), math_min);
     static_methods.insert("max".to_string(), math_max);
 
-    
     static_fields.insert("PI".to_string(), Value::Number(std::f64::consts::PI));
     static_fields.insert("E".to_string(), Value::Number(std::f64::consts::E));
     static_fields.insert("INFINITY".to_string(), Value::Number(f64::INFINITY));
@@ -139,7 +134,6 @@ fn math_random(_args: &[Value]) -> Result<Value, String> {
 
     #[cfg(target_arch = "wasm32")]
     {
-        
         use getrandom::getrandom;
         let mut buf = [0u8; 8];
         getrandom(&mut buf).map_err(|e| e.to_string())?;

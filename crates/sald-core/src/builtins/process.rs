@@ -1,7 +1,3 @@
-
-
-
-
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -20,16 +16,14 @@ pub fn create_process_class() -> Class {
     Class::new_with_static("Process", static_methods)
 }
 
-
 fn process_args(_args: &[Value]) -> Result<Value, String> {
     let args: Vec<Value> = std::env::args()
-        .skip(1) 
+        .skip(1)
         .map(|s| Value::String(Rc::from(s)))
         .collect();
 
     Ok(Value::Array(Rc::new(RefCell::new(args))))
 }
-
 
 fn process_env(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
@@ -52,7 +46,6 @@ fn process_env(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn process_exit(args: &[Value]) -> Result<Value, String> {
     let code = if args.is_empty() {
         0
@@ -71,7 +64,6 @@ fn process_exit(args: &[Value]) -> Result<Value, String> {
     std::process::exit(code);
 }
 
-
 fn process_exec(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Expected 1 argument but got 0".to_string());
@@ -87,7 +79,6 @@ fn process_exec(args: &[Value]) -> Result<Value, String> {
         }
     };
 
-    
     #[cfg(windows)]
     let output = std::process::Command::new("cmd")
         .args(["/C", &command])
@@ -103,7 +94,6 @@ fn process_exec(args: &[Value]) -> Result<Value, String> {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-            
             if !stdout.is_empty() {
                 Ok(Value::String(Rc::from(stdout)))
             } else if !stderr.is_empty() {
@@ -116,14 +106,12 @@ fn process_exec(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn process_cwd(_args: &[Value]) -> Result<Value, String> {
     match std::env::current_dir() {
         Ok(path) => Ok(Value::String(Rc::from(path.to_string_lossy().to_string()))),
         Err(e) => Err(e.to_string()),
     }
 }
-
 
 fn process_chdir(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {

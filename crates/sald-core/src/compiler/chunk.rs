@@ -1,59 +1,50 @@
-
-
-
 use super::opcode::OpCode;
 use crate::error::Span;
 use std::sync::Arc;
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
     Number(f64),
-    String(Arc<str>), 
+    String(Arc<str>),
     Function(FunctionConstant),
     Class(ClassConstant),
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpvalueInfo {
-    pub index: u8,      
-    pub is_local: bool, 
+    pub index: u8,
+    pub is_local: bool,
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionConstant {
     pub name: String,
     pub arity: usize,
-    pub is_variadic: bool,          
-    pub is_async: bool,             
-    pub upvalue_count: usize,       
-    pub upvalues: Vec<UpvalueInfo>, 
+    pub is_variadic: bool,
+    pub is_async: bool,
+    pub upvalue_count: usize,
+    pub upvalues: Vec<UpvalueInfo>,
     pub chunk: Chunk,
-    pub file: String,                      
-    pub param_names: Vec<String>,          
-    pub default_count: usize,              
-    pub decorators: Vec<String>,           
-    pub namespace_context: Option<String>, 
-    pub class_context: Option<String>, 
+    pub file: String,
+    pub param_names: Vec<String>,
+    pub default_count: usize,
+    pub decorators: Vec<String>,
+    pub namespace_context: Option<String>,
+    pub class_context: Option<String>,
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassConstant {
     pub name: String,
-    pub methods: Vec<(String, usize, bool)>, 
+    pub methods: Vec<(String, usize, bool)>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Chunk {
-    
     pub code: Vec<u8>,
-    
+
     pub constants: Vec<Constant>,
-    
+
     pub spans: Vec<Span>,
 }
 
@@ -66,30 +57,25 @@ impl Chunk {
         }
     }
 
-    
     pub fn write(&mut self, byte: u8, span: Span) {
         self.code.push(byte);
         self.spans.push(span);
     }
 
-    
     pub fn write_op(&mut self, op: OpCode, span: Span) {
         self.write(op as u8, span);
     }
 
-    
     pub fn write_u16(&mut self, value: u16, span: Span) {
         self.write((value >> 8) as u8, span);
         self.write((value & 0xFF) as u8, span);
     }
 
-    
     pub fn add_constant(&mut self, constant: Constant) -> usize {
         self.constants.push(constant);
         self.constants.len() - 1
     }
 
-    
     pub fn write_constant(&mut self, constant: Constant, span: Span) -> usize {
         let index = self.add_constant(constant);
         self.write_op(OpCode::Constant, span);
@@ -97,24 +83,20 @@ impl Chunk {
         index
     }
 
-    
     pub fn current_offset(&self) -> usize {
         self.code.len()
     }
 
-    
     pub fn patch_jump(&mut self, offset: usize) {
         let jump = self.code.len() - offset - 2;
         self.code[offset] = (jump >> 8) as u8;
         self.code[offset + 1] = (jump & 0xFF) as u8;
     }
 
-    
     pub fn read_u16(&self, offset: usize) -> u16 {
         ((self.code[offset] as u16) << 8) | (self.code[offset + 1] as u16)
     }
 
-    
     pub fn get_span(&self, offset: usize) -> Span {
         if offset < self.spans.len() {
             self.spans[offset]
@@ -123,17 +105,14 @@ impl Chunk {
         }
     }
 
-    
     pub fn get_line(&self, offset: usize) -> usize {
         self.get_span(offset).start.line
     }
 
-    
     pub fn disassemble(&self, name: &str) {
         self.disassemble_with_indent(name, 0);
     }
 
-    
     fn disassemble_with_indent(&self, name: &str, indent: usize) {
         let prefix = "  ".repeat(indent);
 
@@ -163,7 +142,6 @@ impl Chunk {
             println!("{}└────────────", prefix);
         }
 
-        
         for constant in &self.constants {
             if let Constant::Function(f) = constant {
                 f.chunk
@@ -172,17 +150,15 @@ impl Chunk {
         }
     }
 
-    
     fn strip_ansi_codes(s: &str) -> String {
         let mut result = String::new();
         let mut chars = s.chars().peekable();
 
         while let Some(c) = chars.next() {
             if c == '\x1b' {
-                
                 if chars.peek() == Some(&'[') {
-                    chars.next(); 
-                                  
+                    chars.next();
+
                     while let Some(&nc) = chars.peek() {
                         chars.next();
                         if nc.is_ascii_alphabetic() {
@@ -207,9 +183,8 @@ impl Chunk {
                 }
             }
             Some(Constant::String(s)) => {
-                
                 let clean = Self::strip_ansi_codes(s);
-                
+
                 let char_count = clean.chars().count();
                 if char_count > 32 {
                     let truncated: String = clean.chars().take(29).collect();
@@ -228,7 +203,6 @@ impl Chunk {
         let prefix = "  ".repeat(indent);
         let span = self.get_span(offset);
 
-        
         if offset > 0 && span.start.line == self.get_span(offset - 1).start.line {
             print!("{}{:04}      ", prefix, offset);
         } else {
@@ -237,7 +211,6 @@ impl Chunk {
 
         let instruction = OpCode::from(self.code[offset]);
         match instruction {
-            
             OpCode::Constant => {
                 let idx = self.read_u16(offset + 1) as usize;
                 println!("const          {}", self.format_constant(idx));
@@ -256,7 +229,6 @@ impl Chunk {
                 offset + 1
             }
 
-            
             OpCode::DefineGlobal => {
                 let idx = self.read_u16(offset + 1) as usize;
                 println!("def_global     {}", self.format_constant(idx));
@@ -273,7 +245,6 @@ impl Chunk {
                 offset + 3
             }
 
-            
             OpCode::GetLocal => {
                 let slot = self.read_u16(offset + 1);
                 println!("get_local      [{}]", slot);
@@ -285,7 +256,6 @@ impl Chunk {
                 offset + 3
             }
 
-            
             OpCode::GetUpvalue => {
                 let slot = self.read_u16(offset + 1);
                 println!("get_upvalue    [{}]", slot);
@@ -301,13 +271,11 @@ impl Chunk {
                 offset + 1
             }
 
-            
             OpCode::Pop => {
                 println!("pop");
                 offset + 1
             }
 
-            
             OpCode::Add => {
                 println!("add");
                 offset + 1
@@ -333,7 +301,6 @@ impl Chunk {
                 offset + 1
             }
 
-            
             OpCode::Not => {
                 println!("not");
                 offset + 1
@@ -363,7 +330,6 @@ impl Chunk {
                 offset + 1
             }
 
-            
             OpCode::Jump => {
                 let jump = self.read_u16(offset + 1);
                 println!("jmp            @{}", offset + 3 + jump as usize);
@@ -385,7 +351,6 @@ impl Chunk {
                 offset + 3
             }
 
-            
             OpCode::Call => {
                 let argc = self.read_u16(offset + 1);
                 println!("call           ({})", argc);
@@ -401,7 +366,6 @@ impl Chunk {
                 offset + 3
             }
 
-            
             OpCode::Class => {
                 let idx = self.read_u16(offset + 1) as usize;
                 println!("class          {}", self.format_constant(idx));
@@ -438,7 +402,6 @@ impl Chunk {
                 offset + 5
             }
 
-            
             OpCode::Inherit => {
                 let idx = self.read_u16(offset + 1) as usize;
                 println!("inherit        {}", self.format_constant(idx));
@@ -450,7 +413,6 @@ impl Chunk {
                 offset + 3
             }
 
-            
             OpCode::BuildArray => {
                 let count = self.read_u16(offset + 1);
                 println!("build_array    [{}]", count);
@@ -470,7 +432,6 @@ impl Chunk {
                 offset + 1
             }
 
-            
             OpCode::Import => {
                 let idx = self.read_u16(offset + 1) as usize;
                 println!("import         {}", self.format_constant(idx));
@@ -487,7 +448,6 @@ impl Chunk {
                 offset + 5
             }
 
-            
             OpCode::TryStart => {
                 let catch_offset = self.read_u16(offset + 1);
                 println!(
@@ -505,9 +465,7 @@ impl Chunk {
                 offset + 1
             }
 
-            
             _ => {
-                
                 let name = format!("{:?}", instruction).to_lowercase();
                 println!("{}", name);
                 offset + 1 + instruction.operand_count()

@@ -1,28 +1,22 @@
-
-
 use crate::error::Span;
 use std::fmt;
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    
     Number(f64),
     String(String),
-    
-    FormatStringStart(String), 
-    FormatStringPart(String), 
-    FormatStringEnd(String),  
-    
+
+    FormatStringStart(String),
+    FormatStringPart(String),
+    FormatStringEnd(String),
+
     RawString(String),
     True,
     False,
     Null,
 
-    
     Identifier(String),
 
-    
     Let,
     If,
     Else,
@@ -33,7 +27,7 @@ pub enum TokenKind {
     Class,
     For,
     In,
-    SelfKeyword, 
+    SelfKeyword,
     Break,
     Continue,
     Extends,
@@ -47,70 +41,63 @@ pub enum TokenKind {
     Default,
     Async,
     Await,
-    Namespace,  
-    Const,      
-    Enum,       
-    Interface,  
-    Implements, 
+    Namespace,
+    Const,
+    Enum,
+    Interface,
+    Implements,
 
-    
-    ThinArrow, 
-    Plus,      
-    Minus,     
-    Star,      
-    Slash,     
-    Percent,   
+    ThinArrow,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
 
-    
-    Equal,        
-    EqualEqual,   
-    Bang,         
-    BangEqual,    
-    Less,         
-    LessEqual,    
-    Greater,      
-    GreaterEqual, 
+    Equal,
+    EqualEqual,
+    Bang,
+    BangEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 
-    
-    And, 
-    Or,  
+    And,
+    Or,
 
-    
-    PlusEqual,    
-    MinusEqual,   
-    StarEqual,    
-    SlashEqual,   
-    PercentEqual, 
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
 
-    
-    LeftParen,        
-    RightParen,       
-    LeftBrace,        
-    RightBrace,       
-    LeftBracket,      
-    RightBracket,     
-    Comma,            
-    Dot,              
-    DotDot,           
-    DotDotLess,       
-    DotDotDot,        
-    Semicolon,        
-    Colon,            
-    Question,         
-    QuestionQuestion, 
-    QuestionDot,      
-    Pipe,             
-    Arrow,            
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    LeftBracket,
+    RightBracket,
+    Comma,
+    Dot,
+    DotDot,
+    DotDotLess,
+    DotDotDot,
+    Semicolon,
+    Colon,
+    Question,
+    QuestionQuestion,
+    QuestionDot,
+    Pipe,
+    Arrow,
 
-    
-    Ampersand,      
-    Caret,          
-    Tilde,          
-    LessLess,       
-    GreaterGreater, 
+    Ampersand,
+    Caret,
+    Tilde,
+    LessLess,
+    GreaterGreater,
 
-    
-    At, 
+    At,
     Newline,
     Eof,
 }
@@ -207,7 +194,6 @@ impl fmt::Display for TokenKind {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Token {

@@ -1776,7 +1776,7 @@ checksum = "62049b2877bf12821e8f9ad256ee38fdc31db7387ec2d3b3f403024de2034aea"
 
 [[package]]
 name = "salad"
-version = "0.3.13"
+version = "0.4.0"
 dependencies = [
  "clap",
  "colored",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "sald-cli"
-version = "0.3.13"
+version = "0.4.0"
 dependencies = [
  "clap",
  "colored",
@@ -1807,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "sald-core"
-version = "0.3.13"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "sald-lsp"
-version = "0.3.13"
+version = "0.4.0"
 dependencies = [
  "dashmap",
  "parking_lot",

@@ -1,13 +1,9 @@
-
-
-
 use super::chunk::{Chunk, Constant, FunctionConstant, UpvalueInfo};
 use super::opcode::OpCode;
 use crate::ast::*;
 use crate::error::{SaldError, SaldResult, Span};
 use crate::vm::interner::intern;
 use rustc_hash::FxHashMap;
-
 
 #[derive(Debug, Clone)]
 enum FoldedValue {
@@ -16,35 +12,32 @@ enum FoldedValue {
     String(String),
 }
 
-
 #[derive(Debug, Clone)]
 struct Local {
     name: String,
     depth: usize,
     initialized: bool,
-    is_captured: bool, 
+    is_captured: bool,
 }
-
 
 #[derive(Debug, Clone)]
 struct Upvalue {
-    index: usize,   
-    is_local: bool, 
+    index: usize,
+    is_local: bool,
 }
-
 
 struct FunctionScope {
     chunk: Chunk,
     locals: Vec<Local>,
-    upvalues: Vec<Upvalue>, 
+    upvalues: Vec<Upvalue>,
     scope_depth: usize,
-    
+
     loop_starts: Vec<usize>,
-    
+
     break_jumps: Vec<Vec<usize>>,
-    
+
     loop_scope_depths: Vec<usize>,
-    
+
     function_name: Option<String>,
 }
 
@@ -61,7 +54,6 @@ impl FunctionScope {
             function_name: None,
         };
 
-        
         if is_method {
             scope.locals.push(Local {
                 name: "self".to_string(),
@@ -81,7 +73,6 @@ impl FunctionScope {
         scope
     }
 }
-
 
 pub struct Compiler {
     scopes: Vec<FunctionScope>,
@@ -108,13 +99,11 @@ impl Compiler {
         }
     }
 
-    
     pub fn compile(&mut self, program: &Program) -> SaldResult<Chunk> {
         for stmt in &program.statements {
             self.compile_stmt(stmt)?;
         }
 
-        
         self.emit_op(OpCode::Null, Span::default());
         self.emit_op(OpCode::Return, Span::default());
 
@@ -129,24 +118,20 @@ impl Compiler {
         }
     }
 
-    
     pub fn compile_repl(&mut self, program: &Program) -> SaldResult<Chunk> {
         let stmts = &program.statements;
 
-        
         for (i, stmt) in stmts.iter().enumerate() {
             let is_last = i == stmts.len() - 1;
 
             if is_last {
-                
                 match stmt {
                     Stmt::Expression { expr, .. } => {
                         self.compile_expr(expr)?;
-                        
                     }
                     _ => {
                         self.compile_stmt(stmt)?;
-                        
+
                         self.emit_op(OpCode::Null, Span::default());
                     }
                 }
@@ -155,7 +140,6 @@ impl Compiler {
             }
         }
 
-        
         if stmts.is_empty() {
             self.emit_op(OpCode::Null, Span::default());
         }
@@ -184,8 +168,6 @@ impl Compiler {
     fn current_chunk(&mut self) -> &mut Chunk {
         &mut self.current_scope_mut().chunk
     }
-
-    
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> SaldResult<()> {
         match stmt {
@@ -300,11 +282,8 @@ impl Compiler {
         initializer: Option<&Expr>,
         span: Span,
     ) -> SaldResult<()> {
-        
-
-        
         if name.starts_with("self.") {
-            let property = &name[5..]; 
+            let property = &name[5..];
             self.emit_op(OpCode::GetSelf, span);
 
             if let Some(init) = initializer {
@@ -329,11 +308,9 @@ impl Compiler {
         }
 
         if self.current_scope().scope_depth > 0 {
-            
             self.declare_local(name, span)?;
             self.mark_initialized();
         } else {
-            
             let const_idx = self
                 .current_chunk()
                 .add_constant(Constant::String(intern(&name.to_string())));
@@ -352,28 +329,24 @@ impl Compiler {
     ) -> SaldResult<()> {
         use crate::ast::ArrayPatternElement;
 
-        
         self.compile_expr(initializer)?;
 
-        
         for (i, elem) in pattern.elements.iter().enumerate() {
             match elem {
                 ArrayPatternElement::Variable {
                     name,
                     span: var_span,
                 } => {
-                    
                     self.emit_op(OpCode::Dup, span);
-                    
+
                     let idx_const = self
                         .current_chunk()
                         .add_constant(Constant::Number(i as f64));
                     self.emit_op(OpCode::Constant, span);
                     self.emit_u16(idx_const as u16, span);
-                    
+
                     self.emit_op(OpCode::GetIndex, span);
 
-                    
                     if self.current_scope().scope_depth > 0 {
                         self.declare_local(name, *var_span)?;
                         self.mark_initialized();
@@ -389,26 +362,21 @@ impl Compiler {
                     name,
                     span: var_span,
                 } => {
-                    
-                    
                     self.emit_op(OpCode::Dup, span);
-                    
+
                     let start_const = self
                         .current_chunk()
                         .add_constant(Constant::Number(i as f64));
                     self.emit_op(OpCode::Constant, span);
                     self.emit_u16(start_const as u16, span);
-                    
-                    
-                    
+
                     let slice_name = self
                         .current_chunk()
                         .add_constant(Constant::String(intern(&"slice".to_string())));
                     self.emit_op(OpCode::Invoke, span);
                     self.emit_u16(slice_name as u16, span);
-                    self.emit_u16(1, span); 
+                    self.emit_u16(1, span);
 
-                    
                     if self.current_scope().scope_depth > 0 {
                         self.declare_local(name, *var_span)?;
                         self.mark_initialized();
@@ -420,13 +388,10 @@ impl Compiler {
                         self.emit_u16(const_idx as u16, span);
                     }
                 }
-                ArrayPatternElement::Hole => {
-                    
-                }
+                ArrayPatternElement::Hole => {}
             }
         }
 
-        
         self.emit_op(OpCode::Pop, span);
 
         Ok(())
@@ -439,19 +404,17 @@ impl Compiler {
         else_branch: Option<&Stmt>,
         span: Span,
     ) -> SaldResult<()> {
-        
-
         self.compile_expr(condition)?;
 
         let then_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-        self.emit_op(OpCode::Pop, span); 
+        self.emit_op(OpCode::Pop, span);
 
         self.compile_stmt(then_branch)?;
 
         let else_jump = self.emit_jump(OpCode::Jump, span);
 
         self.patch_jump(then_jump);
-        self.emit_op(OpCode::Pop, span); 
+        self.emit_op(OpCode::Pop, span);
 
         if let Some(else_stmt) = else_branch {
             self.compile_stmt(else_stmt)?;
@@ -463,11 +426,8 @@ impl Compiler {
     }
 
     fn compile_while(&mut self, condition: &Expr, body: &Stmt, span: Span) -> SaldResult<()> {
-        
         let loop_start = self.current_chunk().current_offset();
 
-        
-        
         let entry_scope_depth = self.current_scope().scope_depth;
         self.current_scope_mut().loop_starts.push(loop_start);
         self.current_scope_mut().break_jumps.push(Vec::new());
@@ -487,7 +447,6 @@ impl Compiler {
         self.patch_jump(exit_jump);
         self.emit_op(OpCode::Pop, span);
 
-        
         self.current_scope_mut().loop_starts.pop();
         self.current_scope_mut().loop_scope_depths.pop();
         let break_jumps = self
@@ -503,7 +462,6 @@ impl Compiler {
     }
 
     fn compile_do_while(&mut self, body: &Stmt, condition: &Expr, span: Span) -> SaldResult<()> {
-        
         let loop_start = self.current_chunk().current_offset();
 
         self.compile_stmt(body)?;
@@ -521,22 +479,6 @@ impl Compiler {
         Ok(())
     }
 
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
     fn compile_for(
         &mut self,
         variable: &str,
@@ -544,33 +486,24 @@ impl Compiler {
         body: &Stmt,
         span: Span,
     ) -> SaldResult<()> {
-        
-
-        
         self.begin_scope();
 
-        
         self.compile_expr(iterable)?;
         self.declare_local("__iter", span)?;
         self.mark_initialized();
 
-        
         self.emit_op(OpCode::Constant, span);
         let zero_const = self.current_chunk().add_constant(Constant::Number(0.0));
         self.emit_u16(zero_const as u16, span);
         self.declare_local("__idx", span)?;
         self.mark_initialized();
 
-        
         self.emit_op(OpCode::Null, span);
         self.declare_local(variable, span)?;
         self.mark_initialized();
 
-        
         let loop_start = self.current_chunk().current_offset();
 
-        
-        
         let entry_scope_depth = self.current_scope().scope_depth;
         self.current_scope_mut().loop_starts.push(loop_start);
         self.current_scope_mut().break_jumps.push(Vec::new());
@@ -578,86 +511,67 @@ impl Compiler {
             .loop_scope_depths
             .push(entry_scope_depth);
 
-        
-        
         if let Some(idx_slot) = self.resolve_local("__idx") {
             self.emit_op(OpCode::GetLocal, span);
             self.emit_u16(idx_slot as u16, span);
         }
 
-        
         if let Some(iter_slot) = self.resolve_local("__iter") {
             self.emit_op(OpCode::GetLocal, span);
             self.emit_u16(iter_slot as u16, span);
 
-            
             let length_const = self
                 .current_chunk()
                 .add_constant(Constant::String(intern(&"length".to_string())));
             self.emit_op(OpCode::Invoke, span);
             self.emit_u16(length_const as u16, span);
-            self.emit_u16(0, span); 
+            self.emit_u16(0, span);
         }
 
-        
         self.emit_op(OpCode::Less, span);
 
-        
         let exit_jump = self.emit_jump(OpCode::JumpIfFalse, span);
         self.emit_op(OpCode::Pop, span);
 
-        
-        
         if let Some(iter_slot) = self.resolve_local("__iter") {
             self.emit_op(OpCode::GetLocal, span);
             self.emit_u16(iter_slot as u16, span);
         }
 
-        
         if let Some(idx_slot) = self.resolve_local("__idx") {
             self.emit_op(OpCode::GetLocal, span);
             self.emit_u16(idx_slot as u16, span);
         }
 
-        
         self.emit_op(OpCode::GetIndex, span);
 
-        
         if let Some(var_slot) = self.resolve_local(variable) {
             self.emit_op(OpCode::SetLocal, span);
             self.emit_u16(var_slot as u16, span);
             self.emit_op(OpCode::Pop, span);
         }
 
-        
         self.compile_stmt(body)?;
 
-        
         if let Some(idx_slot) = self.resolve_local("__idx") {
-            
             self.emit_op(OpCode::GetLocal, span);
             self.emit_u16(idx_slot as u16, span);
 
-            
             let one_const = self.current_chunk().add_constant(Constant::Number(1.0));
             self.emit_op(OpCode::Constant, span);
             self.emit_u16(one_const as u16, span);
             self.emit_op(OpCode::Add, span);
 
-            
             self.emit_op(OpCode::SetLocal, span);
             self.emit_u16(idx_slot as u16, span);
             self.emit_op(OpCode::Pop, span);
         }
 
-        
         self.emit_loop(loop_start, span);
 
-        
         self.patch_jump(exit_jump);
         self.emit_op(OpCode::Pop, span);
 
-        
         self.current_scope_mut().loop_starts.pop();
         self.current_scope_mut().loop_scope_depths.pop();
         let break_jumps = self
@@ -677,19 +591,14 @@ impl Compiler {
     fn compile_function(&mut self, def: &FunctionDef, as_method: bool) -> SaldResult<()> {
         let func_span = def.span;
 
-        
         self.scopes.push(FunctionScope::new(as_method));
 
-        
-        
         if !as_method {
             self.current_scope_mut().function_name = Some(def.name.clone());
         }
 
         self.begin_scope();
 
-        
-        
         for (i, param) in def.params.iter().enumerate() {
             if as_method && !def.is_static && i == 0 && param.name == "self" {
                 continue;
@@ -698,39 +607,28 @@ impl Compiler {
             self.mark_initialized();
         }
 
-        
-        
         for param in def.params.iter() {
             if let Some(ref default_expr) = param.default_value {
-                
                 let local_slot = self
                     .resolve_local(&param.name)
                     .expect("Parameter should be defined as local");
 
-                
                 self.emit_op(OpCode::GetLocal, param.span);
                 self.emit_u16(local_slot as u16, param.span);
 
-                
                 let skip_jump = self.emit_jump(OpCode::JumpIfNotNull, param.span);
 
-                
                 self.emit_op(OpCode::Pop, param.span);
 
-                
                 self.compile_expr(default_expr)?;
 
-                
                 self.emit_op(OpCode::SetLocal, param.span);
                 self.emit_u16(local_slot as u16, param.span);
 
-                
                 self.emit_op(OpCode::Pop, param.span);
 
-                
                 let after_default = self.emit_jump(OpCode::Jump, param.span);
 
-                
                 self.patch_jump(skip_jump);
                 self.emit_op(OpCode::Pop, param.span);
 
@@ -738,22 +636,16 @@ impl Compiler {
             }
         }
 
-        
         for stmt in &def.body {
             self.compile_stmt(stmt)?;
         }
 
-        
         self.emit_op(OpCode::Null, func_span);
         self.emit_op(OpCode::Return, func_span);
 
-        
         let func_scope = self.scopes.pop().unwrap();
 
-        
-        
         let arity = if as_method && !def.is_static {
-            
             if def.params.first().map(|p| p.name.as_str()) == Some("self") {
                 def.params.len().saturating_sub(1)
             } else {
@@ -763,10 +655,8 @@ impl Compiler {
             def.params.len()
         };
 
-        
         let is_variadic = def.params.last().map(|p| p.is_variadic).unwrap_or(false);
 
-        
         let upvalues: Vec<UpvalueInfo> = func_scope
             .upvalues
             .iter()
@@ -799,7 +689,6 @@ impl Compiler {
         let const_idx = self.current_chunk().add_constant(func_const);
 
         if as_method {
-            
             if def.is_static {
                 self.emit_op(OpCode::StaticMethod, func_span);
             } else {
@@ -807,20 +696,15 @@ impl Compiler {
             }
             self.emit_u16(const_idx as u16, func_span);
         } else {
-            
             let user_decorators: Vec<_> = def.decorators.iter().collect();
 
-            
-            
             for decorator in &user_decorators {
-                
                 let decorator_name_const = self
                     .current_chunk()
                     .add_constant(Constant::String(intern(&decorator.name.clone())));
                 self.emit_op(OpCode::GetGlobal, func_span);
                 self.emit_u16(decorator_name_const as u16, func_span);
 
-                
                 if !decorator.args.is_empty() {
                     for arg in &decorator.args {
                         self.compile_expr(arg)?;
@@ -830,15 +714,9 @@ impl Compiler {
                 }
             }
 
-            
-            
             self.emit_op(OpCode::Closure, func_span);
             self.emit_u16(const_idx as u16, func_span);
 
-            
-            
-            
-            
             for _ in &user_decorators {
                 self.emit_op(OpCode::Call, func_span);
                 self.emit_u16(1, func_span);
@@ -857,8 +735,6 @@ impl Compiler {
     }
 
     fn compile_return(&mut self, value: Option<&Expr>, span: Span) -> SaldResult<()> {
-        
-
         if let Some(expr) = value {
             self.compile_expr(expr)?;
         } else {
@@ -873,11 +749,9 @@ impl Compiler {
         let class_span = def.span;
         self.class_depth += 1;
 
-        
         let previous_class = self.current_class.clone();
         self.current_class = Some(def.name.clone());
 
-        
         for interface_name in &def.implements {
             if let Some(interface_def) = self.interfaces.get(interface_name).cloned() {
                 self.validate_interface_implementation(def, &interface_def)?;
@@ -891,35 +765,27 @@ impl Compiler {
             }
         }
 
-        
         let name_const = self
             .current_chunk()
             .add_constant(Constant::String(intern(&def.name.clone())));
         self.emit_op(OpCode::Class, class_span);
         self.emit_u16(name_const as u16, class_span);
 
-        
-
-        
         if let Some(superclass) = &def.superclass {
-            
             let super_const = self
                 .current_chunk()
                 .add_constant(Constant::String(intern(&superclass.clone())));
             self.emit_op(OpCode::GetGlobal, class_span);
             self.emit_u16(super_const as u16, class_span);
 
-            
             self.emit_op(OpCode::Inherit, class_span);
             self.emit_u16(0, class_span);
         }
 
-        
         for method in &def.methods {
             self.compile_function(method, true)?;
         }
 
-        
         let name_const2 = self
             .current_chunk()
             .add_constant(Constant::String(intern(&def.name.clone())));
@@ -928,29 +794,23 @@ impl Compiler {
 
         self.class_depth -= 1;
 
-        
         self.current_class = previous_class;
 
         Ok(())
     }
 
-    
     fn compile_interface(&mut self, def: &InterfaceDef) -> SaldResult<()> {
-        
         self.interfaces.insert(def.name.clone(), def.clone());
 
-        
         Ok(())
     }
 
-    
     fn validate_interface_implementation(
         &self,
         class_def: &ClassDef,
         interface_def: &InterfaceDef,
     ) -> SaldResult<()> {
         for interface_method in &interface_def.methods {
-            
             let class_method = class_def
                 .methods
                 .iter()
@@ -958,7 +818,6 @@ impl Compiler {
 
             match class_method {
                 None => {
-                    
                     let param_list: Vec<&str> = interface_method
                         .params
                         .iter()
@@ -981,7 +840,6 @@ impl Compiler {
                     )));
                 }
                 Some(method) => {
-                    
                     let interface_param_count = interface_method
                         .params
                         .iter()
@@ -1018,30 +876,20 @@ impl Compiler {
         catch_body: &Stmt,
         span: Span,
     ) -> SaldResult<()> {
-        
-
-        
         self.emit_op(OpCode::TryStart, span);
         let catch_jump = self.current_chunk().current_offset();
-        self.emit_u16(0, span); 
+        self.emit_u16(0, span);
 
-        
         self.compile_stmt(try_body)?;
 
-        
         self.emit_op(OpCode::TryEnd, span);
 
-        
         let end_jump = self.emit_jump(OpCode::Jump, span);
 
-        
         self.current_chunk().patch_jump(catch_jump);
 
-        
-        
         self.begin_scope();
 
-        
         let depth = self.current_scope().scope_depth;
         self.current_scope_mut().locals.push(Local {
             name: catch_var.to_string(),
@@ -1050,35 +898,26 @@ impl Compiler {
             is_captured: false,
         });
 
-        
         self.compile_stmt(catch_body)?;
 
         self.end_scope();
 
-        
         self.patch_jump(end_jump);
 
         Ok(())
     }
 
     fn compile_throw(&mut self, value: &Expr, span: Span) -> SaldResult<()> {
-        
-
-        
         self.compile_expr(value)?;
 
-        
         self.emit_op(OpCode::Throw, span);
 
         Ok(())
     }
 
-    
-    
     fn compile_const(&mut self, name: &str, value: &Expr, span: Span) -> SaldResult<()> {
         self.compile_expr(value)?;
 
-        
         let const_idx = self
             .current_chunk()
             .add_constant(Constant::String(intern(&name.to_string())));
@@ -1088,23 +927,9 @@ impl Compiler {
         Ok(())
     }
 
-    
-    
-    
-    
-    
-    
-    
-    
     fn compile_namespace(&mut self, name: &str, body: &[Stmt], span: Span) -> SaldResult<()> {
-        
-        
-        
-        
-
         let func_name = format!("<namespace {}>", name);
 
-        
         let previous_namespace = self.current_namespace.clone();
         let full_namespace_name = match &previous_namespace {
             Some(parent) => format!("{}.{}", parent, name),
@@ -1112,14 +937,11 @@ impl Compiler {
         };
         self.current_namespace = Some(full_namespace_name.clone());
 
-        
         self.scopes.push(FunctionScope::new(false));
         self.begin_scope();
 
-        
         let mut namespace_vars: Vec<(String, Span)> = Vec::new();
 
-        
         for stmt in body {
             match stmt {
                 Stmt::Let {
@@ -1151,18 +973,15 @@ impl Compiler {
             }
         }
 
-        
         let mut member_count = 0;
 
-        
         for (var_name, var_span) in &namespace_vars {
-            
             let key_idx = self
                 .current_chunk()
                 .add_constant(Constant::String(intern(&var_name.clone())));
             self.emit_op(OpCode::Constant, *var_span);
             self.emit_u16(key_idx as u16, *var_span);
-            
+
             if let Some(slot) = self.resolve_local(var_name) {
                 self.emit_op(OpCode::GetLocal, *var_span);
                 self.emit_u16(slot as u16, *var_span);
@@ -1170,28 +989,25 @@ impl Compiler {
             member_count += 1;
         }
 
-        
         for stmt in body {
             match stmt {
                 Stmt::Function { def } => {
-                    
                     let key_idx = self
                         .current_chunk()
                         .add_constant(Constant::String(intern(&def.name.clone())));
                     self.emit_op(OpCode::Constant, def.span);
                     self.emit_u16(key_idx as u16, def.span);
-                    
+
                     self.compile_namespace_function(def)?;
                     member_count += 1;
                 }
                 Stmt::Class { def } => {
-                    
                     let key_idx = self
                         .current_chunk()
                         .add_constant(Constant::String(intern(&def.name.clone())));
                     self.emit_op(OpCode::Constant, def.span);
                     self.emit_u16(key_idx as u16, def.span);
-                    
+
                     self.compile_namespace_class(def)?;
                     member_count += 1;
                 }
@@ -1200,13 +1016,12 @@ impl Compiler {
                     body: ns_body,
                     span: ns_span,
                 } => {
-                    
                     let key_idx = self
                         .current_chunk()
                         .add_constant(Constant::String(intern(&ns_name.clone())));
                     self.emit_op(OpCode::Constant, *ns_span);
                     self.emit_u16(key_idx as u16, *ns_span);
-                    
+
                     self.compile_namespace_inner(ns_name, ns_body, *ns_span)?;
                     member_count += 1;
                 }
@@ -1215,33 +1030,28 @@ impl Compiler {
                     variants,
                     span: enum_span,
                 } => {
-                    
                     let key_idx = self
                         .current_chunk()
                         .add_constant(Constant::String(intern(&enum_name.clone())));
                     self.emit_op(OpCode::Constant, *enum_span);
                     self.emit_u16(key_idx as u16, *enum_span);
-                    
+
                     self.compile_enum_inner(enum_name, variants, *enum_span)?;
                     member_count += 1;
                 }
-                
+
                 Stmt::Let { .. } | Stmt::Const { .. } => {}
                 _ => {}
             }
         }
 
-        
         self.emit_op(OpCode::BuildNamespace, span);
         self.emit_u16(member_count as u16, span);
 
-        
         self.emit_op(OpCode::Return, span);
 
-        
         let func_scope = self.scopes.pop().unwrap();
 
-        
         let upvalues: Vec<UpvalueInfo> = func_scope
             .upvalues
             .iter()
@@ -1251,7 +1061,6 @@ impl Compiler {
             })
             .collect();
 
-        
         let func_const = Constant::Function(FunctionConstant {
             name: func_name,
             arity: 0,
@@ -1268,34 +1077,27 @@ impl Compiler {
             class_context: None,
         });
 
-        
         let const_idx = self.current_chunk().add_constant(func_const);
         self.emit_op(OpCode::Closure, span);
         self.emit_u16(const_idx as u16, span);
 
-        
         self.emit_op(OpCode::Call, span);
         self.emit_u16(0, span);
 
-        
         let name_idx = self
             .current_chunk()
             .add_constant(Constant::String(intern(&name.to_string())));
         self.emit_op(OpCode::DefineGlobal, span);
         self.emit_u16(name_idx as u16, span);
 
-        
         self.current_namespace = previous_namespace;
 
         Ok(())
     }
 
-    
     fn compile_namespace_inner(&mut self, name: &str, body: &[Stmt], span: Span) -> SaldResult<()> {
-        
         let func_name = format!("<namespace {}>", name);
 
-        
         let previous_namespace = self.current_namespace.clone();
         let full_namespace_name = match &previous_namespace {
             Some(parent) => format!("{}.{}", parent, name),
@@ -1303,14 +1105,11 @@ impl Compiler {
         };
         self.current_namespace = Some(full_namespace_name.clone());
 
-        
         self.scopes.push(FunctionScope::new(false));
         self.begin_scope();
 
-        
         let mut namespace_vars: Vec<(String, Span)> = Vec::new();
 
-        
         for stmt in body {
             match stmt {
                 Stmt::Let {
@@ -1342,10 +1141,8 @@ impl Compiler {
             }
         }
 
-        
         let mut member_count = 0;
 
-        
         for (var_name, var_span) in &namespace_vars {
             let key_idx = self
                 .current_chunk()
@@ -1359,7 +1156,6 @@ impl Compiler {
             member_count += 1;
         }
 
-        
         for stmt in body {
             match stmt {
                 Stmt::Function { def } => {
@@ -1406,23 +1202,19 @@ impl Compiler {
                     self.compile_enum_inner(enum_name, variants, *enum_span)?;
                     member_count += 1;
                 }
-                
+
                 Stmt::Let { .. } | Stmt::Const { .. } => {}
                 _ => {}
             }
         }
 
-        
         self.emit_op(OpCode::BuildNamespace, span);
         self.emit_u16(member_count as u16, span);
 
-        
         self.emit_op(OpCode::Return, span);
 
-        
         let func_scope = self.scopes.pop().unwrap();
 
-        
         let upvalues: Vec<UpvalueInfo> = func_scope
             .upvalues
             .iter()
@@ -1432,7 +1224,6 @@ impl Compiler {
             })
             .collect();
 
-        
         let func_const = Constant::Function(FunctionConstant {
             name: func_name,
             arity: 0,
@@ -1449,22 +1240,18 @@ impl Compiler {
             class_context: None,
         });
 
-        
         let const_idx = self.current_chunk().add_constant(func_const);
         self.emit_op(OpCode::Closure, span);
         self.emit_u16(const_idx as u16, span);
 
-        
         self.emit_op(OpCode::Call, span);
         self.emit_u16(0, span);
 
-        
         self.current_namespace = previous_namespace;
 
         Ok(())
     }
 
-    
     fn compile_namespace_function(&mut self, def: &FunctionDef) -> SaldResult<()> {
         let func_span = def.span;
 
@@ -1476,39 +1263,28 @@ impl Compiler {
             self.mark_initialized();
         }
 
-        
-        
         for param in def.params.iter() {
             if let Some(ref default_expr) = param.default_value {
-                
                 let local_slot = self
                     .resolve_local(&param.name)
                     .expect("Parameter should be defined as local");
 
-                
                 self.emit_op(OpCode::GetLocal, param.span);
                 self.emit_u16(local_slot as u16, param.span);
 
-                
                 let skip_jump = self.emit_jump(OpCode::JumpIfNotNull, param.span);
 
-                
                 self.emit_op(OpCode::Pop, param.span);
 
-                
                 self.compile_expr(default_expr)?;
 
-                
                 self.emit_op(OpCode::SetLocal, param.span);
                 self.emit_u16(local_slot as u16, param.span);
 
-                
                 self.emit_op(OpCode::Pop, param.span);
 
-                
                 let after_default = self.emit_jump(OpCode::Jump, param.span);
 
-                
                 self.patch_jump(skip_jump);
                 self.emit_op(OpCode::Pop, param.span);
 
@@ -1563,12 +1339,10 @@ impl Compiler {
         Ok(())
     }
 
-    
     fn compile_namespace_class(&mut self, def: &ClassDef) -> SaldResult<()> {
         let class_span = def.span;
         self.class_depth += 1;
 
-        
         let previous_class = self.current_class.clone();
         self.current_class = Some(def.name.clone());
 
@@ -1594,19 +1368,14 @@ impl Compiler {
 
         self.class_depth -= 1;
 
-        
         self.current_class = previous_class;
 
-        
         Ok(())
     }
 
-    
-    
     fn compile_enum(&mut self, name: &str, variants: &[String], span: Span) -> SaldResult<()> {
         self.compile_enum_inner(name, variants, span)?;
 
-        
         let name_idx = self
             .current_chunk()
             .add_constant(Constant::String(intern(&name.to_string())));
@@ -1616,7 +1385,6 @@ impl Compiler {
         Ok(())
     }
 
-    
     fn compile_enum_inner(
         &mut self,
         name: &str,
@@ -1624,14 +1392,12 @@ impl Compiler {
         span: Span,
     ) -> SaldResult<()> {
         for variant in variants {
-            
             let key_idx = self
                 .current_chunk()
                 .add_constant(Constant::String(intern(&variant.clone())));
             self.emit_op(OpCode::Constant, span);
             self.emit_u16(key_idx as u16, span);
 
-            
             let value = format!("{}.{}", name, variant);
             let val_idx = self
                 .current_chunk()
@@ -1640,14 +1406,11 @@ impl Compiler {
             self.emit_u16(val_idx as u16, span);
         }
 
-        
         self.emit_op(OpCode::BuildEnum, span);
         self.emit_u16(variants.len() as u16, span);
 
         Ok(())
     }
-
-    
 
     fn compile_expr(&mut self, expr: &Expr) -> SaldResult<()> {
         match expr {
@@ -1685,7 +1448,6 @@ impl Compiler {
                 is_optional: _,
                 span,
             } => {
-                
                 if let Expr::Get {
                     object,
                     property,
@@ -1693,23 +1455,20 @@ impl Compiler {
                     ..
                 } = callee.as_ref()
                 {
-                    
                     self.compile_expr(object)?;
 
                     if *is_optional {
-                        
-                        
                         self.emit_op(OpCode::Dup, *span);
                         let normal_jump = self.emit_jump(OpCode::JumpIfNotNull, *span);
-                        
+
                         self.emit_op(OpCode::Pop, *span);
                         let end_jump = self.emit_jump(OpCode::Jump, *span);
-                        
+
                         self.patch_jump(normal_jump);
                         self.emit_op(OpCode::Pop, *span);
-                        
+
                         self.compile_expr(object)?;
-                        
+
                         for arg in args {
                             self.compile_expr(&arg.value)?;
                         }
@@ -1721,7 +1480,6 @@ impl Compiler {
                         self.emit_u16(args.len() as u16, *span);
                         self.patch_jump(end_jump);
                     } else {
-                        
                         for arg in args {
                             self.compile_expr(&arg.value)?;
                         }
@@ -1733,7 +1491,6 @@ impl Compiler {
                         self.emit_u16(args.len() as u16, *span);
                     }
                 } else if let Expr::Identifier { name, .. } = callee.as_ref() {
-                    
                     let is_self_recursive = self
                         .current_scope()
                         .function_name
@@ -1742,9 +1499,6 @@ impl Compiler {
                         .unwrap_or(false);
 
                     if is_self_recursive {
-                        
-                        
-                        
                         self.emit_op(OpCode::Null, *span);
                         for arg in args {
                             self.compile_expr(&arg.value)?;
@@ -1752,7 +1506,6 @@ impl Compiler {
                         self.emit_op(OpCode::RecursiveCall, *span);
                         self.emit_u16(args.len() as u16, *span);
                     } else {
-                        
                         self.compile_expr(callee)?;
                         for arg in args {
                             self.compile_expr(&arg.value)?;
@@ -1761,7 +1514,6 @@ impl Compiler {
                         self.emit_u16(args.len() as u16, *span);
                     }
                 } else {
-                    
                     self.compile_expr(callee)?;
                     for arg in args {
                         self.compile_expr(&arg.value)?;
@@ -1779,31 +1531,23 @@ impl Compiler {
                 self.compile_expr(object)?;
 
                 if *is_optional {
-                    
-                    
-                    
                     self.emit_op(OpCode::Dup, *span);
-                    
-                    
+
                     let normal_jump = self.emit_jump(OpCode::JumpIfNotNull, *span);
-                    
-                    
+
                     self.emit_op(OpCode::Pop, *span);
-                    
-                    
+
                     let end_jump = self.emit_jump(OpCode::Jump, *span);
-                    
+
                     self.patch_jump(normal_jump);
                     self.emit_op(OpCode::Pop, *span);
-                    
-                    
+
                     let const_idx = self
                         .current_chunk()
                         .add_constant(Constant::String(intern(&property.clone())));
                     self.emit_op(OpCode::GetProperty, *span);
                     self.emit_u16(const_idx as u16, *span);
-                    
-                    
+
                     self.patch_jump(end_jump);
                 } else {
                     let const_idx = self
@@ -1822,26 +1566,21 @@ impl Compiler {
                 self.compile_set(object, property, value, *span)?;
             }
             Expr::SelfExpr { span } => {
-                
                 if let Some(idx) = self.resolve_local("self") {
                     self.emit_op(OpCode::GetLocal, *span);
                     self.emit_u16(idx as u16, *span);
                 } else if let Some(idx) = self.resolve_upvalue(self.scopes.len() - 1, "self") {
-                    
                     self.emit_op(OpCode::GetUpvalue, *span);
                     self.emit_u16(idx as u16, *span);
                 } else {
-                    
                     self.emit_op(OpCode::GetSelf, *span);
                 }
             }
             Expr::Array { elements, span } => {
-                
                 for elem in elements {
                     self.compile_expr(elem)?;
                 }
-                
-                
+
                 let count = elements.len();
                 self.emit_op(OpCode::BuildArray, *span);
                 self.emit_u16(count as u16, *span);
@@ -1852,7 +1591,6 @@ impl Compiler {
                 is_optional: _,
                 span,
             } => {
-                
                 self.compile_expr(object)?;
                 self.compile_expr(index)?;
                 self.emit_op(OpCode::GetIndex, *span);
@@ -1863,7 +1601,6 @@ impl Compiler {
                 value,
                 span,
             } => {
-                
                 self.compile_expr(object)?;
                 self.compile_expr(index)?;
                 self.compile_expr(value)?;
@@ -1901,14 +1638,10 @@ impl Compiler {
                 expr,
                 span,
             } => {
-                
-
-                
                 for stmt in statements {
                     self.compile_stmt(stmt)?;
                 }
 
-                
                 if let Some(final_expr) = expr {
                     self.compile_expr(final_expr)?;
                 } else {
@@ -1916,23 +1649,20 @@ impl Compiler {
                 }
             }
             Expr::Dictionary { entries, span } => {
-                
                 for (key, value) in entries {
                     self.compile_expr(key)?;
                     self.compile_expr(value)?;
                 }
-                
+
                 self.emit_op(OpCode::BuildDict, *span);
                 self.emit_u16(entries.len() as u16, *span);
             }
             Expr::Await { expr, span } => {
-                
                 self.compile_expr(expr)?;
-                
+
                 self.emit_op(OpCode::Await, *span);
             }
             Expr::Return { value, span } => {
-                
                 if let Some(v) = value {
                     self.compile_expr(v)?;
                 } else {
@@ -1941,23 +1671,18 @@ impl Compiler {
                 self.emit_op(OpCode::Return, *span);
             }
             Expr::Throw { value, span } => {
-                
                 self.compile_expr(value)?;
                 self.emit_op(OpCode::Throw, *span);
             }
             Expr::Break { span } => {
-                
                 self.compile_break(*span)?;
             }
             Expr::Continue { span } => {
-                
                 self.compile_continue(*span)?;
             }
             Expr::Spread { expr, span } => {
-                
-                
                 self.compile_expr(expr)?;
-                
+
                 self.emit_op(OpCode::SpreadArray, *span);
             }
             Expr::Range {
@@ -1966,10 +1691,9 @@ impl Compiler {
                 inclusive,
                 span,
             } => {
-                
                 self.compile_expr(start)?;
                 self.compile_expr(end)?;
-                
+
                 if *inclusive {
                     self.emit_op(OpCode::BuildRangeInclusive, *span);
                 } else {
@@ -1987,44 +1711,26 @@ impl Compiler {
         default: Option<&Expr>,
         span: Span,
     ) -> SaldResult<()> {
-        
         self.begin_scope();
         self.compile_expr(value)?;
-        
-        let value_slot = self.add_local_unnamed();
-        
 
-        
+        let value_slot = self.add_local_unnamed();
+
         let mut end_jumps = Vec::new();
 
         for arm in arms {
-            
-            
-
             if arm.patterns.len() == 1 {
-                
                 let pattern = &arm.patterns[0];
 
-                
                 self.begin_scope();
 
-                
                 let locals_before_test = self.current_scope().locals.len();
 
                 let match_result = self.compile_pattern_test(value_slot, pattern, span)?;
 
                 if let Some(success_jump) = match_result {
-                    
-                    
-                    
-                    
-                    
+                    self.emit_op(OpCode::Pop, span);
 
-                    
-                    self.emit_op(OpCode::Pop, span); 
-
-                    
-                    
                     let locals_to_pop = self.current_scope().locals.len() - locals_before_test;
                     for _ in 0..locals_to_pop {
                         self.emit_op(OpCode::Pop, span);
@@ -2032,32 +1738,23 @@ impl Compiler {
 
                     let next_arm_jump = self.emit_jump(OpCode::Jump, span);
 
-                    
                     self.patch_jump(success_jump);
-                    self.emit_op(OpCode::Pop, span); 
+                    self.emit_op(OpCode::Pop, span);
 
-                    
-                    
                     self.compile_pattern_bindings(value_slot, pattern, span)?;
                     self.compile_expr(&arm.body)?;
 
-                    
                     self.end_scope_keep_result();
                     end_jumps.push(self.emit_jump(OpCode::Jump, span));
 
-                    
                     self.patch_jump(next_arm_jump);
                 } else {
-                    
                     self.compile_pattern_bindings(value_slot, pattern, span)?;
                     self.compile_expr(&arm.body)?;
                     self.end_scope_keep_result();
                     end_jumps.push(self.emit_jump(OpCode::Jump, span));
-                    
                 }
             } else {
-                
-                
                 let mut success_jumps = Vec::new();
 
                 for pattern in &arm.patterns {
@@ -2070,16 +1767,13 @@ impl Compiler {
                     }
                 }
 
-                
                 let next_arm_jump = self.emit_jump(OpCode::Jump, span);
 
-                
                 for jump in success_jumps {
                     self.patch_jump(jump);
                 }
                 self.emit_op(OpCode::Pop, span);
 
-                
                 self.begin_scope();
                 self.compile_expr(&arm.body)?;
                 self.end_scope_keep_result();
@@ -2089,7 +1783,6 @@ impl Compiler {
             }
         }
 
-        
         if let Some(default_expr) = default {
             self.begin_scope();
             self.compile_expr(default_expr)?;
@@ -2098,19 +1791,15 @@ impl Compiler {
             self.emit_op(OpCode::Null, span);
         }
 
-        
         for jump in end_jumps {
             self.patch_jump(jump);
         }
 
-        
         self.end_scope_keep_result();
 
         Ok(())
     }
 
-    
-    
     fn compile_pattern_test(
         &mut self,
         value_slot: usize,
@@ -2119,7 +1808,6 @@ impl Compiler {
     ) -> SaldResult<Option<usize>> {
         match pattern {
             Pattern::Literal { value, .. } => {
-                
                 self.emit_op(OpCode::GetLocal, span);
                 self.emit_u16(value_slot as u16, span);
                 self.compile_literal(value, span)?;
@@ -2128,26 +1816,21 @@ impl Compiler {
             }
 
             Pattern::Binding { name, guard, .. } => {
-                
                 if let Some(guard_expr) = guard {
-                    
                     self.emit_op(OpCode::GetLocal, span);
                     self.emit_u16(value_slot as u16, span);
-                    
+
                     self.declare_local(name, span)?;
                     self.mark_initialized();
 
-                    
                     self.compile_expr(guard_expr)?;
                     Ok(Some(self.emit_jump(OpCode::JumpIfTrue, span)))
                 } else {
-                    
                     Ok(None)
                 }
             }
 
             Pattern::Array { elements, .. } => {
-                
                 let has_rest = elements
                     .iter()
                     .any(|e| matches!(e, SwitchArrayElement::Rest { .. }));
@@ -2156,7 +1839,6 @@ impl Compiler {
                     .filter(|e| matches!(e, SwitchArrayElement::Single(_)))
                     .count();
 
-                
                 self.emit_op(OpCode::GetLocal, span);
                 self.emit_u16(value_slot as u16, span);
                 let length_idx = self
@@ -2187,12 +1869,9 @@ impl Compiler {
             }
 
             Pattern::Dict { entries, .. } => {
-                
                 if entries.is_empty() {
-                    
                     self.emit_op(OpCode::True, span);
                 } else {
-                    
                     self.emit_op(OpCode::GetLocal, span);
                     self.emit_u16(value_slot as u16, span);
                     let key = &entries[0].0;
@@ -2214,50 +1893,36 @@ impl Compiler {
                 inclusive,
                 ..
             } => {
-                
-                
-
-                
                 self.emit_op(OpCode::GetLocal, span);
                 self.emit_u16(value_slot as u16, span);
-                
+
                 self.compile_expr(start)?;
-                
+
                 self.emit_op(OpCode::GreaterEqual, span);
 
-                
-                
                 let first_test_jump = self.emit_jump(OpCode::JumpIfFalse, span);
 
-                
                 self.emit_op(OpCode::Pop, span);
 
-                
                 self.emit_op(OpCode::GetLocal, span);
                 self.emit_u16(value_slot as u16, span);
-                
+
                 self.compile_expr(end)?;
-                
+
                 if *inclusive {
                     self.emit_op(OpCode::LessEqual, span);
                 } else {
                     self.emit_op(OpCode::Less, span);
                 }
 
-                
                 let second_test_jump = self.emit_jump(OpCode::JumpIfTrue, span);
 
-                
                 self.patch_jump(first_test_jump);
 
-                
-                
                 Ok(Some(second_test_jump))
             }
 
             Pattern::Expression { expr, .. } => {
-                
-                
                 self.emit_op(OpCode::GetLocal, span);
                 self.emit_u16(value_slot as u16, span);
                 self.compile_expr(expr)?;
@@ -2267,7 +1932,6 @@ impl Compiler {
         }
     }
 
-    
     fn compile_pattern_bindings(
         &mut self,
         value_slot: usize,
@@ -2275,21 +1939,16 @@ impl Compiler {
         span: Span,
     ) -> SaldResult<()> {
         match pattern {
-            Pattern::Literal { .. } => {
-                
-                Ok(())
-            }
+            Pattern::Literal { .. } => Ok(()),
 
             Pattern::Binding { name, guard, .. } => {
-                
-                
                 if guard.is_none() {
                     self.declare_local(name, span)?;
                     self.emit_op(OpCode::GetLocal, span);
                     self.emit_u16(value_slot as u16, span);
                     self.mark_initialized();
                 }
-                
+
                 Ok(())
             }
 
@@ -2298,7 +1957,6 @@ impl Compiler {
                 for element in elements {
                     match element {
                         SwitchArrayElement::Single(sub_pattern) => {
-                            
                             self.emit_op(OpCode::GetLocal, span);
                             self.emit_u16(value_slot as u16, span);
                             let idx_const = self
@@ -2308,15 +1966,12 @@ impl Compiler {
                             self.emit_u16(idx_const as u16, span);
                             self.emit_op(OpCode::GetIndex, span);
 
-                            
                             let temp_slot = self.add_local_unnamed();
-                            
 
                             self.compile_pattern_bindings(temp_slot, sub_pattern, span)?;
                             idx += 1;
                         }
                         SwitchArrayElement::Rest { name, .. } => {
-                            
                             self.declare_local(name, span)?;
                             self.emit_op(OpCode::GetLocal, span);
                             self.emit_u16(value_slot as u16, span);
@@ -2340,7 +1995,6 @@ impl Compiler {
 
             Pattern::Dict { entries, .. } => {
                 for (key, sub_pattern) in entries {
-                    
                     self.emit_op(OpCode::GetLocal, span);
                     self.emit_u16(value_slot as u16, span);
                     let key_const = self
@@ -2350,28 +2004,19 @@ impl Compiler {
                     self.emit_u16(key_const as u16, span);
                     self.emit_op(OpCode::GetIndex, span);
 
-                    
                     let temp_slot = self.add_local_unnamed();
-                    
 
                     self.compile_pattern_bindings(temp_slot, sub_pattern, span)?;
                 }
                 Ok(())
             }
 
-            Pattern::Range { .. } => {
-                
-                Ok(())
-            }
+            Pattern::Range { .. } => Ok(()),
 
-            Pattern::Expression { .. } => {
-                
-                Ok(())
-            }
+            Pattern::Expression { .. } => Ok(()),
         }
     }
 
-    
     fn add_local_unnamed(&mut self) -> usize {
         let scope = self.current_scope_mut();
         let slot = scope.locals.len();
@@ -2385,7 +2030,6 @@ impl Compiler {
     }
 
     fn compile_literal(&mut self, value: &Literal, span: Span) -> SaldResult<()> {
-        
         match value {
             Literal::Number(n) => {
                 let const_idx = self.current_chunk().add_constant(Constant::Number(*n));
@@ -2410,18 +2054,13 @@ impl Compiler {
     }
 
     fn compile_identifier(&mut self, name: &str, span: Span) -> SaldResult<()> {
-        
-
-        
         if let Some(slot) = self.resolve_local(name) {
             self.emit_op(OpCode::GetLocal, span);
             self.emit_u16(slot as u16, span);
         } else if let Some(upvalue) = self.resolve_upvalue(self.scopes.len() - 1, name) {
-            
             self.emit_op(OpCode::GetUpvalue, span);
             self.emit_u16(upvalue as u16, span);
         } else {
-            
             let const_idx = self
                 .current_chunk()
                 .add_constant(Constant::String(intern(&name.to_string())));
@@ -2439,9 +2078,6 @@ impl Compiler {
         right: &Expr,
         span: Span,
     ) -> SaldResult<()> {
-        
-
-        
         match op {
             BinaryOp::And => {
                 self.compile_expr(left)?;
@@ -2462,7 +2098,6 @@ impl Compiler {
                 return Ok(());
             }
             BinaryOp::NullCoalesce => {
-                
                 self.compile_expr(left)?;
                 let end_jump = self.emit_jump(OpCode::JumpIfNotNull, span);
                 self.emit_op(OpCode::Pop, span);
@@ -2473,10 +2108,7 @@ impl Compiler {
             _ => {}
         }
 
-        
-        
         if let Some(result) = self.try_fold_binary(left, op, right) {
-            
             match result {
                 FoldedValue::Number(n) => {
                     let const_idx = self.current_chunk().add_constant(Constant::Number(n));
@@ -2512,7 +2144,7 @@ impl Compiler {
             BinaryOp::LessEqual => self.emit_op(OpCode::LessEqual, span),
             BinaryOp::Greater => self.emit_op(OpCode::Greater, span),
             BinaryOp::GreaterEqual => self.emit_op(OpCode::GreaterEqual, span),
-            
+
             BinaryOp::BitAnd => self.emit_op(OpCode::BitAnd, span),
             BinaryOp::BitOr => self.emit_op(OpCode::BitOr, span),
             BinaryOp::BitXor => self.emit_op(OpCode::BitXor, span),
@@ -2525,10 +2157,6 @@ impl Compiler {
     }
 
     fn compile_unary(&mut self, op: &UnaryOp, operand: &Expr, span: Span) -> SaldResult<()> {
-        
-
-        
-        
         if let Some(result) = self.try_fold_unary(op, operand) {
             match result {
                 FoldedValue::Number(n) => {
@@ -2568,18 +2196,14 @@ impl Compiler {
         value: &Expr,
         span: Span,
     ) -> SaldResult<()> {
-        
-
         match target {
             Expr::Identifier { name, .. } => {
-                
                 if op.is_compound() {
                     self.compile_identifier(name, span)?;
                 }
 
                 self.compile_expr(value)?;
 
-                
                 match op {
                     AssignOp::AddAssign => self.emit_op(OpCode::Add, span),
                     AssignOp::SubAssign => self.emit_op(OpCode::Sub, span),
@@ -2589,7 +2213,6 @@ impl Compiler {
                     AssignOp::Assign => {}
                 }
 
-                
                 if let Some(slot) = self.resolve_local(name) {
                     self.emit_op(OpCode::SetLocal, span);
                     self.emit_u16(slot as u16, span);
@@ -2636,13 +2259,10 @@ impl Compiler {
                 self.emit_u16(const_idx as u16, span);
             }
             Expr::Index { object, index, .. } => {
-                
                 self.compile_expr(object)?;
                 self.compile_expr(index)?;
 
                 if op.is_compound() {
-                    
-                    
                     self.emit_op(OpCode::DupTwo, span);
                     self.emit_op(OpCode::GetIndex, span);
                 }
@@ -2678,8 +2298,6 @@ impl Compiler {
         value: &Expr,
         span: Span,
     ) -> SaldResult<()> {
-        
-
         self.compile_expr(object)?;
         self.compile_expr(value)?;
 
@@ -2692,8 +2310,6 @@ impl Compiler {
         Ok(())
     }
 
-    
-
     fn begin_scope(&mut self) {
         self.current_scope_mut().scope_depth += 1;
     }
@@ -2701,36 +2317,24 @@ impl Compiler {
     fn end_scope(&mut self) {
         self.current_scope_mut().scope_depth -= 1;
 
-        
-        
-        
-        
-        
         while {
             let scope = self.current_scope();
             !scope.locals.is_empty() && scope.locals.last().unwrap().depth > scope.scope_depth
         } {
-            
             let is_captured = self.current_scope().locals.last().unwrap().is_captured;
 
             if is_captured {
-                
                 self.emit_op(OpCode::CloseUpvalue, Span::default());
             } else {
-                
                 self.emit_op(OpCode::Pop, Span::default());
             }
             self.current_scope_mut().locals.pop();
         }
     }
 
-    
-    
-    
     fn end_scope_keep_result(&mut self) {
         self.current_scope_mut().scope_depth -= 1;
 
-        
         let mut locals_to_pop = Vec::new();
         {
             let scope = self.current_scope();
@@ -2743,12 +2347,7 @@ impl Compiler {
             }
         }
 
-        
-        
-        
-        
         for is_captured in locals_to_pop {
-            
             self.emit_op(OpCode::Swap, Span::default());
 
             if is_captured {
@@ -2763,7 +2362,6 @@ impl Compiler {
     fn declare_local(&mut self, name: &str, span: Span) -> SaldResult<()> {
         let scope = self.current_scope();
 
-        
         for local in scope.locals.iter().rev() {
             if local.depth < scope.scope_depth {
                 break;
@@ -2805,16 +2403,13 @@ impl Compiler {
         None
     }
 
-    
     fn resolve_upvalue(&mut self, scope_idx: usize, name: &str) -> Option<usize> {
-        
         if scope_idx == 0 {
             return None;
         }
 
         let enclosing_idx = scope_idx - 1;
 
-        
         let local_idx = {
             let enclosing = &self.scopes[enclosing_idx];
             enclosing
@@ -2827,42 +2422,32 @@ impl Compiler {
         };
 
         if let Some(local) = local_idx {
-            
             self.scopes[enclosing_idx].locals[local].is_captured = true;
-            
+
             return Some(self.add_upvalue(scope_idx, local, true));
         }
 
-        
         if let Some(upvalue) = self.resolve_upvalue(enclosing_idx, name) {
-            
             return Some(self.add_upvalue(scope_idx, upvalue, false));
         }
 
         None
     }
 
-    
     fn add_upvalue(&mut self, scope_idx: usize, index: usize, is_local: bool) -> usize {
         let scope = &mut self.scopes[scope_idx];
 
-        
         for (i, upvalue) in scope.upvalues.iter().enumerate() {
             if upvalue.index == index && upvalue.is_local == is_local {
                 return i;
             }
         }
 
-        
         scope.upvalues.push(Upvalue { index, is_local });
         scope.upvalues.len() - 1
     }
 
-    
-
     fn compile_break(&mut self, span: Span) -> SaldResult<()> {
-        
-
         if self.current_scope().break_jumps.is_empty() {
             return Err(SaldError::syntax_error(
                 "'break' outside of loop",
@@ -2871,11 +2456,8 @@ impl Compiler {
             ));
         }
 
-        
         let target_depth = *self.current_scope().loop_scope_depths.last().unwrap();
 
-        
-        
         let mut pops_needed = 0;
         for local in self.current_scope().locals.iter().rev() {
             if local.depth > target_depth {
@@ -2889,10 +2471,8 @@ impl Compiler {
             self.emit_op(OpCode::Pop, span);
         }
 
-        
         let break_jump = self.emit_jump(OpCode::Jump, span);
 
-        
         let scope = self.current_scope_mut();
         if let Some(breaks) = scope.break_jumps.last_mut() {
             breaks.push(break_jump);
@@ -2902,8 +2482,6 @@ impl Compiler {
     }
 
     fn compile_continue(&mut self, span: Span) -> SaldResult<()> {
-        
-
         let (loop_start, target_depth) = {
             let scope = self.current_scope();
             if scope.loop_starts.is_empty() {
@@ -2919,7 +2497,6 @@ impl Compiler {
             )
         };
 
-        
         let mut pops_needed = 0;
         for local in self.current_scope().locals.iter().rev() {
             if local.depth > target_depth {
@@ -2933,31 +2510,25 @@ impl Compiler {
             self.emit_op(OpCode::Pop, span);
         }
 
-        
         self.emit_loop(loop_start, span);
 
         Ok(())
     }
 
     fn compile_import(&mut self, path: &str, alias: Option<&str>, span: Span) -> SaldResult<()> {
-        
-
-        
         let path_const = self
             .current_chunk()
             .add_constant(Constant::String(intern(path)));
 
         if let Some(alias) = alias {
-            
             let alias_const = self
                 .current_chunk()
                 .add_constant(Constant::String(intern(alias)));
             self.emit_op(OpCode::ImportAs, span);
             self.emit_u16(path_const as u16, span);
-            
+
             self.emit_u16(alias_const as u16, span);
         } else {
-            
             self.emit_op(OpCode::Import, span);
             self.emit_u16(path_const as u16, span);
         }
@@ -2972,26 +2543,18 @@ impl Compiler {
         else_expr: &Expr,
         span: Span,
     ) -> SaldResult<()> {
-        
-
-        
         self.compile_expr(condition)?;
 
-        
         let else_jump = self.emit_jump(OpCode::JumpIfFalse, span);
-        self.emit_op(OpCode::Pop, span); 
+        self.emit_op(OpCode::Pop, span);
 
-        
         self.compile_expr(then_expr)?;
 
-        
         let end_jump = self.emit_jump(OpCode::Jump, span);
 
-        
         self.patch_jump(else_jump);
-        self.emit_op(OpCode::Pop, span); 
+        self.emit_op(OpCode::Pop, span);
 
-        
         self.compile_expr(else_expr)?;
 
         self.patch_jump(end_jump);
@@ -3006,33 +2569,26 @@ impl Compiler {
         is_async: bool,
         span: Span,
     ) -> SaldResult<()> {
-        
-
-        
         let lambda_name = format!("<lambda@{}:{}>", span.start.line, span.start.column);
 
-        
         self.scopes.push(FunctionScope::new(false));
         self.begin_scope();
 
-        
         for param in params {
             self.declare_local(&param.name, param.span)?;
             self.mark_initialized();
         }
 
-        
         match body {
             LambdaBody::Block(stmts) => {
                 for stmt in stmts {
                     self.compile_stmt(stmt)?;
                 }
-                
+
                 self.emit_op(OpCode::Null, span);
                 self.emit_op(OpCode::Return, span);
             }
             LambdaBody::Expr(expr) => {
-                
                 self.compile_expr(expr)?;
                 self.emit_op(OpCode::Return, span);
             }
@@ -3040,14 +2596,11 @@ impl Compiler {
 
         self.end_scope();
 
-        
         let func_scope = self.scopes.pop().unwrap();
         let arity = params.len();
 
-        
         let is_variadic = params.last().map(|p| p.is_variadic).unwrap_or(false);
 
-        
         let upvalues: Vec<UpvalueInfo> = func_scope
             .upvalues
             .iter()
@@ -3075,7 +2628,6 @@ impl Compiler {
 
         let const_idx = self.current_chunk().add_constant(func_const);
 
-        
         self.emit_op(OpCode::Closure, span);
         self.emit_u16(const_idx as u16, span);
 
@@ -3083,8 +2635,6 @@ impl Compiler {
     }
 
     fn compile_super(&mut self, method: &str, span: Span) -> SaldResult<()> {
-        
-
         if self.class_depth == 0 {
             return Err(SaldError::syntax_error(
                 "'super' used outside of class",
@@ -3093,10 +2643,8 @@ impl Compiler {
             ));
         }
 
-        
         self.emit_op(OpCode::GetSelf, span);
 
-        
         let method_const = self
             .current_chunk()
             .add_constant(Constant::String(intern(method)));
@@ -3105,8 +2653,6 @@ impl Compiler {
 
         Ok(())
     }
-
-    
 
     fn emit_op(&mut self, op: OpCode, span: Span) {
         self.current_chunk().write_op(op, span);
@@ -3132,54 +2678,45 @@ impl Compiler {
         self.emit_u16(offset as u16, span);
     }
 
-    
-
-    
     fn try_fold_binary(&self, left: &Expr, op: &BinaryOp, right: &Expr) -> Option<FoldedValue> {
-        
         let left_lit = self.extract_literal(left)?;
         let right_lit = self.extract_literal(right)?;
 
         match (left_lit, right_lit) {
-            
-            (FoldedValue::Number(a), FoldedValue::Number(b)) => {
-                match op {
-                    BinaryOp::Add => Some(FoldedValue::Number(a + b)),
-                    BinaryOp::Sub => Some(FoldedValue::Number(a - b)),
-                    BinaryOp::Mul => Some(FoldedValue::Number(a * b)),
-                    BinaryOp::Div if b != 0.0 => Some(FoldedValue::Number(a / b)),
-                    BinaryOp::Mod if b != 0.0 => Some(FoldedValue::Number(a % b)),
-                    
-                    BinaryOp::Less => Some(FoldedValue::Boolean(a < b)),
-                    BinaryOp::LessEqual => Some(FoldedValue::Boolean(a <= b)),
-                    BinaryOp::Greater => Some(FoldedValue::Boolean(a > b)),
-                    BinaryOp::GreaterEqual => Some(FoldedValue::Boolean(a >= b)),
-                    BinaryOp::Equal => Some(FoldedValue::Boolean(a == b)),
-                    BinaryOp::NotEqual => Some(FoldedValue::Boolean(a != b)),
-                    
-                    BinaryOp::BitAnd => Some(FoldedValue::Number((a as i64 & b as i64) as f64)),
-                    BinaryOp::BitOr => Some(FoldedValue::Number((a as i64 | b as i64) as f64)),
-                    BinaryOp::BitXor => Some(FoldedValue::Number((a as i64 ^ b as i64) as f64)),
-                    BinaryOp::LeftShift => {
-                        Some(FoldedValue::Number(((a as i64) << (b as u32)) as f64))
-                    }
-                    BinaryOp::RightShift => {
-                        Some(FoldedValue::Number(((a as i64) >> (b as u32)) as f64))
-                    }
-                    _ => None,
+            (FoldedValue::Number(a), FoldedValue::Number(b)) => match op {
+                BinaryOp::Add => Some(FoldedValue::Number(a + b)),
+                BinaryOp::Sub => Some(FoldedValue::Number(a - b)),
+                BinaryOp::Mul => Some(FoldedValue::Number(a * b)),
+                BinaryOp::Div if b != 0.0 => Some(FoldedValue::Number(a / b)),
+                BinaryOp::Mod if b != 0.0 => Some(FoldedValue::Number(a % b)),
+
+                BinaryOp::Less => Some(FoldedValue::Boolean(a < b)),
+                BinaryOp::LessEqual => Some(FoldedValue::Boolean(a <= b)),
+                BinaryOp::Greater => Some(FoldedValue::Boolean(a > b)),
+                BinaryOp::GreaterEqual => Some(FoldedValue::Boolean(a >= b)),
+                BinaryOp::Equal => Some(FoldedValue::Boolean(a == b)),
+                BinaryOp::NotEqual => Some(FoldedValue::Boolean(a != b)),
+
+                BinaryOp::BitAnd => Some(FoldedValue::Number((a as i64 & b as i64) as f64)),
+                BinaryOp::BitOr => Some(FoldedValue::Number((a as i64 | b as i64) as f64)),
+                BinaryOp::BitXor => Some(FoldedValue::Number((a as i64 ^ b as i64) as f64)),
+                BinaryOp::LeftShift => Some(FoldedValue::Number(((a as i64) << (b as u32)) as f64)),
+                BinaryOp::RightShift => {
+                    Some(FoldedValue::Number(((a as i64) >> (b as u32)) as f64))
                 }
-            }
-            
+                _ => None,
+            },
+
             (FoldedValue::String(a), FoldedValue::String(b)) if matches!(op, BinaryOp::Add) => {
                 Some(FoldedValue::String(format!("{}{}", a, b)))
             }
-            
+
             (FoldedValue::Boolean(a), FoldedValue::Boolean(b)) => match op {
                 BinaryOp::Equal => Some(FoldedValue::Boolean(a == b)),
                 BinaryOp::NotEqual => Some(FoldedValue::Boolean(a != b)),
                 _ => None,
             },
-            
+
             (FoldedValue::String(a), FoldedValue::String(b)) => match op {
                 BinaryOp::Equal => Some(FoldedValue::Boolean(a == b)),
                 BinaryOp::NotEqual => Some(FoldedValue::Boolean(a != b)),
@@ -3189,7 +2726,6 @@ impl Compiler {
         }
     }
 
-    
     fn try_fold_unary(&self, op: &UnaryOp, operand: &Expr) -> Option<FoldedValue> {
         let value = self.extract_literal(operand)?;
 
@@ -3203,17 +2739,14 @@ impl Compiler {
         }
     }
 
-    
     fn extract_literal(&self, expr: &Expr) -> Option<FoldedValue> {
         match expr {
-            Expr::Literal { value, .. } => {
-                match value {
-                    Literal::Number(n) => Some(FoldedValue::Number(*n)),
-                    Literal::Boolean(b) => Some(FoldedValue::Boolean(*b)),
-                    Literal::String(s) => Some(FoldedValue::String(s.clone())),
-                    Literal::Null => None, 
-                }
-            }
+            Expr::Literal { value, .. } => match value {
+                Literal::Number(n) => Some(FoldedValue::Number(*n)),
+                Literal::Boolean(b) => Some(FoldedValue::Boolean(*b)),
+                Literal::String(s) => Some(FoldedValue::String(s.clone())),
+                Literal::Null => None,
+            },
             Expr::Grouping { expr, .. } => self.extract_literal(expr),
             Expr::Unary { op, operand, .. } => self.try_fold_unary(op, operand),
             Expr::Binary {

@@ -1,7 +1,3 @@
-
-
-
-
 use super::check_arity;
 use crate::vm::value::{Class, NativeInstanceFn, Value};
 use rustc_hash::FxHashMap;
@@ -70,7 +66,6 @@ fn number_round(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn number_to_fixed(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::Number(n) = recv {
@@ -84,7 +79,6 @@ fn number_to_fixed(recv: &Value, args: &[Value]) -> Result<Value, String> {
             }
         };
 
-        
         let decimals = decimals.min(20);
 
         Ok(Value::String(Rc::from(format!(

@@ -1,7 +1,3 @@
-
-
-
-
 use super::check_arity;
 use super::check_arity_min;
 use crate::vm::value::{Class, NativeStaticFn, Value};
@@ -17,21 +13,15 @@ pub fn create_test_class() -> Class {
 
     let mut class = Class::new_with_static("Test", static_methods);
 
-    
-    
     class.constructor = Some(test_decorator);
 
     class
 }
 
-
-
 fn test_decorator(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     Ok(args[0].clone())
 }
-
-
 
 fn test_assert(args: &[Value]) -> Result<Value, String> {
     check_arity_min(1, args.len())?;
@@ -52,8 +42,6 @@ fn test_assert(args: &[Value]) -> Result<Value, String> {
 
     Ok(Value::Null)
 }
-
-
 
 fn test_assert_eq(args: &[Value]) -> Result<Value, String> {
     check_arity_min(2, args.len())?;
@@ -76,8 +64,6 @@ fn test_assert_eq(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-
-
 fn test_assert_ne(args: &[Value]) -> Result<Value, String> {
     check_arity_min(2, args.len())?;
 
@@ -98,8 +84,6 @@ fn test_assert_ne(args: &[Value]) -> Result<Value, String> {
 
     Ok(Value::Null)
 }
-
-
 
 fn test_fail(args: &[Value]) -> Result<Value, String> {
     let message = if !args.is_empty() {

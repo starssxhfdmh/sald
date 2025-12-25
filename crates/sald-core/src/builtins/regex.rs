@@ -1,7 +1,3 @@
-
-
-
-
 use super::{check_arity, check_arity_range, get_string_arg};
 use crate::vm::value::{Class, Instance, NativeInstanceFn, NativeStaticFn, Value};
 use regex::Regex as RustRegex;
@@ -13,10 +9,8 @@ pub fn create_regex_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
     let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
-    
     static_methods.insert("new".to_string(), regex_new);
 
-    
     instance_methods.insert("test".to_string(), regex_test);
     instance_methods.insert("match".to_string(), regex_match);
     instance_methods.insert("matchAll".to_string(), regex_match_all);
@@ -30,7 +24,6 @@ pub fn create_regex_class() -> Class {
     class.native_static_methods = static_methods;
     class
 }
-
 
 fn get_regex_from_instance(inst: &Instance) -> Result<RustRegex, String> {
     let pattern = inst
@@ -60,7 +53,6 @@ fn get_regex_from_instance(inst: &Instance) -> Result<RustRegex, String> {
     build_regex(&pattern, &flags)
 }
 
-
 fn build_regex(pattern: &str, flags: &str) -> Result<RustRegex, String> {
     let case_insensitive = flags.contains('i');
     let multiline = flags.contains('m');
@@ -68,7 +60,6 @@ fn build_regex(pattern: &str, flags: &str) -> Result<RustRegex, String> {
 
     let mut regex_pattern = String::new();
 
-    
     if case_insensitive || multiline || dot_all {
         regex_pattern.push_str("(?");
         if case_insensitive {
@@ -88,7 +79,6 @@ fn build_regex(pattern: &str, flags: &str) -> Result<RustRegex, String> {
     RustRegex::new(&regex_pattern).map_err(|e| format!("Invalid regex pattern: {}", e))
 }
 
-
 fn regex_new(args: &[Value]) -> Result<Value, String> {
     check_arity_range(1, 2, args.len())?;
     let pattern = get_string_arg(&args[0], "pattern")?;
@@ -98,10 +88,8 @@ fn regex_new(args: &[Value]) -> Result<Value, String> {
         String::new()
     };
 
-    
     build_regex(&pattern, &flags)?;
 
-    
     let class = Rc::new(create_regex_class());
     let mut instance = Instance::new(class);
     instance
@@ -113,7 +101,6 @@ fn regex_new(args: &[Value]) -> Result<Value, String> {
 
     Ok(Value::Instance(Rc::new(RefCell::new(instance))))
 }
-
 
 fn regex_test(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -128,7 +115,6 @@ fn regex_test(recv: &Value, args: &[Value]) -> Result<Value, String> {
         Err("test() must be called on a Regex instance".to_string())
     }
 }
-
 
 fn regex_match(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -155,7 +141,6 @@ fn regex_match(recv: &Value, args: &[Value]) -> Result<Value, String> {
         Err("match() must be called on a Regex instance".to_string())
     }
 }
-
 
 fn regex_match_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -185,7 +170,6 @@ fn regex_match_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn regex_replace(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
 
@@ -202,7 +186,6 @@ fn regex_replace(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn regex_replace_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
 
@@ -218,7 +201,6 @@ fn regex_replace_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
         Err("replaceAll() must be called on a Regex instance".to_string())
     }
 }
-
 
 fn regex_split(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -239,7 +221,6 @@ fn regex_split(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn regex_pattern(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
 
@@ -254,7 +235,6 @@ fn regex_pattern(recv: &Value, args: &[Value]) -> Result<Value, String> {
         Err("pattern() must be called on a Regex instance".to_string())
     }
 }
-
 
 fn regex_flags(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;

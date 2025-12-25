@@ -1,7 +1,3 @@
-
-
-
-
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use base64::{engine::general_purpose, Engine};
@@ -27,8 +23,6 @@ pub fn create_crypto_class() -> Class {
 
     Class::new_with_static("Crypto", static_methods)
 }
-
-
 
 fn crypto_hash(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
@@ -67,7 +61,6 @@ fn crypto_hash(args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(hash_hex)))
 }
 
-
 fn crypto_hmac(args: &[Value]) -> Result<Value, String> {
     check_arity(3, args.len())?;
     let algorithm = get_string_arg(&args[0], "algorithm")?.to_lowercase();
@@ -98,12 +91,10 @@ fn crypto_hmac(args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(hmac_hex)))
 }
 
-
 fn crypto_uuid(_args: &[Value]) -> Result<Value, String> {
     let id = uuid::Uuid::new_v4().to_string();
     Ok(Value::String(Rc::from(id)))
 }
-
 
 fn crypto_random_bytes(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -122,7 +113,6 @@ fn crypto_random_bytes(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Array(Rc::new(RefCell::new(bytes))))
 }
 
-
 fn crypto_random_int(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     let min = get_number_arg(&args[0], "min")? as i64;
@@ -139,14 +129,12 @@ fn crypto_random_int(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Number(value as f64))
 }
 
-
 fn crypto_base64_encode(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let data = get_string_arg(&args[0], "data")?;
     let encoded = general_purpose::STANDARD.encode(data.as_bytes());
     Ok(Value::String(Rc::from(encoded)))
 }
-
 
 fn crypto_base64_decode(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;

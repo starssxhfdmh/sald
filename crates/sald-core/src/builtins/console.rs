@@ -1,6 +1,3 @@
-
-
-
 use super::check_arity;
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
@@ -66,7 +63,6 @@ fn console_println(args: &[Value]) -> Result<Value, String> {
 fn console_input(args: &[Value]) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        
         if !args.is_empty() {
             print!("{}", args[0]);
             use std::io::Write;
@@ -98,8 +94,6 @@ fn console_clear(args: &[Value]) -> Result<Value, String> {
         use std::io::Write;
         std::io::stdout().flush().ok();
     }
-
-    
 
     Ok(Value::Null)
 }

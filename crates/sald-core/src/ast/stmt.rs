@@ -1,17 +1,13 @@
-
-
 use super::expr::Expr;
 use crate::error::Span;
-
 
 #[derive(Debug, Clone)]
 pub struct FunctionParam {
     pub name: String,
-    pub is_variadic: bool,           
-    pub default_value: Option<Expr>, 
+    pub is_variadic: bool,
+    pub default_value: Option<Expr>,
     pub span: Span,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Decorator {
@@ -19,7 +15,6 @@ pub struct Decorator {
     pub args: Vec<Expr>,
     pub span: Span,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
@@ -32,7 +27,6 @@ pub struct FunctionDef {
     pub span: Span,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ClassDef {
     pub name: String,
@@ -43,14 +37,12 @@ pub struct ClassDef {
     pub span: Span,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct InterfaceMethodDef {
     pub name: String,
     pub params: Vec<FunctionParam>,
     pub span: Span,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct InterfaceDef {
@@ -59,17 +51,14 @@ pub struct InterfaceDef {
     pub span: Span,
 }
 
-
 #[derive(Debug, Clone)]
 pub enum ArrayPatternElement {
-    
     Variable { name: String, span: Span },
-    
+
     Rest { name: String, span: Span },
-    
+
     Hole,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ArrayPattern {
@@ -77,31 +66,31 @@ pub struct ArrayPattern {
     pub span: Span,
 }
 
-
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    
     Let {
         name: String,
-        name_span: Span, 
+        name_span: Span,
         initializer: Option<Expr>,
         span: Span,
     },
 
-    
     LetDestructure {
         pattern: ArrayPattern,
         initializer: Expr,
         span: Span,
     },
 
-    
-    Expression { expr: Expr, span: Span },
+    Expression {
+        expr: Expr,
+        span: Span,
+    },
 
-    
-    Block { statements: Vec<Stmt>, span: Span },
+    Block {
+        statements: Vec<Stmt>,
+        span: Span,
+    },
 
-    
     If {
         condition: Expr,
         then_branch: Box<Stmt>,
@@ -109,30 +98,31 @@ pub enum Stmt {
         span: Span,
     },
 
-    
     While {
         condition: Expr,
         body: Box<Stmt>,
         span: Span,
     },
 
-    
     DoWhile {
         body: Box<Stmt>,
         condition: Expr,
         span: Span,
     },
 
-    
-    Function { def: FunctionDef },
+    Function {
+        def: FunctionDef,
+    },
 
-    
-    Return { value: Option<Expr>, span: Span },
+    Return {
+        value: Option<Expr>,
+        span: Span,
+    },
 
-    
-    Class { def: ClassDef },
+    Class {
+        def: ClassDef,
+    },
 
-    
     For {
         variable: String,
         iterable: Expr,
@@ -140,20 +130,20 @@ pub enum Stmt {
         span: Span,
     },
 
-    
-    Break { span: Span },
+    Break {
+        span: Span,
+    },
 
-    
-    Continue { span: Span },
+    Continue {
+        span: Span,
+    },
 
-    
     Import {
         path: String,
         alias: Option<String>,
         span: Span,
     },
 
-    
     TryCatch {
         try_body: Box<Stmt>,
         catch_var: String,
@@ -161,32 +151,32 @@ pub enum Stmt {
         span: Span,
     },
 
-    
-    Throw { value: Expr, span: Span },
+    Throw {
+        value: Expr,
+        span: Span,
+    },
 
-    
     Namespace {
         name: String,
         body: Vec<Stmt>,
         span: Span,
     },
 
-    
     Const {
         name: String,
         value: Expr,
         span: Span,
     },
 
-    
     Enum {
         name: String,
         variants: Vec<String>,
         span: Span,
     },
 
-    
-    Interface { def: InterfaceDef },
+    Interface {
+        def: InterfaceDef,
+    },
 }
 
 impl Stmt {
@@ -215,7 +205,6 @@ impl Stmt {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Program {

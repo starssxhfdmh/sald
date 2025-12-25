@@ -1,7 +1,3 @@
-
-
-
-
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -11,36 +7,29 @@ use sysinfo::System;
 pub fn create_system_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
-    
     static_methods.insert("os".to_string(), system_os);
     static_methods.insert("arch".to_string(), system_arch);
     static_methods.insert("family".to_string(), system_family);
     static_methods.insert("cpus".to_string(), system_cpus);
 
-    
     static_methods.insert("hostname".to_string(), system_hostname);
     static_methods.insert("osVersion".to_string(), system_os_version);
     static_methods.insert("kernelVersion".to_string(), system_kernel_version);
 
-    
     static_methods.insert("totalMemory".to_string(), system_total_memory);
     static_methods.insert("usedMemory".to_string(), system_used_memory);
     static_methods.insert("freeMemory".to_string(), system_free_memory);
     static_methods.insert("totalSwap".to_string(), system_total_swap);
     static_methods.insert("usedSwap".to_string(), system_used_swap);
 
-    
     static_methods.insert("cpuName".to_string(), system_cpu_name);
     static_methods.insert("cpuUsage".to_string(), system_cpu_usage);
 
-    
     static_methods.insert("uptime".to_string(), system_uptime);
     static_methods.insert("bootTime".to_string(), system_boot_time);
 
-    
     static_methods.insert("info".to_string(), system_info);
 
-    
     static_methods.insert("getenv".to_string(), system_getenv);
     static_methods.insert("setenv".to_string(), system_setenv);
     static_methods.insert("envs".to_string(), system_envs);
@@ -48,25 +37,19 @@ pub fn create_system_class() -> Class {
     Class::new_with_static("System", static_methods)
 }
 
-
-
-
 fn system_os(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(std::env::consts::OS.to_string())))
 }
 
-
 fn system_arch(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(std::env::consts::ARCH.to_string())))
 }
-
 
 fn system_family(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(
         std::env::consts::FAMILY.to_string(),
     )))
 }
-
 
 fn system_cpus(_args: &[Value]) -> Result<Value, String> {
     let count = std::thread::available_parallelism()
@@ -75,15 +58,11 @@ fn system_cpus(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::Number(count as f64))
 }
 
-
-
-
 fn system_hostname(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(
         System::host_name().unwrap_or_else(|| "unknown".to_string()),
     )))
 }
-
 
 fn system_os_version(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(
@@ -91,47 +70,36 @@ fn system_os_version(_args: &[Value]) -> Result<Value, String> {
     )))
 }
 
-
 fn system_kernel_version(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(
         System::kernel_version().unwrap_or_else(|| "unknown".to_string()),
     )))
 }
 
-
-
-
 fn system_total_memory(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
     Ok(Value::Number(sys.total_memory() as f64))
 }
-
 
 fn system_used_memory(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
     Ok(Value::Number(sys.used_memory() as f64))
 }
 
-
 fn system_free_memory(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
     Ok(Value::Number(sys.free_memory() as f64))
 }
-
 
 fn system_total_swap(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
     Ok(Value::Number(sys.total_swap() as f64))
 }
 
-
 fn system_used_swap(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
     Ok(Value::Number(sys.used_swap() as f64))
 }
-
-
-
 
 fn system_cpu_name(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
@@ -143,10 +111,9 @@ fn system_cpu_name(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(name)))
 }
 
-
 fn system_cpu_usage(_args: &[Value]) -> Result<Value, String> {
     let mut sys = System::new_all();
-    
+
     sys.refresh_cpu_usage();
     std::thread::sleep(std::time::Duration::from_millis(200));
     sys.refresh_cpu_usage();
@@ -158,27 +125,19 @@ fn system_cpu_usage(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::Number(avg as f64))
 }
 
-
-
-
 fn system_uptime(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::Number(System::uptime() as f64))
 }
 
-
 fn system_boot_time(_args: &[Value]) -> Result<Value, String> {
     Ok(Value::Number(System::boot_time() as f64))
 }
-
-
-
 
 fn system_info(_args: &[Value]) -> Result<Value, String> {
     let sys = System::new_all();
 
     let mut info: FxHashMap<String, Value> = FxHashMap::default();
 
-    
     info.insert(
         "os".to_string(),
         Value::String(Rc::from(std::env::consts::OS.to_string())),
@@ -200,7 +159,6 @@ fn system_info(_args: &[Value]) -> Result<Value, String> {
         ),
     );
 
-    
     info.insert(
         "hostname".to_string(),
         Value::String(Rc::from(
@@ -220,7 +178,6 @@ fn system_info(_args: &[Value]) -> Result<Value, String> {
         )),
     );
 
-    
     info.insert(
         "totalMemoryMB".to_string(),
         Value::Number((sys.total_memory() / 1024 / 1024) as f64),
@@ -234,7 +191,6 @@ fn system_info(_args: &[Value]) -> Result<Value, String> {
         Value::Number((sys.free_memory() / 1024 / 1024) as f64),
     );
 
-    
     let cpu_name = sys
         .cpus()
         .first()
@@ -242,14 +198,10 @@ fn system_info(_args: &[Value]) -> Result<Value, String> {
         .unwrap_or_else(|| "unknown".to_string());
     info.insert("cpuName".to_string(), Value::String(Rc::from(cpu_name)));
 
-    
     info.insert("uptime".to_string(), Value::Number(System::uptime() as f64));
 
     Ok(Value::Dictionary(Rc::new(RefCell::new(info))))
 }
-
-
-
 
 fn system_getenv(args: &[Value]) -> Result<Value, String> {
     super::check_arity(1, args.len())?;
@@ -260,7 +212,6 @@ fn system_getenv(args: &[Value]) -> Result<Value, String> {
         Err(_) => Ok(Value::Null),
     }
 }
-
 
 fn system_setenv(args: &[Value]) -> Result<Value, String> {
     super::check_arity(2, args.len())?;
@@ -279,13 +230,11 @@ fn system_setenv(args: &[Value]) -> Result<Value, String> {
         }
     };
 
-    
     unsafe {
         std::env::set_var(&name, &value);
     }
     Ok(Value::Boolean(true))
 }
-
 
 fn system_envs(_args: &[Value]) -> Result<Value, String> {
     let mut envs: FxHashMap<String, Value> = FxHashMap::default();

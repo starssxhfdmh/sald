@@ -284,11 +284,7 @@ fn handle_run(path: &PathBuf, debug: DebugFlags) -> Result<(), String> {
 }
 
 /// Run tests - collect and execute @Test functions
-fn handle_test(
-    path: &PathBuf,
-    debug: DebugFlags,
-    filter: Option<&str>,
-) -> Result<(), String> {
+fn handle_test(path: &PathBuf, debug: DebugFlags, filter: Option<&str>) -> Result<(), String> {
     use std::time::Instant;
 
     // Auto-detect project root

@@ -1,7 +1,3 @@
-
-
-
-
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
 use std::path::Path;
@@ -35,7 +31,6 @@ fn get_string(args: &[Value], idx: usize, name: &str) -> Result<String, String> 
     }
 }
 
-
 fn path_join(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Ok(Value::String(Rc::from(String::new())));
@@ -58,7 +53,6 @@ fn path_join(args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(path.to_string_lossy().to_string())))
 }
 
-
 fn path_dirname(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
@@ -71,7 +65,6 @@ fn path_dirname(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn path_basename(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
@@ -81,7 +74,6 @@ fn path_basename(args: &[Value]) -> Result<Value, String> {
         None => Ok(Value::String(Rc::from(String::new()))),
     }
 }
-
 
 fn path_extname(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
@@ -96,13 +88,11 @@ fn path_extname(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn path_is_absolute(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = Path::new(&path_str);
     Ok(Value::Boolean(path.is_absolute()))
 }
-
 
 fn path_exists(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
@@ -110,18 +100,15 @@ fn path_exists(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Boolean(path.exists()))
 }
 
-
 fn path_normalize(args: &[Value]) -> Result<Value, String> {
     let path_str = get_string(args, 0, "path")?;
     let path = std::path::PathBuf::from(&path_str);
 
-    
     match path.canonicalize() {
         Ok(canonical) => Ok(Value::String(Rc::from(
             canonical.to_string_lossy().to_string(),
         ))),
         Err(_) => {
-            
             let mut components = Vec::new();
             for component in path.components() {
                 use std::path::Component;

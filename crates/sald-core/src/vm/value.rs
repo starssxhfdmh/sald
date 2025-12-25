@@ -1,31 +1,18 @@
-
-
-
-
 use crate::compiler::Chunk;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
-
 pub type NativeStaticFn = fn(&[Value]) -> Result<Value, String>;
-
 
 pub type NativeInstanceFn = fn(&Value, &[Value]) -> Result<Value, String>;
 
-
 pub type NativeConstructorFn = fn(&[Value]) -> Result<Value, String>;
-
 
 pub type NativeFn = fn(&[Value]) -> Value;
 
-
-
 pub struct SaldFuture;
-
-
-
 
 #[derive(Clone)]
 pub enum Value {
@@ -36,44 +23,41 @@ pub enum Value {
     Array(Rc<RefCell<Vec<Value>>>),
     Dictionary(Rc<RefCell<FxHashMap<String, Value>>>),
     Function(Rc<Function>),
-    
+
     NativeFunction {
         func: NativeStaticFn,
         class_name: String,
     },
-    
+
     InstanceMethod {
         receiver: Box<Value>,
         method: NativeInstanceFn,
         method_name: String,
     },
-    
+
     BoundMethod {
         receiver: Box<Value>,
         method: Rc<Function>,
     },
     Class(Rc<Class>),
     Instance(Rc<RefCell<Instance>>),
-    
+
     Future(Rc<RefCell<Option<SaldFuture>>>),
-    
-    
+
     Namespace {
         name: String,
         members: Rc<RefCell<FxHashMap<String, Value>>>,
-        
+
         module_globals: Option<Rc<RefCell<FxHashMap<String, Value>>>>,
     },
-    
+
     Enum {
         name: String,
         variants: Rc<FxHashMap<String, Value>>,
     },
-    
+
     SpreadMarker(Box<Value>),
 }
-
-
 
 impl Value {
     pub fn type_name(&self) -> &'static str {
@@ -212,12 +196,10 @@ impl fmt::Debug for Value {
     }
 }
 
-
-
 #[derive(Clone, Debug)]
 pub struct UpvalueObj {
-    pub location: usize,            
-    pub closed: Option<Box<Value>>, 
+    pub location: usize,
+    pub closed: Option<Box<Value>>,
 }
 
 impl UpvalueObj {
@@ -233,28 +215,27 @@ impl UpvalueObj {
     }
 }
 
-
 #[derive(Clone)]
 pub struct Function {
     pub name: String,
     pub arity: usize,
     pub is_variadic: bool,
-    
+
     pub is_async: bool,
     pub upvalue_count: usize,
     pub chunk: Chunk,
-    pub file: String, 
-    
+    pub file: String,
+
     pub upvalues: Vec<Rc<RefCell<UpvalueObj>>>,
-    
+
     pub param_names: Vec<String>,
-    
+
     pub default_count: usize,
-    
+
     pub decorators: Vec<String>,
-    
+
     pub namespace_context: Option<String>,
-    
+
     pub class_context: Option<String>,
 }
 
@@ -324,7 +305,6 @@ impl Function {
         }
     }
 
-    
     pub fn from_constant(fc: &crate::compiler::chunk::FunctionConstant) -> Self {
         Self {
             name: fc.name.clone(),
@@ -344,31 +324,29 @@ impl Function {
     }
 }
 
-
 #[derive(Clone)]
 pub struct Class {
     pub name: String,
-    
+
     pub methods: FxHashMap<String, Value>,
-    
+
     pub user_static_methods: FxHashMap<String, Value>,
-    
+
     pub native_static_methods: FxHashMap<String, NativeStaticFn>,
-    
+
     pub native_instance_methods: FxHashMap<String, NativeInstanceFn>,
-    
+
     pub callable_native_instance_methods:
         FxHashMap<String, super::caller::CallableNativeInstanceFn>,
-    
+
     pub native_static_fields: FxHashMap<String, Value>,
-    
+
     pub constructor: Option<NativeConstructorFn>,
-    
+
     pub superclass: Option<Rc<Class>>,
 }
 
 impl Class {
-    
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -383,7 +361,6 @@ impl Class {
         }
     }
 
-    
     pub fn new_with_static(
         name: impl Into<String>,
         native_static_methods: FxHashMap<String, NativeStaticFn>,
@@ -401,7 +378,6 @@ impl Class {
         }
     }
 
-    
     pub fn new_with_instance(
         name: impl Into<String>,
         native_instance_methods: FxHashMap<String, NativeInstanceFn>,
@@ -420,7 +396,6 @@ impl Class {
         }
     }
 
-    
     pub fn new_with_static_and_fields(
         name: impl Into<String>,
         native_static_methods: FxHashMap<String, NativeStaticFn>,
@@ -439,7 +414,6 @@ impl Class {
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct Instance {

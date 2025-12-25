@@ -1,122 +1,97 @@
-
-
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum OpCode {
-    
-    Constant, 
-    Pop,      
-    Dup,      
-    DupTwo,   
-    Swap,     
+    Constant,
+    Pop,
+    Dup,
+    DupTwo,
+    Swap,
 
-    
-    Null,  
-    True,  
-    False, 
+    Null,
+    True,
+    False,
 
-    
-    DefineGlobal, 
-    GetGlobal,    
-    SetGlobal,    
-    GetLocal,     
-    SetLocal,     
+    DefineGlobal,
+    GetGlobal,
+    SetGlobal,
+    GetLocal,
+    SetLocal,
 
-    
-    Add,    
-    Sub,    
-    Mul,    
-    Div,    
-    Mod,    
-    Negate, 
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Negate,
 
-    
-    Equal,        
-    NotEqual,     
-    Less,         
-    LessEqual,    
-    Greater,      
-    GreaterEqual, 
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
 
-    
-    Not, 
+    Not,
 
-    
-    Jump,          
-    JumpIfFalse,   
-    JumpIfTrue,    
-    JumpIfNotNull, 
-    Loop,          
+    Jump,
+    JumpIfFalse,
+    JumpIfTrue,
+    JumpIfNotNull,
+    Loop,
 
-    
-    Call,    
-    Return,  
-    Closure, 
+    Call,
+    Return,
+    Closure,
 
-    
-    Class,        
-    Method,       
-    StaticMethod, 
-    GetProperty,  
-    SetProperty,  
-    GetSelf,      
-    Invoke,       
+    Class,
+    Method,
+    StaticMethod,
+    GetProperty,
+    SetProperty,
+    GetSelf,
+    Invoke,
 
-    
-    BuildArray, 
-    GetIndex,   
-    SetIndex,   
+    BuildArray,
+    GetIndex,
+    SetIndex,
 
-    
-    BuildDict, 
+    BuildDict,
 
-    
-    BuildNamespace, 
-    BuildEnum,      
+    BuildNamespace,
+    BuildEnum,
 
-    
-    Inherit,  
-    GetSuper, 
+    Inherit,
+    GetSuper,
 
-    
-    Import,   
-    ImportAs, 
+    Import,
+    ImportAs,
 
-    
-    GetUpvalue,   
-    SetUpvalue,   
-    CloseUpvalue, 
+    GetUpvalue,
+    SetUpvalue,
+    CloseUpvalue,
 
-    
-    TryStart, 
-    TryEnd,   
-    Throw,    
+    TryStart,
+    TryEnd,
+    Throw,
 
-    
-    Await, 
+    Await,
 
-    
-    SpreadArray, 
+    SpreadArray,
 
-    
-    BitAnd,     
-    BitOr,      
-    BitXor,     
-    BitNot,     
-    LeftShift,  
-    RightShift, 
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+    LeftShift,
+    RightShift,
 
-    
-    BuildRangeInclusive, 
-    BuildRangeExclusive, 
+    BuildRangeInclusive,
+    BuildRangeExclusive,
 
-    
-    RecursiveCall, 
+    RecursiveCall,
 }
 
 impl OpCode {
-    
     pub fn operand_count(&self) -> usize {
         match self {
             OpCode::Constant
@@ -149,7 +124,7 @@ impl OpCode {
             | OpCode::GetUpvalue
             | OpCode::SetUpvalue
             | OpCode::TryStart
-            | OpCode::RecursiveCall => 2, 
+            | OpCode::RecursiveCall => 2,
 
             _ => 0,
         }

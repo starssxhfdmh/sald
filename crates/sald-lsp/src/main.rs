@@ -1,6 +1,3 @@
-
-
-
 use sald_lsp::SaldLanguageServer;
 use tower_lsp::{LspService, Server};
 

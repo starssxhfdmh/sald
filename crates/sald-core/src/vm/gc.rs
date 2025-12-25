@@ -1,52 +1,30 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
-
-const INITIAL_THRESHOLD: usize = 10000; 
+const INITIAL_THRESHOLD: usize = 10000;
 const HEAP_GROW_FACTOR: f64 = 1.5;
 
-const STEP_BUDGET_US: u64 = 500; 
+const STEP_BUDGET_US: u64 = 500;
 
 const OBJECTS_PER_STEP: usize = 100;
 
-
 #[derive(Debug, Clone, Default)]
 pub struct GcStats {
-    
     pub total_tracked: usize,
-    
+
     pub cycles_broken: usize,
-    
+
     pub tracked_count: usize,
-    
+
     pub collections: usize,
-    
+
     pub incremental_steps: usize,
 }
 
-
 pub type ObjectId = u64;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObjectType {
@@ -55,28 +33,23 @@ pub enum ObjectType {
     Instance,
 }
 
-
 #[derive(Debug, Clone)]
 #[allow(unused)]
 enum GcPhase {
-    
     Idle,
-    
+
     Marking {
-        
         reachable: FxHashSet<ObjectId>,
-        
+
         iter_keys: Vec<ObjectId>,
         iter_pos: usize,
     },
-    
+
     Sweeping {
-        
         to_clear: Vec<ObjectId>,
         iter_pos: usize,
     },
 }
-
 
 #[derive(Clone)]
 pub enum TrackedObject {
@@ -86,7 +59,6 @@ pub enum TrackedObject {
 }
 
 impl TrackedObject {
-    
     pub fn is_alive(&self) -> bool {
         match self {
             TrackedObject::Array(w) => w.strong_count() > 0,
@@ -95,7 +67,6 @@ impl TrackedObject {
         }
     }
 
-    
     pub fn strong_count(&self) -> usize {
         match self {
             TrackedObject::Array(w) => w.strong_count(),
@@ -104,7 +75,6 @@ impl TrackedObject {
         }
     }
 
-    
     pub fn upgrade_array(&self) -> Option<Rc<RefCell<Vec<super::Value>>>> {
         match self {
             TrackedObject::Array(w) => w.upgrade(),
@@ -126,7 +96,6 @@ impl TrackedObject {
         }
     }
 
-    
     pub fn clear_contents(&self) {
         match self {
             TrackedObject::Array(w) => {
@@ -148,17 +117,15 @@ impl TrackedObject {
     }
 }
 
-
 pub struct GcHeap {
-    
     next_id: u64,
-    
+
     tracked: FxHashMap<ObjectId, TrackedObject>,
-    
+
     threshold: usize,
-    
+
     pub stats: GcStats,
-    
+
     phase: GcPhase,
 }
 
@@ -173,15 +140,13 @@ impl GcHeap {
         }
     }
 
-    
     pub fn should_collect(&self) -> bool {
         match &self.phase {
             GcPhase::Idle => self.tracked.len() > self.threshold,
-            _ => true, 
+            _ => true,
         }
     }
 
-    
     pub fn track_array(&mut self, arr: &Rc<RefCell<Vec<super::Value>>>) -> ObjectId {
         let id = self.next_id;
         self.next_id += 1;
@@ -192,7 +157,6 @@ impl GcHeap {
         id
     }
 
-    
     pub fn track_dict(&mut self, dict: &Rc<RefCell<FxHashMap<String, super::Value>>>) -> ObjectId {
         let id = self.next_id;
         self.next_id += 1;
@@ -203,7 +167,6 @@ impl GcHeap {
         id
     }
 
-    
     pub fn track_instance(&mut self, inst: &Rc<RefCell<super::Instance>>) -> ObjectId {
         let id = self.next_id;
         self.next_id += 1;
@@ -214,25 +177,18 @@ impl GcHeap {
         id
     }
 
-    
-    
-    
     pub fn collect(&mut self, roots: Vec<&super::Value>) {
         let start = Instant::now();
         let budget = Duration::from_micros(STEP_BUDGET_US);
 
-        
         self.cleanup_dead();
 
         loop {
             match std::mem::replace(&mut self.phase, GcPhase::Idle) {
                 GcPhase::Idle => {
-                    
                     let reachable = self.mark_from_roots(&roots);
                     let iter_keys: Vec<ObjectId> = self.tracked.keys().copied().collect();
 
-                    
-                    
                     let mut to_clear = Vec::new();
                     for id in &iter_keys {
                         if !reachable.contains(id) {
@@ -245,7 +201,6 @@ impl GcHeap {
                     }
 
                     if to_clear.is_empty() {
-                        
                         self.finish_collection();
                         return;
                     }
@@ -262,15 +217,13 @@ impl GcHeap {
                     iter_keys,
                     iter_pos,
                 } => {
-                    
-                    
                     self.phase = GcPhase::Marking {
                         reachable,
                         iter_keys,
                         iter_pos,
                     };
                     let to_clear = Vec::new();
-                    
+
                     self.phase = GcPhase::Sweeping {
                         to_clear,
                         iter_pos: 0,
@@ -284,9 +237,7 @@ impl GcHeap {
                     let mut processed = 0;
 
                     while iter_pos < to_clear.len() {
-                        
                         if processed >= OBJECTS_PER_STEP && start.elapsed() >= budget {
-                            
                             self.phase = GcPhase::Sweeping { to_clear, iter_pos };
                             self.stats.incremental_steps += 1;
                             return;
@@ -302,13 +253,11 @@ impl GcHeap {
                         processed += 1;
                     }
 
-                    
                     self.finish_collection();
                     return;
                 }
             }
 
-            
             if start.elapsed() >= budget {
                 self.stats.incremental_steps += 1;
                 return;
@@ -316,25 +265,21 @@ impl GcHeap {
         }
     }
 
-    
     fn finish_collection(&mut self) {
         self.stats.collections += 1;
         self.stats.tracked_count = self.tracked.len();
         self.stats.incremental_steps += 1;
 
-        
         let new_threshold = (self.tracked.len() as f64 * HEAP_GROW_FACTOR) as usize;
         self.threshold = new_threshold.max(INITIAL_THRESHOLD);
 
         self.phase = GcPhase::Idle;
     }
 
-    
     fn cleanup_dead(&mut self) {
         self.tracked.retain(|_, obj| obj.is_alive());
     }
 
-    
     fn mark_from_roots(&self, roots: &[&super::Value]) -> FxHashSet<ObjectId> {
         let mut reachable = FxHashSet::default();
         let mut worklist: Vec<&super::Value> = roots.iter().copied().collect();
@@ -346,7 +291,6 @@ impl GcHeap {
         reachable
     }
 
-    
     fn mark_value<'a>(
         &self,
         value: &'a super::Value,
@@ -357,15 +301,11 @@ impl GcHeap {
 
         match value {
             Value::Array(arr) => {
-                
                 for (id, tracked) in &self.tracked {
                     if let TrackedObject::Array(w) = tracked {
                         if let Some(rc) = w.upgrade() {
                             if Rc::ptr_eq(&rc, arr) {
-                                if reachable.insert(*id) {
-                                    
-                                    
-                                }
+                                if reachable.insert(*id) {}
                                 break;
                             }
                         }
@@ -397,28 +337,18 @@ impl GcHeap {
                 }
             }
             Value::Function(func) => {
-                
                 for upvalue in &func.upvalues {
                     let uv = upvalue.borrow();
-                    if uv.closed.is_some() {
-                        
-                    }
+                    if uv.closed.is_some() {}
                 }
             }
-            Value::BoundMethod { receiver: _, .. } => {
-                
-            }
-            Value::InstanceMethod { receiver: _, .. } => {
-                
-            }
-            Value::Namespace { members: _, .. } => {
-                
-            }
+            Value::BoundMethod { receiver: _, .. } => {}
+            Value::InstanceMethod { receiver: _, .. } => {}
+            Value::Namespace { members: _, .. } => {}
             _ => {}
         }
     }
 
-    
     pub fn get_stats(&self) -> GcStats {
         self.stats.clone()
     }
@@ -454,16 +384,13 @@ mod tests {
     fn test_gc_cleanup_dead() {
         let mut gc = GcHeap::new();
 
-        
         {
             let arr = Rc::new(RefCell::new(Vec::new()));
             gc.track_array(&arr);
-        } 
+        }
 
-        
         assert_eq!(gc.tracked.len(), 1);
 
-        
         gc.cleanup_dead();
         assert_eq!(gc.tracked.len(), 0);
     }

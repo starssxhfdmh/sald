@@ -1,7 +1,3 @@
-
-
-
-
 use super::{check_arity, check_arity_range, get_string_arg};
 use crate::vm::value::{Class, NativeInstanceFn, Value};
 use rustc_hash::FxHashMap;
@@ -26,14 +22,13 @@ pub fn create_dict_class() -> Class {
     Class::new_with_instance("Dict", instance_methods, Some(dict_constructor))
 }
 
-
 fn dict_constructor(args: &[Value]) -> Result<Value, String> {
     check_arity_range(0, 1, args.len())?;
 
     if args.is_empty() {
-        Ok(Value::Dictionary(Rc::new(
-            RefCell::new(FxHashMap::default()),
-        )))
+        Ok(Value::Dictionary(Rc::new(RefCell::new(
+            FxHashMap::default(),
+        ))))
     } else {
         match &args[0] {
             Value::Dictionary(source) => {
@@ -48,7 +43,6 @@ fn dict_constructor(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn dict_length(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     match recv {
@@ -56,7 +50,6 @@ fn dict_length(recv: &Value, args: &[Value]) -> Result<Value, String> {
         _ => Err("Receiver must be a dictionary".to_string()),
     }
 }
-
 
 fn dict_keys(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
@@ -73,7 +66,6 @@ fn dict_keys(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn dict_values(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     match recv {
@@ -84,7 +76,6 @@ fn dict_values(recv: &Value, args: &[Value]) -> Result<Value, String> {
         _ => Err("Receiver must be a dictionary".to_string()),
     }
 }
-
 
 fn dict_entries(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
@@ -105,7 +96,6 @@ fn dict_entries(recv: &Value, args: &[Value]) -> Result<Value, String> {
         _ => Err("Receiver must be a dictionary".to_string()),
     }
 }
-
 
 fn dict_get(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity_range(1, 2, args.len())?;
@@ -128,7 +118,6 @@ fn dict_get(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn dict_set(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     match recv {
@@ -141,7 +130,6 @@ fn dict_set(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn dict_has(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     match recv {
@@ -152,7 +140,6 @@ fn dict_has(recv: &Value, args: &[Value]) -> Result<Value, String> {
         _ => Err("Receiver must be a dictionary".to_string()),
     }
 }
-
 
 fn dict_remove(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -165,7 +152,6 @@ fn dict_remove(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn dict_clear(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     match recv {
@@ -177,7 +163,6 @@ fn dict_clear(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn dict_is_empty(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     match recv {
@@ -185,7 +170,6 @@ fn dict_is_empty(recv: &Value, args: &[Value]) -> Result<Value, String> {
         _ => Err("Receiver must be a dictionary".to_string()),
     }
 }
-
 
 fn dict_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
@@ -196,10 +180,7 @@ fn dict_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
                 .iter()
                 .map(|(k, v)| format!("\"{}\": {}", k, v))
                 .collect();
-            Ok(Value::String(Rc::from(format!(
-                "{{{}}}",
-                items.join(", ")
-            ))))
+            Ok(Value::String(Rc::from(format!("{{{}}}", items.join(", ")))))
         }
         _ => Err("Receiver must be a dictionary".to_string()),
     }

@@ -1,35 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 use crate::vm::caller::ValueCaller;
 use crate::vm::value::{Class, Instance, NativeInstanceFn, Value};
 use libffi::middle::{Arg, Cif, CodePtr, Type as FfiType};
@@ -41,8 +9,6 @@ use std::cell::RefCell;
 use std::ffi::{c_void, CStr, CString};
 use std::ptr;
 use std::rc::Rc;
-
-
 
 #[derive(Debug, Clone, PartialEq)]
 enum CType {
@@ -62,7 +28,6 @@ enum CType {
 }
 
 impl CType {
-    
     fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
             "void" => Ok(CType::Void),
@@ -111,14 +76,10 @@ impl CType {
     }
 }
 
-
-
 struct FfiLibrary {
     library: Library,
     _path: String,
 }
-
-
 
 #[derive(Clone, Copy)]
 struct SendPtr(*mut ());
@@ -130,14 +91,11 @@ struct SendConstPtr(*const ());
 unsafe impl Send for SendConstPtr {}
 unsafe impl Sync for SendConstPtr {}
 
-
-
 struct CallbackInfo {
     func: Value,
     arg_types: Vec<CType>,
     return_type: CType,
 }
-
 
 thread_local! {
     static CALLBACK_REGISTRY: RefCell<FxHashMap<i64, CallbackInfo>> = RefCell::new(FxHashMap::default());
@@ -148,21 +106,16 @@ thread_local! {
     static CLOSURE_REGISTRY: RefCell<FxHashMap<i64, ClosureData>> = RefCell::new(FxHashMap::default());
 }
 
-
-static FFI_LIB_HANDLES: Mutex<Option<FxHashMap<usize, ()>>> = Mutex::new(None);
-
-
 #[allow(dead_code)]
 struct ClosureData {
     cif: Cif,
     closure: libffi::middle::Closure<'static>,
-    code_ptr: usize,           
-    callback_id_ptr: *mut i64, 
+    code_ptr: usize,
+    callback_id_ptr: *mut i64,
 }
 
 impl Drop for ClosureData {
     fn drop(&mut self) {
-        
         if !self.callback_id_ptr.is_null() {
             unsafe {
                 let _ = Box::from_raw(self.callback_id_ptr);
@@ -171,11 +124,8 @@ impl Drop for ClosureData {
     }
 }
 
-
 unsafe impl Send for ClosureData {}
 unsafe impl Sync for ClosureData {}
-
-
 
 extern "C" fn closure_handler(
     _cif: &libffi::low::ffi_cif,
@@ -185,7 +135,6 @@ extern "C" fn closure_handler(
 ) {
     let callback_id = *userdata;
 
-    
     let callback_result = CALLBACK_REGISTRY.with(|reg| {
         let map = reg.borrow();
         map.get(&callback_id).map(|info| {
@@ -206,7 +155,6 @@ extern "C" fn closure_handler(
         }
     };
 
-    
     let caller_result = GLOBAL_CALLER_PTR.with(|ptr_cell| {
         GLOBAL_CALLER_VTABLE.with(|vtable_cell| {
             let ptr_vec = ptr_cell.borrow();
@@ -233,7 +181,6 @@ extern "C" fn closure_handler(
         &mut *trait_ptr
     };
 
-    
     let mut sald_args = Vec::with_capacity(arg_types.len());
     for (i, arg_type) in arg_types.iter().enumerate() {
         let arg_ptr = unsafe { *args.add(i) };
@@ -263,10 +210,8 @@ extern "C" fn closure_handler(
         sald_args.push(value);
     }
 
-    
     match caller.call(&callback_fn, sald_args) {
         Ok(ret_val) => {
-            
             *result = match (&return_type, &ret_val) {
                 (CType::Void, _) => 0,
                 (CType::I8, Value::Number(n)) => *n as i8 as u64,
@@ -303,7 +248,7 @@ fn register_callback(func: Value, arg_types: Vec<CType>, return_type: CType) -> 
         let mut id_ref = id_cell.borrow_mut();
         let id = *id_ref;
         *id_ref += 1;
-        
+
         CALLBACK_REGISTRY.with(|reg_cell| {
             let mut map = reg_cell.borrow_mut();
             map.insert(
@@ -315,7 +260,7 @@ fn register_callback(func: Value, arg_types: Vec<CType>, return_type: CType) -> 
                 },
             );
         });
-        
+
         id
     })
 }
@@ -342,7 +287,6 @@ fn set_global_caller(caller: &mut dyn ValueCaller) {
         (*fat_ptr_bytes)[1] as *const ()
     };
 
-    
     GLOBAL_CALLER_PTR.with(|ptr_cell| {
         ptr_cell.borrow_mut().push(SendPtr(data_ptr));
     });
@@ -428,8 +372,6 @@ pub extern "C" fn sald_get_callback_invoker() -> *const c_void {
     sald_invoke_callback as *const c_void
 }
 
-
-
 struct ConvertedArg {
     ffi_type: FfiType,
     data: ConvertedData,
@@ -447,7 +389,6 @@ enum ConvertedData {
     F32(f32),
     F64(f64),
     Ptr(usize),
-    
 }
 
 fn convert_value_to_arg(value: &Value, ctype: &CType) -> Result<ConvertedArg, String> {
@@ -464,7 +405,6 @@ fn convert_value_to_arg(value: &Value, ctype: &CType) -> Result<ConvertedArg, St
         (Value::Number(n), CType::F64) => ConvertedData::F64(*n),
         (Value::Number(n), CType::Pointer) => ConvertedData::Ptr(*n as usize),
         (Value::String(_), CType::CString) => {
-            
             return Err("CString conversion should be handled via pre-allocation".to_string());
         }
         (Value::Null, CType::Pointer | CType::CString) => ConvertedData::Ptr(0),
@@ -483,12 +423,9 @@ fn convert_value_to_arg(value: &Value, ctype: &CType) -> Result<ConvertedArg, St
     })
 }
 
-
-
 pub fn create_ffi_namespace() -> Value {
     let mut members: FxHashMap<String, Value> = FxHashMap::default();
 
-    
     members.insert(
         "open".to_string(),
         Value::NativeFunction {
@@ -497,7 +434,6 @@ pub fn create_ffi_namespace() -> Value {
         },
     );
 
-    
     members.insert(
         "alloc".to_string(),
         Value::NativeFunction {
@@ -527,7 +463,6 @@ pub fn create_ffi_namespace() -> Value {
         },
     );
 
-    
     members.insert(
         "readI8".to_string(),
         Value::NativeFunction {
@@ -613,7 +548,6 @@ pub fn create_ffi_namespace() -> Value {
         },
     );
 
-    
     members.insert(
         "writeI8".to_string(),
         Value::NativeFunction {
@@ -699,7 +633,6 @@ pub fn create_ffi_namespace() -> Value {
         },
     );
 
-    
     members.insert(
         "offset".to_string(),
         Value::NativeFunction {
@@ -715,10 +648,8 @@ pub fn create_ffi_namespace() -> Value {
         },
     );
 
-    
     members.insert("NULL".to_string(), Value::Number(0.0));
 
-    
     members.insert(
         "Library".to_string(),
         Value::Class(Rc::new(create_library_class())),
@@ -734,8 +665,6 @@ pub fn create_ffi_namespace() -> Value {
         module_globals: None,
     }
 }
-
-
 
 fn ffi_alloc(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
@@ -755,7 +684,6 @@ fn ffi_alloc(args: &[Value]) -> Result<Value, String> {
             return Err("Memory allocation failed".to_string());
         }
 
-        
         ALLOCATION_SIZES.with(|allocs_cell| {
             let mut map = allocs_cell.borrow_mut();
             map.insert(ptr as usize, size);
@@ -775,10 +703,9 @@ fn ffi_free(args: &[Value]) -> Result<Value, String> {
     };
 
     if ptr_val == 0 {
-        return Ok(Value::Null); 
+        return Ok(Value::Null);
     }
 
-    
     let size = ALLOCATION_SIZES.with(|allocs_cell| {
         let mut map = allocs_cell.borrow_mut();
         map.remove(&ptr_val)
@@ -791,7 +718,6 @@ fn ffi_free(args: &[Value]) -> Result<Value, String> {
             std::alloc::dealloc(ptr_val as *mut u8, layout);
         }
     }
-    
 
     Ok(Value::Null)
 }
@@ -843,8 +769,6 @@ fn ffi_memset(args: &[Value]) -> Result<Value, String> {
     }
     Ok(Value::Null)
 }
-
-
 
 macro_rules! impl_read {
     ($name:ident, $type:ty) => {
@@ -898,8 +822,6 @@ fn ffi_read_string(args: &[Value]) -> Result<Value, String> {
     };
     Ok(Value::String(Rc::from(s)))
 }
-
-
 
 macro_rules! impl_write {
     ($name:ident, $type:ty) => {
@@ -963,8 +885,6 @@ fn ffi_write_string(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-
-
 fn ffi_offset(args: &[Value]) -> Result<Value, String> {
     if args.len() < 2 {
         return Err("Ffi.offset expects 2 arguments (pointer, offset)".to_string());
@@ -992,8 +912,6 @@ fn ffi_sizeof(args: &[Value]) -> Result<Value, String> {
     let ctype = CType::from_str(type_name)?;
     Ok(Value::Number(ctype.size() as f64))
 }
-
-
 
 fn ffi_open(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
@@ -1025,7 +943,6 @@ fn ffi_open(args: &[Value]) -> Result<Value, String> {
         _path: full_path.clone(),
     };
 
-    
     let lib_handle = Box::new(Mutex::new(ffi_lib));
     let lib_ptr = Box::into_raw(lib_handle);
 
@@ -1039,8 +956,6 @@ fn ffi_open(args: &[Value]) -> Result<Value, String> {
 
     Ok(Value::Instance(Rc::new(RefCell::new(instance))))
 }
-
-
 
 fn create_library_class() -> Class {
     let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
@@ -1057,15 +972,6 @@ fn create_library_class() -> Class {
     class.callable_native_instance_methods = callable_methods;
     class
 }
-
-
-
-
-
-
-
-
-
 
 fn library_call(
     recv: &Value,
@@ -1086,7 +992,6 @@ fn library_call(
         }
     };
 
-    
     let options = if args.len() > 1 {
         match &args[1] {
             Value::Dictionary(dict) => dict.borrow().clone(),
@@ -1096,7 +1001,6 @@ fn library_call(
         return Err("lib.call requires options dictionary with 'args' and 'returns'".to_string());
     };
 
-    
     let return_type_str = match options.get("returns") {
         Some(Value::String(s)) => s.to_string(),
         Some(_) => return Err("'returns' must be a string".to_string()),
@@ -1104,7 +1008,6 @@ fn library_call(
     };
     let return_type = CType::from_str(&return_type_str)?;
 
-    
     let (call_values, arg_types) = match options.get("args") {
         Some(Value::Array(arr)) => {
             let arr_guard = arr.borrow();
@@ -1145,11 +1048,9 @@ fn library_call(
         None => (Vec::new(), Vec::new()),
     };
 
-    
     set_global_caller(caller);
 
     let result = if let Value::Instance(inst) = recv {
-        
         let lib_ptr = {
             let inst_guard = inst.borrow();
             if let Some(Value::Number(ptr)) = inst_guard.fields.get("_handle") {
@@ -1161,13 +1062,11 @@ fn library_call(
             } else {
                 return Err("Invalid library instance".to_string());
             }
-            
         };
 
         unsafe {
             let lib_mutex = &*lib_ptr;
 
-            
             let func_ptr = {
                 let lib_guard = lib_mutex.lock();
 
@@ -1180,11 +1079,8 @@ fn library_call(
                     .map_err(|e| format!("Function '{}' not found: {}", fn_name, e))?;
 
                 *func_ptr
-                
             };
 
-            
-            
             call_with_types(func_ptr, &call_values, &arg_types, &return_type)
         }
     } else {
@@ -1265,8 +1161,6 @@ fn library_path(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-
-
 fn create_callback_class() -> Class {
     let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
 
@@ -1274,24 +1168,14 @@ fn create_callback_class() -> Class {
     instance_methods.insert("id".to_string(), callback_id);
     instance_methods.insert("release".to_string(), callback_release);
 
-    
     let mut class = Class::new_with_instance("Callback", instance_methods, Some(callback_new));
 
-    
     class
         .native_static_methods
         .insert("new".to_string(), callback_new);
 
     class
 }
-
-
-
-
-
-
-
-
 
 fn callback_new(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
@@ -1303,7 +1187,6 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
         _ => return Err("Ffi.Callback expects an options dictionary".to_string()),
     };
 
-    
     let arg_types: Vec<CType> = match options.get("args") {
         Some(Value::Array(arr)) => {
             let arr_guard = arr.borrow();
@@ -1320,46 +1203,35 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
         None => Vec::new(),
     };
 
-    
     let return_type = match options.get("returns") {
         Some(Value::String(s)) => CType::from_str(s)?,
         Some(_) => return Err("'returns' must be a type string".to_string()),
         None => CType::Void,
     };
 
-    
     let func = match options.get("fn") {
         Some(f @ Value::Function(_)) => f.clone(),
         Some(_) => return Err("'fn' must be a function".to_string()),
         None => return Err("Missing 'fn' field in Callback options".to_string()),
     };
 
-    
     let callback_id = register_callback(func, arg_types.clone(), return_type.clone());
 
-    
     let ffi_arg_types: Vec<FfiType> = arg_types.iter().map(|t| t.to_ffi_type()).collect();
     let ffi_return_type = return_type.to_ffi_type();
     let cif = Cif::new(ffi_arg_types, ffi_return_type);
 
-    
-    
-    
-
-    
     let callback_id_box = Box::new(callback_id);
-    let callback_id_ptr = Box::into_raw(callback_id_box); 
+    let callback_id_ptr = Box::into_raw(callback_id_box);
     let callback_id_ref: &'static i64 = unsafe { &*callback_id_ptr };
 
     let closure = libffi::middle::Closure::new(cif.clone(), closure_handler, callback_id_ref);
-    
-    
+
     let code_ptr_value = unsafe {
         let fn_ptr: unsafe extern "C" fn() = *closure.code_ptr();
         std::mem::transmute::<unsafe extern "C" fn(), usize>(fn_ptr)
     };
 
-    
     CLOSURE_REGISTRY.with(|reg_cell| {
         let mut map = reg_cell.borrow_mut();
         map.insert(
@@ -1368,12 +1240,11 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
                 cif,
                 closure,
                 code_ptr: code_ptr_value,
-                callback_id_ptr, 
+                callback_id_ptr,
             },
         );
     });
 
-    
     let callback_class = Rc::new(create_callback_class());
     let mut instance = Instance::new(callback_class);
 
@@ -1391,7 +1262,6 @@ fn callback_new(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Instance(Rc::new(RefCell::new(instance))))
 }
 
-
 fn callback_ptr(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
         let inst_guard = inst.borrow();
@@ -1400,14 +1270,12 @@ fn callback_ptr(recv: &Value, _args: &[Value]) -> Result<Value, String> {
             return Err("Callback has been released".to_string());
         }
 
-        
         if let Some(Value::Number(code_ptr)) = inst_guard.fields.get("_code_ptr") {
             return Ok(Value::Number(*code_ptr));
         }
     }
     Err("Invalid callback instance".to_string())
 }
-
 
 fn callback_id(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
@@ -1424,20 +1292,18 @@ fn callback_id(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     Err("Invalid callback instance".to_string())
 }
 
-
 fn callback_release(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     if let Value::Instance(inst) = recv {
         let mut inst_guard = inst.borrow_mut();
 
         if let Some(Value::Boolean(true)) = inst_guard.fields.get("_released") {
-            return Ok(Value::Null); 
+            return Ok(Value::Null);
         }
 
         if let Some(Value::Number(id)) = inst_guard.fields.get("_id") {
             let callback_id = *id as i64;
             unregister_callback(callback_id);
 
-            
             CLOSURE_REGISTRY.with(|reg_cell| {
                 let mut map = reg_cell.borrow_mut();
                 map.remove(&callback_id);
@@ -1451,8 +1317,6 @@ fn callback_release(recv: &Value, _args: &[Value]) -> Result<Value, String> {
     }
     Err("Invalid callback instance".to_string())
 }
-
-
 
 unsafe fn call_with_types(
     func_ptr: *const c_void,
@@ -1468,8 +1332,6 @@ unsafe fn call_with_types(
         ));
     }
 
-    
-    
     let mut cstrings: Vec<CString> = Vec::new();
     for (val, typ) in values.iter().zip(arg_types.iter()) {
         if *typ == CType::CString {
@@ -1481,12 +1343,10 @@ unsafe fn call_with_types(
         }
     }
 
-    
     let mut cstring_idx = 0;
     let mut converted_args: Vec<ConvertedArg> = Vec::new();
     for (idx, (val, typ)) in values.iter().zip(arg_types.iter()).enumerate() {
         let converted = match val {
-            
             Value::Instance(inst) => {
                 let inst_guard = inst.borrow();
                 if let Some(Value::Number(id)) = inst_guard.fields.get("_id") {
@@ -1499,7 +1359,6 @@ unsafe fn call_with_types(
                 }
             }
             Value::String(_) if *typ == CType::CString => {
-                
                 let ptr = cstrings[cstring_idx].as_ptr() as usize;
                 cstring_idx += 1;
                 ConvertedArg {
@@ -1529,7 +1388,6 @@ unsafe fn call_with_types(
             ConvertedData::F32(v) => Arg::new(v),
             ConvertedData::F64(v) => Arg::new(v),
             ConvertedData::Ptr(v) => Arg::new(v),
-            
         };
         ffi_args.push(arg_ref);
     }

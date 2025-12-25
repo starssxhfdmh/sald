@@ -1,7 +1,3 @@
-
-
-
-
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
 use std::time::Duration;
@@ -11,12 +7,10 @@ pub fn create_timer_class() -> Class {
 
     static_methods.insert("sleep".to_string(), timer_sleep);
     static_methods.insert("now".to_string(), timer_now);
-    static_methods.insert("millis".to_string(), timer_now); 
+    static_methods.insert("millis".to_string(), timer_now);
 
     Class::new_with_static("Timer", static_methods)
 }
-
-
 
 fn timer_sleep(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
@@ -33,12 +27,10 @@ fn timer_sleep(args: &[Value]) -> Result<Value, String> {
         }
     };
 
-    
     std::thread::sleep(Duration::from_millis(ms));
 
     Ok(Value::Null)
 }
-
 
 fn timer_now(_args: &[Value]) -> Result<Value, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,7 +39,6 @@ fn timer_now(_args: &[Value]) -> Result<Value, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?;
 
-    
     let millis = duration.as_secs_f64() * 1000.0;
     Ok(Value::Number(millis))
 }

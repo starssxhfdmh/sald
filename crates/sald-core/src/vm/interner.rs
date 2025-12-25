@@ -2,8 +2,6 @@ use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use std::sync::{Arc, OnceLock};
 
-
-
 pub struct Interner {
     pool: Mutex<FxHashSet<Arc<str>>>,
 }
@@ -20,9 +18,6 @@ impl Interner {
         INTERNER.get_or_init(Self::new)
     }
 
-    
-    
-    
     pub fn intern(&self, s: &str) -> Arc<str> {
         let mut pool = self.pool.lock();
         if let Some(interned) = pool.get(s) {
@@ -34,7 +29,6 @@ impl Interner {
         interned
     }
 }
-
 
 pub fn intern(s: &str) -> Arc<str> {
     Interner::global().intern(s)

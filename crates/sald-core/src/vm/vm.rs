@@ -1,7 +1,3 @@
-
-
-
-
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -20,16 +16,13 @@ use crate::vm::value::{Class, Function, Instance, UpvalueObj, Value};
 const STACK_MAX: usize = 65536;
 const FRAMES_MAX: usize = 4096;
 
-
 const STACK_INIT: usize = 256;
 const FRAMES_INIT: usize = 64;
-
 
 pub enum ExecutionResult {
     Completed(Value),
     Error(SaldError),
 }
-
 
 #[derive(Clone)]
 struct CallFrame {
@@ -37,9 +30,9 @@ struct CallFrame {
     ip: usize,
     slots_start: usize,
     init_instance: Option<Value>,
-    
+
     class_context: Option<String>,
-    
+
     saved_globals: Option<Rc<RefCell<FxHashMap<String, Value>>>>,
 }
 
@@ -111,7 +104,6 @@ struct ExceptionHandler {
     catch_ip: usize,
 }
 
-
 pub struct VM {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
@@ -125,12 +117,9 @@ pub struct VM {
     gc_stats_enabled: bool,
     pending_module_workspace: Option<std::path::PathBuf>,
     args: Vec<String>,
-    
+
     namespace_context: Vec<String>,
 }
-
-
-
 
 #[cfg(not(target_arch = "wasm32"))]
 enum ControlFlow {
@@ -146,83 +135,79 @@ enum ControlFlow {
     Error(SaldError),
 }
 
-
 type OpHandler = fn(&mut VM) -> ControlFlow;
 
-
 static DISPATCH: [OpHandler; 69] = [
-    op_constant,              
-    op_pop,                   
-    op_dup,                   
-    op_dup_two,               
-    op_swap,                  
-    op_null,                  
-    op_true,                  
-    op_false,                 
-    op_define_global,         
-    op_get_global,            
-    op_set_global,            
-    op_get_local,             
-    op_set_local,             
-    op_add,                   
-    op_sub,                   
-    op_mul,                   
-    op_div,                   
-    op_mod,                   
-    op_negate,                
-    op_equal,                 
-    op_not_equal,             
-    op_less,                  
-    op_less_equal,            
-    op_greater,               
-    op_greater_equal,         
-    op_not,                   
-    op_jump,                  
-    op_jump_if_false,         
-    op_jump_if_true,          
-    op_jump_if_not_null,      
-    op_loop,                  
-    op_call,                  
-    op_return,                
-    op_closure,               
-    op_class,                 
-    op_method,                
-    op_static_method,         
-    op_get_property,          
-    op_set_property,          
-    op_get_self,              
-    op_invoke,                
-    op_build_array,           
-    op_get_index,             
-    op_set_index,             
-    op_build_dict,            
-    op_build_namespace,       
-    op_build_enum,            
-    op_inherit,               
-    op_get_super,             
-    op_import,                
-    op_import_as,             
-    op_get_upvalue,           
-    op_set_upvalue,           
-    op_close_upvalue,         
-    op_try_start,             
-    op_try_end,               
-    op_throw,                 
-    op_await,                 
-    op_spread_array,          
-    op_bit_and,               
-    op_bit_or,                
-    op_bit_xor,               
-    op_bit_not,               
-    op_left_shift,            
-    op_right_shift,           
-    op_build_range_inclusive, 
-    op_build_range_exclusive, 
-    op_recursive_call,        
-    op_nop,                   
+    op_constant,
+    op_pop,
+    op_dup,
+    op_dup_two,
+    op_swap,
+    op_null,
+    op_true,
+    op_false,
+    op_define_global,
+    op_get_global,
+    op_set_global,
+    op_get_local,
+    op_set_local,
+    op_add,
+    op_sub,
+    op_mul,
+    op_div,
+    op_mod,
+    op_negate,
+    op_equal,
+    op_not_equal,
+    op_less,
+    op_less_equal,
+    op_greater,
+    op_greater_equal,
+    op_not,
+    op_jump,
+    op_jump_if_false,
+    op_jump_if_true,
+    op_jump_if_not_null,
+    op_loop,
+    op_call,
+    op_return,
+    op_closure,
+    op_class,
+    op_method,
+    op_static_method,
+    op_get_property,
+    op_set_property,
+    op_get_self,
+    op_invoke,
+    op_build_array,
+    op_get_index,
+    op_set_index,
+    op_build_dict,
+    op_build_namespace,
+    op_build_enum,
+    op_inherit,
+    op_get_super,
+    op_import,
+    op_import_as,
+    op_get_upvalue,
+    op_set_upvalue,
+    op_close_upvalue,
+    op_try_start,
+    op_try_end,
+    op_throw,
+    op_await,
+    op_spread_array,
+    op_bit_and,
+    op_bit_or,
+    op_bit_xor,
+    op_bit_not,
+    op_left_shift,
+    op_right_shift,
+    op_build_range_inclusive,
+    op_build_range_exclusive,
+    op_recursive_call,
+    op_nop,
 ];
-
-
 
 #[inline(always)]
 fn op_constant(vm: &mut VM) -> ControlFlow {
@@ -375,7 +360,6 @@ fn op_add(vm: &mut VM) -> ControlFlow {
     let a = unsafe { vm.stack.get_unchecked(len - 2) };
     let result = match (a, b) {
         (Value::Number(av), Value::Number(bv)) => {
-            
             let r = av + bv;
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 2) = Value::Number(r);
@@ -383,26 +367,23 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             }
             return ControlFlow::Continue;
         }
-        
+
         (Value::String(a_str), Value::String(b_str)) => {
-            
             let mut result = String::with_capacity(a_str.len() + b_str.len());
             result.push_str(a_str);
             result.push_str(b_str);
             Value::String(Rc::from(result))
         }
         (Value::String(a_str), b) => {
-            
             use std::fmt::Write;
-            let mut result = String::with_capacity(a_str.len() + 32); 
+            let mut result = String::with_capacity(a_str.len() + 32);
             result.push_str(a_str);
             let _ = write!(result, "{}", b);
             Value::String(Rc::from(result))
         }
         (a, Value::String(b_str)) => {
-            
             use std::fmt::Write;
-            let mut result = String::with_capacity(32 + b_str.len()); 
+            let mut result = String::with_capacity(32 + b_str.len());
             let _ = write!(result, "{}", a);
             result.push_str(b_str);
             Value::String(Rc::from(result))
@@ -416,7 +397,7 @@ fn op_add(vm: &mut VM) -> ControlFlow {
             ));
         }
     };
-    
+
     unsafe {
         *vm.stack.get_unchecked_mut(len - 2) = result;
         vm.stack.set_len(len - 1);
@@ -509,7 +490,6 @@ fn op_negate(vm: &mut VM) -> ControlFlow {
     let v = unsafe { vm.stack.get_unchecked(len - 1) };
     match v {
         Value::Number(n) => {
-            
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 1) = Value::Number(-n);
             }
@@ -667,17 +647,11 @@ fn op_return(vm: &mut VM) -> ControlFlow {
     let frame = unsafe { vm.frames.pop().unwrap_unchecked() };
     let slots_start = frame.slots_start;
 
-    
-    
-    
-    
-    
     let is_simple = frame.saved_globals.is_none()
         && frame.function.file.is_empty()
         && frame.init_instance.is_none();
 
     if is_simple {
-        
         while let Some(handler) = vm.exception_handlers.last() {
             if handler.frame_index >= returning_frame_index {
                 vm.exception_handlers.pop();
@@ -686,7 +660,6 @@ fn op_return(vm: &mut VM) -> ControlFlow {
             }
         }
 
-        
         if !vm.open_upvalues.is_empty() {
             vm.close_upvalues(slots_start);
         }
@@ -702,7 +675,6 @@ fn op_return(vm: &mut VM) -> ControlFlow {
         return ControlFlow::Continue;
     }
 
-    
     if let Some(saved_globals) = frame.saved_globals {
         vm.globals = saved_globals;
     }
@@ -1018,13 +990,10 @@ fn op_throw(vm: &mut VM) -> ControlFlow {
 fn op_await(vm: &mut VM) -> ControlFlow {
     let value = vm.stack.pop().unwrap_or(Value::Null);
     match value {
-        Value::Future(_) => {
-            
-            
-            ControlFlow::Error(
-                vm.create_error(ErrorKind::RuntimeError, "async/await is not supported in single-threaded mode")
-            )
-        }
+        Value::Future(_) => ControlFlow::Error(vm.create_error(
+            ErrorKind::RuntimeError,
+            "async/await is not supported in single-threaded mode",
+        )),
         other => {
             vm.stack.push(other);
             ControlFlow::Continue
@@ -1118,16 +1087,12 @@ fn op_nop(_vm: &mut VM) -> ControlFlow {
     ControlFlow::Continue
 }
 
-
-
 #[inline(always)]
 fn op_recursive_call(vm: &mut VM) -> ControlFlow {
     let arg_count = vm.read_u16() as usize;
 
-    
     let function = vm.current_frame().function.clone();
 
-    
     if vm.frames.len() >= FRAMES_MAX {
         return ControlFlow::Error(vm.create_error(
             ErrorKind::RuntimeError,
@@ -1135,9 +1100,6 @@ fn op_recursive_call(vm: &mut VM) -> ControlFlow {
         ));
     }
 
-    
-    
-    
     let slots_start = vm.stack.len() - arg_count - 1;
     if !function.file.is_empty() {
         crate::push_script_dir(&function.file);
@@ -1146,8 +1108,6 @@ fn op_recursive_call(vm: &mut VM) -> ControlFlow {
 
     ControlFlow::Continue
 }
-
-
 
 #[inline(always)]
 fn binary_num_op(vm: &mut VM, op: fn(f64, f64) -> f64) -> ControlFlow {
@@ -1160,7 +1120,7 @@ fn binary_num_op(vm: &mut VM, op: fn(f64, f64) -> f64) -> ControlFlow {
     match (a, b) {
         (Value::Number(av), Value::Number(bv)) => {
             let result = op(*av, *bv);
-            
+
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 2) = Value::Number(result);
                 vm.stack.set_len(len - 1);
@@ -1189,7 +1149,7 @@ fn comparison_op(vm: &mut VM, op: fn(f64, f64) -> bool) -> ControlFlow {
     match (a, b) {
         (Value::Number(av), Value::Number(bv)) => {
             let result = op(*av, *bv);
-            
+
             unsafe {
                 *vm.stack.get_unchecked_mut(len - 2) = Value::Boolean(result);
                 vm.stack.set_len(len - 1);
@@ -1279,8 +1239,6 @@ fn shift_op(vm: &mut VM, op: fn(i64, u32) -> i64) -> ControlFlow {
     }
 }
 
-
-
 #[cfg(not(target_arch = "wasm32"))]
 impl ValueCaller for VM {
     fn call(&mut self, callee: &Value, args: Vec<Value>) -> Result<Value, String> {
@@ -1343,8 +1301,6 @@ impl ValueCaller for VM {
     }
 }
 
-
-
 impl VM {
     pub fn new() -> Self {
         let globals = builtins::create_builtin_classes();
@@ -1383,7 +1339,6 @@ impl VM {
         }
     }
 
-    
     #[inline]
     pub fn reset(&mut self) {
         self.stack.clear();
@@ -1452,39 +1407,28 @@ impl VM {
         self.maybe_collect_garbage();
     }
 
-    
-
-    
     #[inline(always)]
     fn peek(&self) -> Option<&Value> {
         self.stack.last()
     }
 
-    
     #[inline(always)]
     fn peek_unchecked(&self, offset: usize) -> &Value {
         unsafe { self.stack.get_unchecked(self.stack.len() - 1 - offset) }
     }
 
-    
     #[inline(always)]
     fn pop_fast(&mut self) -> Value {
         unsafe { self.stack.pop().unwrap_unchecked() }
     }
 
-    
-
-    
     #[inline(always)]
     fn is_private(name: &str) -> bool {
         name.starts_with('_') && name.len() > 1
     }
 
-    
-    
     #[inline(always)]
     fn is_in_class(&self, class_name: &str) -> bool {
-        
         for frame in self.frames.iter().rev() {
             if let Some(ref ctx) = frame.class_context {
                 if ctx == class_name {
@@ -1493,8 +1437,6 @@ impl VM {
             }
         }
 
-        
-        
         if let Some(frame) = self.frames.last() {
             if let Some(ref class_ctx) = frame.function.class_context {
                 if class_ctx == class_name {
@@ -1506,12 +1448,8 @@ impl VM {
         false
     }
 
-    
-    
-    
     #[inline(always)]
     fn is_in_namespace(&self, namespace_name: &str) -> bool {
-        
         if self
             .namespace_context
             .last()
@@ -1521,16 +1459,8 @@ impl VM {
             return true;
         }
 
-        
-        
         if let Some(frame) = self.frames.last() {
             if let Some(ref ns_ctx) = frame.function.namespace_context {
-                
-                
-                
-                
-                
-                
                 if ns_ctx == namespace_name
                     || ns_ctx.ends_with(&format!(".{}", namespace_name))
                     || ns_ctx.starts_with(&format!("{}.", namespace_name))
@@ -1543,7 +1473,6 @@ impl VM {
         false
     }
 
-    
     #[cfg(not(target_arch = "wasm32"))]
     pub fn run(&mut self, chunk: Chunk, file: &str, source: &str) -> SaldResult<Value> {
         self.file = file.to_string();
@@ -1563,7 +1492,6 @@ impl VM {
         result
     }
 
-    
     #[cfg(target_arch = "wasm32")]
     pub fn run(&mut self, chunk: &Chunk) -> SaldResult<Value> {
         let mut main_function = Function::new("<script>", 0, chunk.clone());
@@ -1587,7 +1515,7 @@ impl VM {
             crate::push_script_dir(dir);
         }
         self.stack.push(Value::Null);
-        self.stack.push(handler); 
+        self.stack.push(handler);
         self.stack.push(arg);
         self.call_value(1)?;
         let result = self.run_sync_loop();
@@ -1607,7 +1535,6 @@ impl VM {
         }
     }
 
-    
     #[cfg(not(target_arch = "wasm32"))]
     fn execute_until_complete_native(&mut self) -> ExecutionResult {
         loop {
@@ -1630,7 +1557,6 @@ impl VM {
         }
     }
 
-    
     #[cfg(target_arch = "wasm32")]
     fn execute_until_complete(&mut self) -> SaldResult<Value> {
         loop {
@@ -1651,15 +1577,10 @@ impl VM {
         }
     }
 
-    
     #[inline(always)]
     fn execute_one_threaded(&mut self) -> ControlFlow {
-        
-        
-
         let op = self.read_byte();
 
-        
         if op < 69 {
             unsafe { DISPATCH.get_unchecked(op as usize)(self) }
         } else {
@@ -1668,8 +1589,6 @@ impl VM {
             )
         }
     }
-
-    
 
     #[inline(always)]
     fn push_fast(&mut self, value: Value) -> SaldResult<()> {
@@ -1732,7 +1651,11 @@ impl VM {
         self.open_upvalues.retain(|upvalue| {
             let mut guard = upvalue.borrow_mut();
             if guard.location >= last {
-                let value = self.stack.get(guard.location).cloned().unwrap_or(Value::Null);
+                let value = self
+                    .stack
+                    .get(guard.location)
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 guard.closed = Some(Box::new(value));
                 false
             } else {
@@ -1779,21 +1702,15 @@ impl VM {
         Ok(new_count)
     }
 
-    
-
     fn call_value(&mut self, arg_count: usize) -> SaldResult<()> {
         let callee_idx = self.stack.len() - arg_count - 1;
         let callee = unsafe { self.stack.get_unchecked(callee_idx) };
 
-        
         match callee {
             Value::Function(function) => {
-                
-                
                 let func_to_call = if !self.frames.is_empty() {
                     let current_func = &self.current_frame().function;
                     if Rc::ptr_eq(current_func, function) {
-                        
                         current_func.clone()
                     } else {
                         function.clone()
@@ -1832,12 +1749,7 @@ impl VM {
 
     #[inline(always)]
     fn call_function(&mut self, function: Rc<Function>, arg_count: usize) -> SaldResult<()> {
-        
-
-        
-        
         if !function.is_variadic && function.default_count == 0 && arg_count == function.arity {
-            
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(
                     ErrorKind::RuntimeError,
@@ -1852,7 +1764,6 @@ impl VM {
             return Ok(());
         }
 
-        
         if !function.is_variadic {
             let required_arity = function.arity.saturating_sub(function.default_count);
             if arg_count < required_arity {
@@ -1874,13 +1785,11 @@ impl VM {
                 ));
             }
 
-            
             let missing = function.arity - arg_count;
             for _ in 0..missing {
                 self.stack.push(Value::Null);
             }
 
-            
             if self.frames.len() >= FRAMES_MAX {
                 return Err(self.create_error(
                     ErrorKind::RuntimeError,
@@ -1896,7 +1805,6 @@ impl VM {
             return Ok(());
         }
 
-        
         let min_arity = function.arity.saturating_sub(1);
         if arg_count < min_arity {
             return Err(self.create_error(
@@ -1930,18 +1838,12 @@ impl VM {
         Ok(())
     }
 
-    
-    
-
-
-    
     fn call_function_with_class(
         &mut self,
         function: Rc<Function>,
         arg_count: usize,
         class_name: String,
     ) -> SaldResult<()> {
-        
         if !function.is_variadic {
             let required_arity = function.arity.saturating_sub(function.default_count);
             if arg_count < required_arity {
@@ -1963,7 +1865,6 @@ impl VM {
                 ));
             }
 
-            
             let missing = function.arity - arg_count;
             for _ in 0..missing {
                 self.stack.push(Value::Null);
@@ -1985,7 +1886,6 @@ impl VM {
             return Ok(());
         }
 
-        
         let min_arity = function.arity.saturating_sub(1);
         if arg_count < min_arity {
             return Err(self.create_error(
@@ -2041,7 +1941,6 @@ impl VM {
             self.stack[stack_idx] = instance_value.clone();
             if let Some(init) = class.methods.get("init") {
                 if let Value::Function(init_fn) = init {
-                    
                     self.call_function_init_with_class(
                         init_fn.clone(),
                         arg_count,
@@ -2113,7 +2012,6 @@ impl VM {
         self.call_function(method, arg_count)
     }
 
-    
     fn call_function_init_with_class(
         &mut self,
         function: Rc<Function>,
@@ -2162,8 +2060,6 @@ impl VM {
         Ok(())
     }
 
-    
-
     fn invoke(&mut self, name: &str, arg_count: usize) -> SaldResult<()> {
         let receiver = self
             .stack
@@ -2172,13 +2068,11 @@ impl VM {
             .unwrap_or(Value::Null);
         match receiver {
             Value::Instance(ref instance) => {
-                
                 let (class, field) = {
                     let guard = instance.borrow();
                     (guard.class.clone(), guard.fields.get(name).cloned())
                 };
 
-                
                 if Self::is_private(name) && !self.is_in_class(&class.name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2196,7 +2090,6 @@ impl VM {
                 }
                 if let Some(method) = class.methods.get(name).cloned() {
                     if let Value::Function(func) = method {
-                        
                         return self.call_function_with_class(func, arg_count, class.name.clone());
                     }
                 }
@@ -2238,7 +2131,6 @@ impl VM {
                 ))
             }
             Value::Class(class) => {
-                
                 if Self::is_private(name) && !self.is_in_class(&class.name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2335,7 +2227,6 @@ impl VM {
                 name: ns_name,
                 module_globals,
             } => {
-                
                 if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2352,18 +2243,14 @@ impl VM {
                     let stack_idx = self.stack.len() - arg_count - 1;
                     self.stack[stack_idx] = member.clone();
 
-                    
                     if let Some(ref module_globals_rc) = module_globals {
                         if matches!(member, Value::Function(_)) {
-                            let saved_globals = std::mem::replace(
-                                &mut self.globals,
-                                module_globals_rc.clone(),
-                            );
+                            let saved_globals =
+                                std::mem::replace(&mut self.globals, module_globals_rc.clone());
                             let result = self.call_value(arg_count);
-                            
+
                             if result.is_ok() && !self.frames.is_empty() {
-                                self.frames.last_mut().unwrap().saved_globals =
-                                    Some(saved_globals);
+                                self.frames.last_mut().unwrap().saved_globals = Some(saved_globals);
                             }
                             return result;
                         }
@@ -2386,8 +2273,6 @@ impl VM {
         }
     }
 
-    
-
     fn handle_get_property(&mut self, name: &str) -> SaldResult<()> {
         let obj = self.stack.pop().unwrap_or(Value::Null);
         match obj {
@@ -2395,7 +2280,6 @@ impl VM {
                 let inst_guard = instance.borrow();
                 let class_name = inst_guard.class.name.clone();
 
-                
                 if Self::is_private(name) && !self.is_in_class(&class_name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2422,7 +2306,6 @@ impl VM {
                 }
             }
             Value::Class(class) => {
-                
                 if Self::is_private(name) && !self.is_in_class(&class.name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2484,7 +2367,6 @@ impl VM {
                 name: ns_name,
                 ..
             } => {
-                
                 if Self::is_private(name) && !self.is_in_namespace(&ns_name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2534,12 +2416,10 @@ impl VM {
         let value = self.stack.pop().unwrap_or(Value::Null);
         let obj = self.stack.pop().unwrap_or(Value::Null);
         if let Value::Instance(instance) = obj {
-            
             let class_name = {
                 let mut guard = instance.borrow_mut();
                 let class_name = guard.class.name.clone();
-                
-                
+
                 if Self::is_private(name) && !self.is_in_class(&class_name) {
                     return Err(self.create_error(
                         ErrorKind::AccessError,
@@ -2549,11 +2429,11 @@ impl VM {
                         ),
                     ));
                 }
-                
+
                 guard.fields.insert(name.to_string(), value.clone());
                 class_name
             };
-            let _ = class_name; 
+            let _ = class_name;
             self.stack.push(value);
             Ok(())
         } else {
@@ -2707,7 +2587,7 @@ impl VM {
             let key = self.stack.pop().unwrap_or(Value::Null);
             if let Value::String(s) = key {
                 let key_str = s.to_string();
-                
+
                 match &mut value {
                     Value::Namespace { name, .. } if name.is_empty() => {
                         *name = key_str.clone();
@@ -2866,8 +2746,6 @@ impl VM {
         ))
     }
 
-    
-
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_import(&mut self, import_path: &str) -> SaldResult<()> {
         let resolved_path = self.resolve_import_path(import_path)?;
@@ -2910,7 +2788,6 @@ impl VM {
             crate::push_module_workspace(workspace);
         }
 
-        
         let (imported_globals, module_globals_rc) =
             self.import_and_execute_with_globals(&resolved_path)?;
 
@@ -2924,7 +2801,7 @@ impl VM {
                 module_fields.insert(name, value);
             }
         }
-        
+
         self.globals.borrow_mut().insert(
             alias.to_string(),
             Value::Namespace {
@@ -3178,8 +3055,6 @@ impl VM {
         Ok(imported_globals)
     }
 
-    
-    
     #[cfg(not(target_arch = "wasm32"))]
     fn import_and_execute_with_globals(
         &mut self,
@@ -3236,7 +3111,7 @@ impl VM {
         let saved_source = std::mem::replace(&mut self.source, String::new());
         crate::push_script_dir(path);
         let import_globals = Rc::new(RefCell::new(builtins::create_builtin_classes()));
-        let module_globals_rc = import_globals.clone(); 
+        let module_globals_rc = import_globals.clone();
         let saved_globals = std::mem::replace(&mut self.globals, import_globals);
         let mut main_function = Function::new("<import>", 0, chunk);
         main_function.file = path.to_string();
@@ -3256,7 +3131,7 @@ impl VM {
                 }
             }
         }
-        
+
         let imported_globals = self.globals.borrow().clone();
         crate::pop_script_dir();
         self.stack = saved_stack;
@@ -3321,10 +3196,8 @@ impl VM {
         }
     }
 
-    
     #[cfg(not(target_arch = "wasm32"))]
     pub fn call_global(&mut self, name: &str, args: Vec<Value>) -> SaldResult<Value> {
-        
         let func = {
             let globals = self.globals.borrow();
             globals.get(name).cloned()
@@ -3332,17 +3205,16 @@ impl VM {
 
         match func {
             Some(Value::Function(f)) => {
-                
                 self.stack.push(Value::Null);
-                
+
                 self.stack.push(Value::Function(f.clone()));
-                
+
                 for arg in &args {
                     self.stack.push(arg.clone());
                 }
-                
+
                 self.call_value(args.len())?;
-                
+
                 self.run_sync_loop()
             }
             Some(other) => Err(self.create_error(

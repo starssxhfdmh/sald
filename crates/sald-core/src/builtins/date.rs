@@ -1,7 +1,3 @@
-
-
-
-
 use super::{check_arity, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;

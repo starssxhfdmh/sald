@@ -1,9 +1,5 @@
-
-
-
 use dashmap::DashMap;
 use tower_lsp::lsp_types::{Position, Range, Url};
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolKind {
@@ -45,7 +41,6 @@ impl SymbolKind {
     }
 }
 
-
 #[derive(Debug, Clone, Default)]
 pub struct Symbol {
     pub name: String,
@@ -65,13 +60,11 @@ impl Default for SymbolKind {
     }
 }
 
-
 #[derive(Debug, Default)]
 pub struct DocumentInfo {
     pub symbols: Vec<Symbol>,
     pub content: String,
 }
-
 
 #[derive(Debug, Default)]
 pub struct SymbolTable {
@@ -105,16 +98,12 @@ impl SymbolTable {
 use rustc_hash::FxHashSet;
 use std::path::PathBuf;
 
-
-
 #[derive(Debug, Default)]
 pub struct WorkspaceIndex {
-    
     exports: DashMap<PathBuf, Vec<Symbol>>,
-    
-    
+
     references: DashMap<String, FxHashSet<PathBuf>>,
-    
+
     workspace_root: parking_lot::RwLock<Option<PathBuf>>,
 }
 
@@ -127,22 +116,18 @@ impl WorkspaceIndex {
         }
     }
 
-    
     pub fn set_workspace_root(&self, root: PathBuf) {
         *self.workspace_root.write() = Some(root);
     }
 
-    
     pub fn get_workspace_root(&self) -> Option<PathBuf> {
         self.workspace_root.read().clone()
     }
 
-    
     pub fn register_exports(&self, file_path: PathBuf, symbols: Vec<Symbol>) {
         self.exports.insert(file_path, symbols);
     }
 
-    
     pub fn register_references(&self, file_path: &PathBuf, symbol_names: Vec<String>) {
         for name in symbol_names {
             self.references
@@ -152,17 +137,14 @@ impl WorkspaceIndex {
         }
     }
 
-    
     pub fn is_symbol_used_externally(&self, symbol_name: &str, defining_file: &PathBuf) -> bool {
         if let Some(refs) = self.references.get(symbol_name) {
-            
             refs.iter().any(|f| f != defining_file)
         } else {
             false
         }
     }
 
-    
     pub fn get_exported_names(&self, file_path: &PathBuf) -> FxHashSet<String> {
         if let Some(exports) = self.exports.get(file_path) {
             exports.iter().map(|s| s.name.clone()).collect()
@@ -171,20 +153,16 @@ impl WorkspaceIndex {
         }
     }
 
-    
     pub fn clear_file_references(&self, file_path: &PathBuf) {
-        
         for mut entry in self.references.iter_mut() {
             entry.value_mut().remove(file_path);
         }
     }
 
-    
     pub fn is_sald_modules_path(path: &std::path::Path) -> bool {
         path.components().any(|c| c.as_os_str() == "sald_modules")
     }
 
-    
     pub fn scan_workspace_files(&self) -> Vec<PathBuf> {
         let root = match self.get_workspace_root() {
             Some(r) => r,
@@ -210,9 +188,6 @@ impl WorkspaceIndex {
     }
 }
 
-
-
-
 pub fn span_to_range(span: &sald_core::error::Span) -> Range {
     Range {
         start: Position {
@@ -221,7 +196,7 @@ pub fn span_to_range(span: &sald_core::error::Span) -> Range {
         },
         end: Position {
             line: span.end.line.saturating_sub(1) as u32,
-            
+
             character: span.end.column as u32,
         },
     }

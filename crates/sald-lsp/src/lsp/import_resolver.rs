@@ -1,6 +1,3 @@
-
-
-
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
@@ -11,18 +8,15 @@ use sald_core::ast::{Expr, Program, Stmt};
 use sald_core::lexer::Scanner;
 use sald_core::parser::Parser;
 
-
 #[derive(Debug, Clone)]
 pub struct FileExports {
     pub symbols: Vec<Symbol>,
     pub last_modified: std::time::SystemTime,
 }
 
-
 pub struct ImportResolver {
-    
     cache: Arc<RwLock<FxHashMap<PathBuf, FileExports>>>,
-    
+
     workspace_root: Option<PathBuf>,
 }
 
@@ -38,7 +32,6 @@ impl ImportResolver {
         self.workspace_root = Some(root);
     }
 
-    
     fn get_workspace_root(&self) -> PathBuf {
         self.workspace_root
             .clone()
@@ -46,23 +39,17 @@ impl ImportResolver {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    
     pub fn resolve_import_path(&self, from_file: &Path, import_path: &str) -> Option<PathBuf> {
-        
         let clean_path = import_path.trim_matches('"').trim_matches('\'');
 
-        
         let workspace = self.get_workspace_root();
 
-        
         let is_relative = clean_path.starts_with('.')
             || clean_path.starts_with('/')
             || clean_path.starts_with('\\')
             || clean_path.ends_with(".sald");
 
         if !is_relative {
-            
-            
             let from_dir = from_file.parent().unwrap_or(Path::new("."));
             let local_modules = from_dir.join("sald_modules").join(clean_path);
 
@@ -70,13 +57,11 @@ impl ImportResolver {
                 return Some(path);
             }
 
-            
             let workspace_modules = workspace.join("sald_modules").join(clean_path);
             if let Some(path) = self.resolve_module_dir(&workspace_modules) {
                 return Some(path);
             }
 
-            
             let direct_file = workspace
                 .join("sald_modules")
                 .join(format!("{}.sald", clean_path));
@@ -85,16 +70,13 @@ impl ImportResolver {
             }
         }
 
-        
         let from_dir = from_file.parent().unwrap_or(Path::new("."));
         let resolved = from_dir.join(clean_path);
 
-        
         if resolved.exists() {
             return resolved.canonicalize().ok();
         }
 
-        
         if !clean_path.ends_with(".sald") {
             let with_ext = from_dir.join(format!("{}.sald", clean_path));
             if with_ext.exists() {
@@ -105,17 +87,14 @@ impl ImportResolver {
         None
     }
 
-    
     fn resolve_module_dir(&self, module_dir: &Path) -> Option<PathBuf> {
         if !module_dir.exists() || !module_dir.is_dir() {
             return None;
         }
 
-        
         let config_path = module_dir.join("salad.json");
         if config_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&config_path) {
-                
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                     if let Some(main) = json.get("main").and_then(|v| v.as_str()) {
                         let entry = module_dir.join(main);
@@ -127,14 +106,12 @@ impl ImportResolver {
             }
         }
 
-        
         let module_name = module_dir.file_name()?.to_str()?;
         let default_entry = module_dir.join(format!("{}.sald", module_name));
         if default_entry.exists() {
             return default_entry.canonicalize().ok();
         }
 
-        
         let main_entry = module_dir.join("main.sald");
         if main_entry.exists() {
             return main_entry.canonicalize().ok();
@@ -143,13 +120,10 @@ impl ImportResolver {
         None
     }
 
-    
     pub fn get_exports(&self, file_path: &Path) -> Option<Vec<Symbol>> {
-        
         {
             let cache = self.cache.read();
             if let Some(exports) = cache.get(file_path) {
-                
                 if let Ok(metadata) = std::fs::metadata(file_path) {
                     if let Ok(modified) = metadata.modified() {
                         if modified <= exports.last_modified {
@@ -160,7 +134,6 @@ impl ImportResolver {
             }
         }
 
-        
         let content = std::fs::read_to_string(file_path).ok()?;
         let file_name = file_path.to_string_lossy().to_string();
 
@@ -170,15 +143,11 @@ impl ImportResolver {
         let mut parser = Parser::new(tokens, &file_name, &content);
         let program = parser.parse().ok()?;
 
-        
         let mut symbols = self.extract_exports(&program);
 
-        
-        
         let file_path_str = file_path.to_string_lossy().to_string();
         self.set_source_uri_recursive(&mut symbols, &file_path_str);
 
-        
         {
             let mut cache = self.cache.write();
             let last_modified = std::fs::metadata(file_path)
@@ -198,7 +167,6 @@ impl ImportResolver {
         Some(symbols)
     }
 
-    
     fn set_source_uri_recursive(&self, symbols: &mut [Symbol], uri: &str) {
         for sym in symbols.iter_mut() {
             sym.source_uri = Some(uri.to_string());
@@ -206,7 +174,6 @@ impl ImportResolver {
         }
     }
 
-    
     fn extract_exports(&self, program: &Program) -> Vec<Symbol> {
         let mut symbols = Vec::new();
 
@@ -322,7 +289,7 @@ impl ImportResolver {
                         source_uri: None,
                     });
                 }
-                
+
                 Stmt::Let {
                     name,
                     name_span: _,
@@ -349,7 +316,6 @@ impl ImportResolver {
         symbols
     }
 
-    
     fn extract_stmt_symbol(&self, stmt: &Stmt, symbols: &mut Vec<Symbol>) {
         match stmt {
             Stmt::Function { def } => {
@@ -399,7 +365,6 @@ impl ImportResolver {
                 });
             }
             Stmt::Namespace { name, body, span } => {
-                
                 let mut children = Vec::new();
                 for s in body {
                     self.extract_stmt_symbol(s, &mut children);
@@ -485,7 +450,6 @@ impl ImportResolver {
         }
     }
 
-    
     fn infer_type(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Call { callee, .. } => {
@@ -513,10 +477,6 @@ impl ImportResolver {
         }
     }
 
-    
-    
-    
-    
     pub fn resolve_imports_for_document(
         &self,
         file_path: &Path,
@@ -530,10 +490,8 @@ impl ImportResolver {
                 if let Some(resolved_path) = self.resolve_import_path(file_path, path) {
                     if let Some(symbols) = self.get_exports(&resolved_path) {
                         if let Some(alias_name) = alias {
-                            
                             aliased_symbols.insert(alias_name.clone(), symbols);
                         } else {
-                            
                             global_symbols.extend(symbols);
                         }
                     }
@@ -544,7 +502,6 @@ impl ImportResolver {
         (global_symbols, aliased_symbols)
     }
 
-    
     pub fn get_all_symbols_for_document(
         &self,
         file_path: &Path,
@@ -553,14 +510,11 @@ impl ImportResolver {
     ) -> Vec<Symbol> {
         let mut all_symbols = doc_symbols.to_vec();
 
-        
         let (global_symbols, aliased_symbols) =
             self.resolve_imports_for_document(file_path, program);
 
-        
         all_symbols.extend(global_symbols);
 
-        
         for (alias, symbols) in aliased_symbols {
             all_symbols.push(Symbol {
                 name: alias.clone(),
@@ -578,7 +532,6 @@ impl ImportResolver {
         all_symbols
     }
 
-    
     pub fn invalidate_cache(&self, file_path: &Path) {
         self.cache.write().remove(file_path);
     }

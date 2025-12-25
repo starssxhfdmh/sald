@@ -1,35 +1,31 @@
-
-
 use crate::error::Span;
 use crate::lexer::TokenKind;
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
-    
     Add,
     Sub,
     Mul,
     Div,
     Mod,
-    
+
     Equal,
     NotEqual,
     Less,
     LessEqual,
     Greater,
     GreaterEqual,
-    
+
     And,
     Or,
-    
+
     NullCoalesce,
-    
-    BitAnd,     
-    BitOr,      
-    BitXor,     
-    LeftShift,  
-    RightShift, 
+
+    BitAnd,
+    BitOr,
+    BitXor,
+    LeftShift,
+    RightShift,
 }
 
 impl BinaryOp {
@@ -49,7 +45,7 @@ impl BinaryOp {
             TokenKind::And => Some(BinaryOp::And),
             TokenKind::Or => Some(BinaryOp::Or),
             TokenKind::QuestionQuestion => Some(BinaryOp::NullCoalesce),
-            
+
             TokenKind::Ampersand => Some(BinaryOp::BitAnd),
             TokenKind::Pipe => Some(BinaryOp::BitOr),
             TokenKind::Caret => Some(BinaryOp::BitXor),
@@ -60,12 +56,11 @@ impl BinaryOp {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
-    Negate, 
-    Not,    
-    BitNot, 
+    Negate,
+    Not,
+    BitNot,
 }
 
 impl UnaryOp {
@@ -79,15 +74,14 @@ impl UnaryOp {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssignOp {
-    Assign,    
-    AddAssign, 
-    SubAssign, 
-    MulAssign, 
-    DivAssign, 
-    ModAssign, 
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
 }
 
 impl AssignOp {
@@ -108,7 +102,6 @@ impl AssignOp {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Number(f64),
@@ -117,26 +110,26 @@ pub enum Literal {
     Null,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct CallArg {
-    
     pub name: Option<String>,
-    
+
     pub value: Expr,
     pub span: Span,
 }
 
-
 #[derive(Debug, Clone)]
 pub enum Expr {
-    
-    Literal { value: Literal, span: Span },
+    Literal {
+        value: Literal,
+        span: Span,
+    },
 
-    
-    Identifier { name: String, span: Span },
+    Identifier {
+        name: String,
+        span: Span,
+    },
 
-    
     Binary {
         left: Box<Expr>,
         op: BinaryOp,
@@ -144,17 +137,17 @@ pub enum Expr {
         span: Span,
     },
 
-    
     Unary {
         op: UnaryOp,
         operand: Box<Expr>,
         span: Span,
     },
 
-    
-    Grouping { expr: Box<Expr>, span: Span },
+    Grouping {
+        expr: Box<Expr>,
+        span: Span,
+    },
 
-    
     Assignment {
         target: Box<Expr>,
         op: AssignOp,
@@ -162,23 +155,20 @@ pub enum Expr {
         span: Span,
     },
 
-    
     Call {
         callee: Box<Expr>,
         args: Vec<CallArg>,
-        is_optional: bool, 
+        is_optional: bool,
         span: Span,
     },
 
-    
     Get {
         object: Box<Expr>,
         property: String,
-        is_optional: bool, 
+        is_optional: bool,
         span: Span,
     },
 
-    
     Set {
         object: Box<Expr>,
         property: String,
@@ -186,21 +176,22 @@ pub enum Expr {
         span: Span,
     },
 
-    
-    SelfExpr { span: Span },
-
-    
-    Array { elements: Vec<Expr>, span: Span },
-
-    
-    Index {
-        object: Box<Expr>,
-        index: Box<Expr>,
-        is_optional: bool, 
+    SelfExpr {
         span: Span,
     },
 
-    
+    Array {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        is_optional: bool,
+        span: Span,
+    },
+
     IndexSet {
         object: Box<Expr>,
         index: Box<Expr>,
@@ -208,7 +199,6 @@ pub enum Expr {
         span: Span,
     },
 
-    
     Ternary {
         condition: Box<Expr>,
         then_expr: Box<Expr>,
@@ -216,7 +206,6 @@ pub enum Expr {
         span: Span,
     },
 
-    
     Lambda {
         params: Vec<super::FunctionParam>,
         body: LambdaBody,
@@ -224,10 +213,11 @@ pub enum Expr {
         span: Span,
     },
 
-    
-    Super { method: String, span: Span },
+    Super {
+        method: String,
+        span: Span,
+    },
 
-    
     Switch {
         value: Box<Expr>,
         arms: Vec<SwitchArm>,
@@ -235,77 +225,77 @@ pub enum Expr {
         span: Span,
     },
 
-    
-    
     Block {
         statements: Vec<super::Stmt>,
-        
+
         expr: Option<Box<Expr>>,
         span: Span,
     },
 
-    
     Dictionary {
         entries: Vec<(Expr, Expr)>,
         span: Span,
     },
 
-    
-    Await { expr: Box<Expr>, span: Span },
+    Await {
+        expr: Box<Expr>,
+        span: Span,
+    },
 
-    
     Return {
         value: Option<Box<Expr>>,
         span: Span,
     },
 
-    
-    Throw { value: Box<Expr>, span: Span },
+    Throw {
+        value: Box<Expr>,
+        span: Span,
+    },
 
-    
-    Break { span: Span },
+    Break {
+        span: Span,
+    },
 
-    
-    Continue { span: Span },
+    Continue {
+        span: Span,
+    },
 
-    
-    Spread { expr: Box<Expr>, span: Span },
+    Spread {
+        expr: Box<Expr>,
+        span: Span,
+    },
 
-    
     Range {
         start: Box<Expr>,
         end: Box<Expr>,
-        inclusive: bool, 
+        inclusive: bool,
         span: Span,
     },
 }
 
-
 #[derive(Debug, Clone)]
 pub enum Pattern {
-    
-    Literal { value: Literal, span: Span },
+    Literal {
+        value: Literal,
+        span: Span,
+    },
 
-    
     Binding {
         name: String,
         guard: Option<Box<Expr>>,
         span: Span,
     },
 
-    
     Array {
         elements: Vec<SwitchArrayElement>,
         span: Span,
     },
 
-    
     Dict {
         entries: Vec<(String, Pattern)>,
         span: Span,
     },
 
-    
     Range {
         start: Box<Expr>,
         end: Box<Expr>,
@@ -313,9 +303,10 @@ pub enum Pattern {
         span: Span,
     },
 
-    
-    
-    Expression { expr: Box<Expr>, span: Span },
+    Expression {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Pattern {
@@ -331,25 +322,20 @@ impl Pattern {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub enum SwitchArrayElement {
-    
     Single(Pattern),
-    
+
     Rest { name: String, span: Span },
 }
 
-
 #[derive(Debug, Clone)]
 pub struct SwitchArm {
-    
     pub patterns: Vec<Pattern>,
-    
+
     pub body: Expr,
     pub span: Span,
 }
-
 
 #[derive(Debug, Clone)]
 pub enum LambdaBody {
@@ -389,7 +375,6 @@ impl Expr {
         }
     }
 
-    
     pub fn is_lvalue(&self) -> bool {
         matches!(
             self,

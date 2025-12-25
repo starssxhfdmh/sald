@@ -1,5 +1,3 @@
-
-
 mod scanner;
 mod token;
 

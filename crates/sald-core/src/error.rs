@@ -1,10 +1,6 @@
-
-
-
 #[cfg(not(target_arch = "wasm32"))]
 use colored::*;
 use std::fmt;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -32,7 +28,6 @@ impl Default for Position {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -75,7 +70,6 @@ impl Default for Span {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorKind {
     SyntaxError,
@@ -110,7 +104,6 @@ impl fmt::Display for ErrorKind {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct StackFrame {
@@ -148,7 +141,6 @@ impl fmt::Display for StackFrame {
         )
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct SaldError {
@@ -198,12 +190,10 @@ impl SaldError {
         self.stack_trace.push(frame);
     }
 
-    
     #[cfg(not(target_arch = "wasm32"))]
     pub fn format(&self) -> String {
         let mut output = String::new();
 
-        
         let header = format!(
             "{}: {} at {}:{}:{}",
             self.kind.to_string().red().bold(),
@@ -215,7 +205,6 @@ impl SaldError {
         output.push_str(&header);
         output.push('\n');
 
-        
         if !self.source_lines.is_empty() {
             let error_line = self.span.start.line;
             let start_line = if error_line > 1 { error_line - 1 } else { 1 };
@@ -231,7 +220,6 @@ impl SaldError {
                     if line_num == error_line {
                         output.push_str(&format!("{} {}\n", line_num_str.red(), line_content));
 
-                        
                         let spaces = " ".repeat(6 + self.span.start.column);
                         let caret_len = if self.span.end.column > self.span.start.column {
                             self.span.end.column - self.span.start.column + 1
@@ -247,15 +235,13 @@ impl SaldError {
             }
         }
 
-        
         if let Some(ref help) = self.help {
             output.push_str(&format!("\n      {}: {}\n", "Help".cyan().bold(), help));
         }
 
-        
         if !self.stack_trace.is_empty() {
             output.push_str(&format!("\n{}:\n", "Stack trace".yellow().bold()));
-            
+
             for frame in self.stack_trace.iter() {
                 output.push_str(&format!("{}\n", frame));
             }
@@ -264,12 +250,10 @@ impl SaldError {
         output
     }
 
-    
     #[cfg(target_arch = "wasm32")]
     pub fn format(&self) -> String {
         let mut output = String::new();
 
-        
         let header = format!(
             "{}: {} at {}:{}:{}",
             self.kind,
@@ -281,7 +265,6 @@ impl SaldError {
         output.push_str(&header);
         output.push('\n');
 
-        
         if !self.source_lines.is_empty() {
             let error_line = self.span.start.line;
             let start_line = if error_line > 1 { error_line - 1 } else { 1 };
@@ -310,12 +293,10 @@ impl SaldError {
             }
         }
 
-        
         if let Some(ref help) = self.help {
             output.push_str(&format!("\n      Help: {}\n", help));
         }
 
-        
         if !self.stack_trace.is_empty() {
             output.push_str("\nStack trace:\n");
             for frame in self.stack_trace.iter() {
@@ -326,14 +307,11 @@ impl SaldError {
         output
     }
 
-    
     #[cfg(not(target_arch = "wasm32"))]
     pub fn format_with_options(&self, full_trace: bool) -> String {
         if full_trace {
-            
             let mut output = String::new();
 
-            
             let header = format!(
                 "{}: {} at {}:{}:{}",
                 self.kind.to_string().red().bold(),
@@ -345,7 +323,6 @@ impl SaldError {
             output.push_str(&header);
             output.push('\n');
 
-            
             if !self.source_lines.is_empty() {
                 let error_line = self.span.start.line;
                 let start = error_line.saturating_sub(2);
@@ -377,12 +354,10 @@ impl SaldError {
                 }
             }
 
-            
             if let Some(ref help) = self.help {
                 output.push_str(&format!("\n      {}: {}\n", "Help".cyan().bold(), help));
             }
 
-            
             if !self.stack_trace.is_empty() {
                 output.push_str(&format!("\n{}:\n", "Stack trace".yellow().bold()));
                 for frame in &self.stack_trace {
@@ -396,7 +371,6 @@ impl SaldError {
         }
     }
 
-    
     #[cfg(target_arch = "wasm32")]
     pub fn format_with_options(&self, _full_trace: bool) -> String {
         self.format()
@@ -411,9 +385,7 @@ impl fmt::Display for SaldError {
 
 impl std::error::Error for SaldError {}
 
-
 pub type SaldResult<T> = Result<T, SaldError>;
-
 
 impl SaldError {
     pub fn syntax_error(message: impl Into<String>, span: Span, file: impl Into<String>) -> Self {

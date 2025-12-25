@@ -1,6 +1,3 @@
-
-
-
 use super::check_arity;
 use crate::vm::value::{Class, NativeInstanceFn, Value};
 use rustc_hash::FxHashMap;

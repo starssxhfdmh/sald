@@ -1,7 +1,3 @@
-
-
-
-
 use super::{check_arity, check_arity_range, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
@@ -18,7 +14,6 @@ pub fn create_json_class() -> Class {
     Class::new_with_static("Json", static_methods)
 }
 
-
 fn json_parse(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let json_str = get_string_arg(&args[0], "json")?;
@@ -28,12 +23,10 @@ fn json_parse(args: &[Value]) -> Result<Value, String> {
         .and_then(|json_value| json_to_sald_value(&json_value))
 }
 
-
 fn json_stringify(args: &[Value]) -> Result<Value, String> {
     check_arity_range(1, 2, args.len())?;
 
     let json_string = if args.len() == 2 {
-        
         let json_value = sald_value_to_json(&args[0])?;
         let indent = get_number_arg(&args[1], "indent")? as usize;
         let indent_str = " ".repeat(indent);
@@ -44,7 +37,6 @@ fn json_stringify(args: &[Value]) -> Result<Value, String> {
         json_value.serialize(&mut ser).map_err(|e| e.to_string())?;
         String::from_utf8(buf).map_err(|e| e.to_string())?
     } else {
-        
         let mut buf = String::with_capacity(256);
         write_json_value(&args[0], &mut buf)?;
         buf
@@ -52,7 +44,6 @@ fn json_stringify(args: &[Value]) -> Result<Value, String> {
 
     Ok(Value::String(Rc::from(json_string)))
 }
-
 
 fn json_to_sald_value(json: &serde_json::Value) -> Result<Value, String> {
     match json {
@@ -76,8 +67,6 @@ fn json_to_sald_value(json: &serde_json::Value) -> Result<Value, String> {
         }
     }
 }
-
-
 
 fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
     match value {
@@ -104,7 +93,6 @@ fn sald_value_to_json(value: &Value) -> Result<serde_json::Value, String> {
         _ => Err(format!("Cannot convert {} to JSON", value.type_name())),
     }
 }
-
 
 fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
     use std::fmt::Write;
@@ -169,7 +157,7 @@ fn write_json_value(value: &Value, buf: &mut String) -> Result<(), String> {
                     buf.push(',');
                 }
                 first = false;
-                
+
                 buf.push('"');
                 for ch in key.chars() {
                     match ch {

@@ -1,16 +1,9 @@
-
-
-
-
 use super::{check_arity, get_string_arg};
 use crate::vm::value::{Class, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
-
-
-
 
 fn resolve_path(path: &str) -> String {
     crate::resolve_script_path(path)
@@ -21,25 +14,21 @@ fn resolve_path(path: &str) -> String {
 pub fn create_file_class() -> Class {
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
-    
     static_methods.insert("read".to_string(), file_read);
     static_methods.insert("write".to_string(), file_write);
     static_methods.insert("append".to_string(), file_append);
     static_methods.insert("readDir".to_string(), file_read_dir);
 
-    
     static_methods.insert("exists".to_string(), file_exists);
     static_methods.insert("isFile".to_string(), file_is_file);
     static_methods.insert("isDir".to_string(), file_is_dir);
     static_methods.insert("size".to_string(), file_size);
 
-    
     static_methods.insert("delete".to_string(), file_delete);
     static_methods.insert("copy".to_string(), file_copy);
     static_methods.insert("rename".to_string(), file_rename);
     static_methods.insert("mkdir".to_string(), file_mkdir);
 
-    
     static_methods.insert("join".to_string(), file_join);
     static_methods.insert("dirname".to_string(), file_dirname);
     static_methods.insert("basename".to_string(), file_basename);
@@ -49,7 +38,6 @@ pub fn create_file_class() -> Class {
     class.native_static_methods = static_methods;
     class
 }
-
 
 fn file_read(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -61,7 +49,6 @@ fn file_read(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn file_write(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     let path = resolve_path(&get_string_arg(&args[0], "path")?);
@@ -72,7 +59,6 @@ fn file_write(args: &[Value]) -> Result<Value, String> {
         Err(e) => Err(format!("Failed to write file '{}': {}", path, e)),
     }
 }
-
 
 fn file_append(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
@@ -94,13 +80,11 @@ fn file_append(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Boolean(true))
 }
 
-
 fn file_exists(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let path = resolve_path(&get_string_arg(&args[0], "path")?);
     Ok(Value::Boolean(Path::new(&path).exists()))
 }
-
 
 fn file_is_file(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -108,13 +92,11 @@ fn file_is_file(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Boolean(Path::new(&path).is_file()))
 }
 
-
 fn file_is_dir(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let path = resolve_path(&get_string_arg(&args[0], "path")?);
     Ok(Value::Boolean(Path::new(&path).is_dir()))
 }
-
 
 fn file_size(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -125,7 +107,6 @@ fn file_size(args: &[Value]) -> Result<Value, String> {
         Err(e) => Err(format!("Failed to get size of '{}': {}", path, e)),
     }
 }
-
 
 fn file_delete(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -143,7 +124,6 @@ fn file_delete(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Boolean(true))
 }
 
-
 fn file_copy(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
     let src = resolve_path(&get_string_arg(&args[0], "src")?);
@@ -154,7 +134,6 @@ fn file_copy(args: &[Value]) -> Result<Value, String> {
         Err(e) => Err(format!("Failed to copy '{}' to '{}': {}", src, dst, e)),
     }
 }
-
 
 fn file_rename(args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
@@ -167,7 +146,6 @@ fn file_rename(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn file_mkdir(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let path = resolve_path(&get_string_arg(&args[0], "path")?);
@@ -177,7 +155,6 @@ fn file_mkdir(args: &[Value]) -> Result<Value, String> {
         Err(e) => Err(format!("Failed to create directory '{}': {}", path, e)),
     }
 }
-
 
 fn file_read_dir(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -196,7 +173,6 @@ fn file_read_dir(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Array(Rc::new(RefCell::new(items))))
 }
 
-
 fn file_join(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() {
         return Err("Expected at least 1 argument but got 0".to_string());
@@ -211,7 +187,6 @@ fn file_join(args: &[Value]) -> Result<Value, String> {
     Ok(Value::String(Rc::from(path.to_string_lossy().to_string())))
 }
 
-
 fn file_dirname(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let path = get_string_arg(&args[0], "path")?;
@@ -224,7 +199,6 @@ fn file_dirname(args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn file_basename(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     let path = get_string_arg(&args[0], "path")?;
@@ -234,7 +208,6 @@ fn file_basename(args: &[Value]) -> Result<Value, String> {
         None => Ok(Value::String(Rc::from(String::new()))),
     }
 }
-
 
 fn file_ext(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;

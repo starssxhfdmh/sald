@@ -1,7 +1,3 @@
-
-
-
-
 use super::{check_arity, get_number_arg, get_string_arg};
 use crate::vm::value::{Class, NativeInstanceFn, NativeStaticFn, Value};
 use rustc_hash::FxHashMap;
@@ -12,11 +8,9 @@ pub fn create_string_class() -> Class {
     let mut instance_methods: FxHashMap<String, NativeInstanceFn> = FxHashMap::default();
     let mut static_methods: FxHashMap<String, NativeStaticFn> = FxHashMap::default();
 
-    
     static_methods.insert("fromCharCode".to_string(), string_from_char_code);
     static_methods.insert("charCodeAt".to_string(), string_char_code_at);
 
-    
     instance_methods.insert("length".to_string(), string_length);
     instance_methods.insert("upper".to_string(), string_upper);
     instance_methods.insert("lower".to_string(), string_lower);
@@ -25,7 +19,7 @@ pub fn create_string_class() -> Class {
     instance_methods.insert("startsWith".to_string(), string_starts_with);
     instance_methods.insert("endsWith".to_string(), string_ends_with);
     instance_methods.insert("charAt".to_string(), string_char_at);
-    instance_methods.insert("charCodeAt".to_string(), string_char_at_code); 
+    instance_methods.insert("charCodeAt".to_string(), string_char_at_code);
     instance_methods.insert("indexOf".to_string(), string_index_of);
     instance_methods.insert("replace".to_string(), string_replace);
     instance_methods.insert("split".to_string(), string_split);
@@ -33,23 +27,22 @@ pub fn create_string_class() -> Class {
     instance_methods.insert("slice".to_string(), string_slice);
     instance_methods.insert("isDigit".to_string(), string_is_digit);
     instance_methods.insert("toString".to_string(), string_to_string);
-    
+
     instance_methods.insert("padStart".to_string(), string_pad_start);
     instance_methods.insert("padEnd".to_string(), string_pad_end);
     instance_methods.insert("repeat".to_string(), string_repeat);
     instance_methods.insert("trimStart".to_string(), string_trim_start);
-    instance_methods.insert("trimLeft".to_string(), string_trim_start); 
+    instance_methods.insert("trimLeft".to_string(), string_trim_start);
     instance_methods.insert("trimEnd".to_string(), string_trim_end);
-    instance_methods.insert("trimRight".to_string(), string_trim_end); 
+    instance_methods.insert("trimRight".to_string(), string_trim_end);
     instance_methods.insert("lastIndexOf".to_string(), string_last_index_of);
     instance_methods.insert("replaceAll".to_string(), string_replace_all);
-    instance_methods.insert("includes".to_string(), string_contains); 
+    instance_methods.insert("includes".to_string(), string_contains);
 
     let mut class = Class::new_with_instance("String", instance_methods, Some(string_constructor));
     class.native_static_methods = static_methods;
     class
 }
-
 
 fn string_from_char_code(args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
@@ -59,7 +52,6 @@ fn string_from_char_code(args: &[Value]) -> Result<Value, String> {
         None => Ok(Value::String(Rc::from(String::new()))),
     }
 }
-
 
 fn string_char_code_at(args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 2 {
@@ -162,7 +154,6 @@ fn string_char_at(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_char_at_code(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.len() > 1 {
         return Err(format!("Expected 0-1 arguments but got {}", args.len()));
@@ -184,8 +175,6 @@ fn string_char_at_code(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
-
 fn string_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 2 {
         return Err(format!("Expected 1-2 arguments but got {}", args.len()));
@@ -198,14 +187,12 @@ fn string_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
             return Ok(Value::Number(0.0));
         }
 
-        
         let from_char_index = if args.len() == 2 {
             get_number_arg(&args[1], "fromIndex")? as usize
         } else {
             0
         };
 
-        
         let chars: Vec<char> = s.chars().collect();
         let search_chars: Vec<char> = search.chars().collect();
 
@@ -213,7 +200,6 @@ fn string_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
             return Ok(Value::Number(-1.0));
         }
 
-        
         let search_len = search_chars.len();
         for i in from_char_index..=chars.len().saturating_sub(search_len) {
             let mut found = true;
@@ -268,7 +254,6 @@ fn string_to_string(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_substring(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 2 {
         return Err(format!("Expected 1-2 arguments but got {}", args.len()));
@@ -301,7 +286,6 @@ fn string_substring(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_is_digit(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
@@ -315,7 +299,6 @@ fn string_is_digit(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_slice(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 2 {
         return Err(format!("Expected 1-2 arguments but got {}", args.len()));
@@ -325,7 +308,6 @@ fn string_slice(recv: &Value, args: &[Value]) -> Result<Value, String> {
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len() as i64;
 
-        
         let start_arg = get_number_arg(&args[0], "start")? as i64;
         let start = if start_arg < 0 {
             (len + start_arg).max(0) as usize
@@ -333,7 +315,6 @@ fn string_slice(recv: &Value, args: &[Value]) -> Result<Value, String> {
             (start_arg as usize).min(len as usize)
         };
 
-        
         let end = if args.len() == 2 {
             let end_arg = get_number_arg(&args[1], "end")? as i64;
             if end_arg < 0 {
@@ -355,9 +336,6 @@ fn string_slice(recv: &Value, args: &[Value]) -> Result<Value, String> {
         Err("Receiver must be a string".to_string())
     }
 }
-
-
-
 
 fn string_pad_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 2 {
@@ -384,7 +362,6 @@ fn string_pad_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_pad_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 2 {
         return Err(format!("Expected 1-2 arguments but got {}", args.len()));
@@ -410,7 +387,6 @@ fn string_pad_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_repeat(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(1, args.len())?;
     if let Value::String(s) = recv {
@@ -421,7 +397,6 @@ fn string_repeat(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_trim_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
@@ -431,7 +406,6 @@ fn string_trim_start(recv: &Value, args: &[Value]) -> Result<Value, String> {
     }
 }
 
-
 fn string_trim_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(0, args.len())?;
     if let Value::String(s) = recv {
@@ -440,7 +414,6 @@ fn string_trim_end(recv: &Value, args: &[Value]) -> Result<Value, String> {
         Err("Receiver must be a string".to_string())
     }
 }
-
 
 fn string_last_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
     if args.is_empty() || args.len() > 2 {
@@ -462,7 +435,7 @@ fn string_last_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
         if search_len > chars.len() {
             return Ok(Value::Number(-1.0));
         }
-        
+
         let max_start = from_idx.min(chars.len().saturating_sub(search_len));
         for i in (0..=max_start).rev() {
             let mut found = true;
@@ -481,7 +454,6 @@ fn string_last_index_of(recv: &Value, args: &[Value]) -> Result<Value, String> {
         Err("Receiver must be a string".to_string())
     }
 }
-
 
 fn string_replace_all(recv: &Value, args: &[Value]) -> Result<Value, String> {
     check_arity(2, args.len())?;
